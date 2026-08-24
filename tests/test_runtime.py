@@ -315,6 +315,49 @@ def test_every_slider_can_be_driven(key):
         system.close()
 
 
+# --- the planar sheet stays tension-free --------------------------------------
+
+def test_the_sheet_relaxes_to_zero_lateral_tension():
+    """Warm the sheet and its cell must FOLLOW, or the membrane buckles.
+
+    The tension-free projected area is strongly temperature dependent -- measured
+    on this playground, the cell settles at 0.992 of the setup box at T = 0.001
+    and 1.126 at T = 0.2, a 27% change in area per particle. Hold the area fixed
+    across that and the membrane is laterally compressed, which is not a small
+    error: modes below q^2 = |gamma|/kappa acquire negative stiffness and GROW,
+    leaving a static ripple that neither decays nor travels.
+
+    The counterfactual, measured with the barostat unfixed: the lateral pressure
+    locks at +0.17 for 150 tau while the rms out-of-plane displacement climbs from
+    0.23 to 0.35 sigma. With it installed the pressure is at zero and the rms
+    holds. This pins the second of those.
+    """
+    system = registry.build("mesomem_sheet")
+    try:
+        before = system.box.lengths[0]
+        system.set_target_temp(0.2)
+        n = int(round(system.scenario.sim_time_per_frame / system.scenario.timestep))
+        for _ in range(200):
+            system.step(n)
+        assert not system.unstable
+
+        # The cell gave the membrane the area it asked for.
+        after = system.box.lengths[0]
+        assert after > before * 1.05, f"the cell did not expand: {before} -> {after}"
+        # And the runtime is reading the LIVE cell, not the one it built.
+        assert system.lmp.get_thermo("lx") == pytest.approx(after)
+        assert system.current_state().box.lengths[0] == pytest.approx(after)
+
+        # Tension-free, which is the whole point. An order of magnitude below the
+        # +0.17 a frozen cell sits at.
+        assert abs(system.lmp.get_thermo("pxx")) < 0.03
+        assert abs(system.lmp.get_thermo("pyy")) < 0.03
+        # Still a membrane: this is well below melt_temp.
+        assert system.analysis.values()["nematic_S"] > 0.8
+    finally:
+        system.close()
+
+
 # --- modes are orthogonal -----------------------------------------------------
 
 def test_sim_mode_works_on_a_game_playground():

@@ -11,6 +11,19 @@ Differences from the patch: the periodic cell means the sheet holds itself flat
 with no artificial tether, and the puller is whichever bead starts nearest the box
 centre.
 
+THE BAROSTAT KEEPS RUNNING while you play, and it is not a detail of the setup --
+it is what makes the planar membrane physical. Freeze the cell after the settle
+and the sheet is stuck at a fixed projected area, which is only ever the right one
+for the temperature it was settled at; the dial here runs to 0.5, and the
+tension-free cell is 27% larger in area at T = 0.2 than at T = 0.001. A membrane
+held below its relaxed area is laterally COMPRESSED, its long-wavelength
+undulation modes have negative stiffness and grow, and what you end up watching is
+a static ripple that never decays -- a reported artefact of exactly this
+playground. See HexSheet in playground/scenario.py for the measurements and for
+why this uses `press/berendsen` where the collaborator's reference deck uses
+`fix nph/sphere`. Above `melt_temp` the sheet is no longer a membrane and the cell
+inflates without bound; that is honest, not a fault.
+
 Units are the paper's LJ-reduced units (sigma = eps = m = 1).
 """
 from ..playground import Control, Playground, hex_sheet
@@ -59,8 +72,9 @@ STYLE = DEFAULT_STYLE.varied(
 
 PLAYGROUND = Playground(
     name="MesoMem membrane sheet (3D)",
-    description="Paper-scale hexagonal MesoMem sheet (periodic, barostat-relaxed): "
-                "pull one bead out and watch tilt/splay propagate.",
+    description="Paper-scale hexagonal MesoMem sheet, held tension-free by a "
+                "running barostat: pull one bead out and watch tilt/splay "
+                "propagate.",
     force_field="mesomem",
     scenario=hex_sheet(n_cols=30, n_rows=30, a=0.8, z_half=4.0,
                        settle_steps=1000,

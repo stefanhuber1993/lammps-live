@@ -643,10 +643,16 @@ def test_the_cell_shrinks_as_the_wrap_grows_and_the_runtime_notices():
 
 
 def test_a_frozen_cell_scenario_is_not_paying_for_the_refresh():
-    """`cell_is_live` is opt-in, so the sheet and the patch keep their box exactly
-    as they built it."""
-    from lammps_live.playground.scenario import HexPatch, HexSheet, RandomFill
-    for cls in (HexPatch, HexSheet, RandomFill):
+    """`cell_is_live` is opt-in, so a scenario whose cell really is frozen keeps
+    its box exactly as it built it.
+
+    HexSheet is deliberately NOT in this list any more: its barostat outlives the
+    setup too, because a planar membrane held at a fixed projected area is
+    laterally compressed at every temperature but the settle's and buckles into a
+    standing ripple (see HexSheet's docstring, and
+    test_runtime.test_the_sheet_relaxes_to_zero_lateral_tension)."""
+    from lammps_live.playground.scenario import HexPatch, RandomFill
+    for cls in (HexPatch, RandomFill):
         assert cls.cell_is_live is False
 
 

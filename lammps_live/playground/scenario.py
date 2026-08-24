@@ -614,16 +614,58 @@ class HexSheet(Scenario):
 
     Particles on a hexagonal lattice at spacing a, periodic in-plane, relaxed
     under Langevin dynamics with a barostat driving the lateral pressure to zero
-    so the sheet equilibrates tension-free. The barostat is then removed and the
-    cell frozen, so interactive pulling happens at a fixed, relaxed lattice. The
-    periodic cell means no artificial tether is needed -- the sheet holds itself
-    flat.
+    so the sheet equilibrates tension-free. The periodic cell means no artificial
+    tether is needed -- the sheet holds itself flat.
+
+    THE BAROSTAT KEEPS RUNNING, and that is not housekeeping -- it is what makes
+    the planar membrane physical at all. Freezing the cell after the settle (which
+    is what this scenario used to do) leaves the sheet at a FIXED PROJECTED AREA,
+    and that area is only ever right for one temperature. The dial here spans
+    0 to 0.5, and the tension-free cell measured on a 30x30 sheet is:
+
+        T = 0.001   Lx = 0.977 of the built size
+        T = 0.2     Lx = 1.103          -- +22% in AREA
+
+    so running the built cell warm compresses the membrane by about a fifth. A
+    laterally compressed membrane does not merely sit there being slightly wrong.
+    The undulation free energy per mode is
+
+        F_q = 1/2 A (kappa q^4 + gamma q^2) |h_q|^2
+
+    and a compressed sheet has gamma < 0, so every mode below q^2 = |gamma|/kappa
+    has NEGATIVE stiffness and grows instead of fluctuating, until the excess-area
+    nonlinearity catches up. What is left is a static ripple at a selected
+    wavelength that neither decays nor travels -- an unphysical standing wave, and
+    the artefact this scenario was reported for. Measured, frozen cell at T = 0.2:
+    the lateral pressure locks at +0.17 and stays there over 150 tau while the rms
+    out-of-plane displacement climbs 0.23 -> 0.35 sigma and the amplitude piles
+    into the lowest few modes. With the barostat left in, P -> 0.00 +/- 0.01 and
+    the rms holds at 0.20.
+
+    ABOVE `melt_temp` THE CELL INFLATES WITHOUT BOUND, and that is the honest
+    answer rather than a failure of the barostat. A melted sheet has no cohesion
+    left to hold at zero lateral tension, so it simply keeps expanding: at
+    T = 0.35 the nematic order falls to 0.02 and the cell is still growing after
+    60 tau. The frozen cell hid this by holding the box still -- but it melted
+    just the same (S = 0.04 over the same run), so what the freezing bought was a
+    tidier picture of an equally destroyed membrane.
+
+    (The reference deck does the same thing with `fix nph/sphere x 0 0 Pdamp
+    y 0 0 Pdamp couple xy ... update dipole`. This uses `press/berendsen` instead,
+    for the reason RodOnSheet gives: it rides on top of the force field's own
+    `nve/sphere update dipole` rather than replacing it, and it has no barostat
+    mass of its own to ring against the user's hand.)
     """
 
     name = "hex_sheet"
     sim_time_per_frame = 0.1
     director_arrows = False     # hundreds of spikes are clutter and cost
     wrap_fade_fraction = 0.03   # slide across the seam instead of popping
+    # The barostat below outlives the setup, so the cell is a different size every
+    # frame and the runtime has to read it back: the drawn outline, the periodic
+    # images, the minimum-imaging in the analysis pair list and the
+    # `area_per_particle` observable all key off it.
+    cell_is_live = True
 
     params = (
         structural("n_cols", 30, "particles per row (x)"),
@@ -646,7 +688,39 @@ class HexSheet(Scenario):
         # behind it (see RenderStyle.periodic_images).
         structural("view_aim_ahead", 0.0, "camera framing: aim this far past the centre"),
         structural("baro_press", 0.0, "target lateral pressure (tension-free)"),
-        structural("baro_damp", 2.0, "barostat relaxation time"),
+        structural("baro_damp", 2.0, "settle barostat relaxation time"),
+        # The relaxation time of the barostat that KEEPS RUNNING. Ten times
+        # quicker than the settle's, and the reason is that this one has to track
+        # a LIVE dial: the tension-free area at T = 0.2 is 22% above the one at
+        # T = 0.001, so a temperature change is a real area change the cell has to
+        # follow while the user watches. Measured on the 30x30 sheet, this reaches
+        # zero pressure in ~150 frames (15 tau) with no overshoot, and the settled
+        # cell then holds to within 0.1% -- fast enough to follow the dial, quiet
+        # enough that the box is not visibly breathing.
+        #
+        # (`press/berendsen` dilates at a rate proportional to 1/(damp * modulus),
+        # and `modulus` defaults to 10 in LJ units. 0.2 here is the same rate as
+        # damp 2.0 with modulus 1.0 -- verified equal, and expressed in the damp so
+        # there is one dial rather than two that multiply.)
+        structural("baro_damp_run", 0.2,
+                   "relaxation time of the barostat that keeps running"),
+        structural("hold_steps", 200,
+                   "silent settle after the running barostat is installed"),
+        # Headroom for the barostat's expansion in the camera framing.
+        # `fit_to_points` runs once at setup (see app._setup_viewport), so a cell
+        # that then grows has nothing to re-fit it. Sized on the measured top of
+        # the ORDERED range: the tension-free cell reaches 1.126 of the setup box
+        # at T = 0.2 and 1.187 at T = 0.28, just under `melt_temp`. Past melting
+        # the sheet is not a membrane any more and the cell inflates without
+        # bound, which no fixed headroom covers and none should try to.
+        #
+        # It is close to free on this scenario, which is why it is generous rather
+        # than exact: `view_span` frames the real cell and the periodic images
+        # fill the rest of the frame anyway, so pulling back 20% shows more of the
+        # tiling rather than emptier picture. The real cell, its outline and the
+        # control net stay centred.
+        structural("view_headroom", 1.20,
+                   "camera framing: extra in-plane room for the barostat"),
         structural("k_plane", 0.1, "pull toward the central z-plane"),
         structural("k_align", 10.0, "normal-up alignment rate"),
         structural("tracer_fraction", 0.3,
@@ -707,6 +781,46 @@ class HexSheet(Scenario):
     def settle_cleanup_commands(self):
         return ["unfix settle_baro", "unfix settle_bath"]
 
+    def group_commands(self, params, controlled_id):
+        """A `membrane` group: every bead the running barostat is allowed to
+        rescale.
+
+        In game mode that is everything except the driven bead. The barostat
+        dilates coordinates toward the origin every step, and the driven bead's
+        position is the one thing in the scene that is set in ABSOLUTE terms -- it
+        is held on the control plane inside a leash centred on the origin, and the
+        net drawn around it says exactly where it can go. Rescaling it too would
+        drag it out from under the hand and out from under its own net.
+
+        In sim mode there is no driven bead, so it is simply every bead; `type 1`
+        rather than `all` for the same reason RodOnSheet uses it -- the two read
+        the same on a single-species sheet, and it is the membrane that is meant.
+        """
+        if controlled_id is None:
+            return ["group membrane type 1"]
+        return ["group membrane subtract all controlled"]
+
+    def post_control_settle(self, params):
+        """Install the barostat that keeps running, and let the cell find itself.
+
+        A SECOND fix rather than simply not unfixing the settle's: that one is
+        `dilate all` and runs before any control fix exists (so that it relaxes a
+        free sheet), and this one has to leave the driven bead alone and has its
+        own, quicker relaxation time. The same split RodOnSheet makes, for the
+        same two reasons.
+
+        The class docstring has the measurements; the short version is that a
+        frozen cell is a fixed projected area, a fixed projected area is the wrong
+        one at every temperature but the settle's, and a laterally compressed
+        membrane buckles into a standing ripple rather than undulating thermally.
+        """
+        p, damp = params["baro_press"], params["baro_damp_run"]
+        return [
+            f"fix baro membrane press/berendsen x {p} {p} {damp} "
+            f"y {p} {p} {damp} couple xy dilate partial",
+            f"run {int(params['hold_steps'])}",
+        ]
+
     def housekeeping(self, positions, params, controlled=None, box=None):
         """Plane centring toward z = 0, plus a rigid normal-up rotation of the
         whole sheet -- the same "smallest principal component upward" idea as the
@@ -739,8 +853,12 @@ class HexSheet(Scenario):
         """Frame the cell, or more of it when the renderer is drawing periodic
         images: `view_span` multiplies the in-plane extent the camera pulls back
         to cover, so a 3x3 tiling can actually be seen rather than sitting mostly
-        off the edges of the frame. 1.0 frames the real cell exactly."""
-        span = params["view_span"]
+        off the edges of the frame. 1.0 frames the real cell exactly.
+
+        `view_headroom` on top of it, because the cell this is handed is the one
+        the barostat starts from rather than the one it will settle at, and the
+        camera is fitted once (see app._setup_viewport)."""
+        span = params["view_span"] * params["view_headroom"]
         aim = params["view_aim_ahead"] * 0.5 * box.lengths[1]
         corners = box.corners().astype(float)
         corners[:, :2] *= span
@@ -759,18 +877,23 @@ class RodOnSheet(HexSheet):
     a barostat that KEEPS RUNNING; and a camera in the membrane's own plane,
     because a wrap is a profile rather than a surface.
 
-    THE RUNNING BAROSTAT IS THE DIFFERENCE THAT MATTERS. HexSheet relaxes the cell
-    to zero lateral tension and then freezes it, which is right for pulling one
-    bead out of a fixed lattice. It is wrong for wrapping: covering a rod costs
-    membrane area, and in a frozen periodic cell the only place that area can come
-    from is stretching the lattice, so the membrane cannot invaginate the rod --
-    it just dents. Holding the lateral pressure at its target instead lets the
-    projected area shrink as the wrap grows, which is the same thing the
-    collaborator's reference deck does (`fix nph/sphere x .. y .. couple xy`
-    running through all three of its rod phases, with the target ramped to set the
-    tension). Zero pressure is the tension-free ensemble; `baro_press` is the dial
-    for putting the membrane under tension instead, which is what suppresses
-    wrapping.
+    THE BAROSTAT IS THE SHEET's NOW, and what is left here is its TIMESCALE.
+    Covering a rod costs membrane area, and in a frozen periodic cell the only
+    place that area can come from is stretching the lattice, so the membrane
+    cannot invaginate the rod -- it just dents. Holding the lateral pressure at
+    its target instead lets the projected area shrink as the wrap grows, which is
+    the same thing the collaborator's reference deck does (`fix nph/sphere x .. y
+    .. couple xy` running through all three of its rod phases, with the target
+    ramped to set the tension). Zero pressure is the tension-free ensemble;
+    `baro_press` is the dial for putting the membrane under tension instead, which
+    is what suppresses wrapping.
+
+    What this scenario does still choose for itself is `baro_damp_run`: the sheet
+    wants a quick one, because there the barostat is tracking a temperature dial
+    and should have finished before the user notices. Here it is tracking a wrap
+    the user is actively pushing into the membrane, and how fast it gives up area
+    IS how stiff the membrane feels under the hand (see mesomem_rod.py, which sets
+    it). Same fix, an order of magnitude slower.
 
     It is a Berendsen barostat rather than the deck's Nose-Hoover one for the same
     reason the settle uses one: `press/berendsen` rides on top of whatever
@@ -807,14 +930,6 @@ class RodOnSheet(HexSheet):
                    "the rod's starting height above the membrane plane"),
         structural("rod_axis", (1.0, 0.0, 0.0),
                    "the rod's initial long axis (must lie in the control plane)"),
-        # Slower than the settle's, because this one runs while a hand is on the
-        # membrane: the settle wants the lattice relaxed quickly from a made-up
-        # spacing, this wants the cell to follow a growing wrap without the box
-        # visibly breathing under the user.
-        structural("baro_damp_run", 20.0,
-                   "relaxation time of the barostat that keeps running"),
-        structural("hold_steps", 200,
-                   "silent settle after the running barostat is installed"),
         structural("view_elevation_deg", 6.0,
                    "camera elevation above the membrane plane (0 = exactly "
                    "edge-on, so the membrane is a line)"),
@@ -909,10 +1024,10 @@ class RodOnSheet(HexSheet):
     def post_control_settle(self, params):
         """Install the barostat that keeps running, and let the cell find itself.
 
-        Runs in `post_control_settle` rather than alongside the settle's own so
-        the two do not overlap: HexSheet defines `settle_baro`, relaxes with it
-        and then unfixes it, and this one is a different fix with a different
-        relaxation time that outlives the setup.
+        The same shape as HexSheet's -- which is where the argument for keeping a
+        barostat running at all now lives -- but on the membrane group by TYPE
+        (see `group_commands`) and at this scenario's own, much slower
+        `baro_damp_run`.
 
         `dilate partial` on the membrane group is what keeps the rescaling off the
         rod: the pressure is still measured over the whole system (that is a

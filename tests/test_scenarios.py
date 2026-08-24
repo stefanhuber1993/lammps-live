@@ -252,6 +252,41 @@ def test_wall_commands_cover_only_non_periodic_faces():
     assert s.wall_commands(Box.cube(10, (True, True, True))) == []
 
 
+def test_the_sheets_barostat_outlives_the_setup_and_spares_the_driven_bead():
+    """The running barostat is the whole planar-membrane fix: a frozen projected
+    area is the wrong one at every temperature but the settle's, and a compressed
+    membrane buckles into a standing ripple instead of undulating thermally.
+
+    Two things have to be true of the deck for it to work. It must not be unfixed
+    with the settle's, and it must dilate the MEMBRANE rather than everything --
+    the driven bead is positioned in absolute terms inside a leash centred on the
+    origin, so rescaling it too would drag it out from under its own control net.
+    """
+    s = HexSheet()
+    assert s.cell_is_live is True
+
+    # The settle's barostat is still removed; the running one is a second fix.
+    cleanup = s.settle_cleanup_commands()
+    assert any("unfix settle_baro" in c for c in cleanup)
+    assert not any("unfix baro" == c.strip() for c in cleanup)
+
+    post = s.post_control_settle(s.new_params())
+    fix = next(c for c in post if c.startswith("fix baro"))
+    assert "press/berendsen" in fix and "couple xy" in fix
+    assert "dilate partial" in fix
+    assert fix.split()[2] == "membrane"
+    # Zero target pressure IS the tension-free ensemble.
+    assert "x 0.0 0.0" in fix and "y 0.0 0.0" in fix
+    # Quicker than the settle's, because this one tracks a live temperature dial.
+    params = s.new_params()
+    assert params["baro_damp_run"] < params["baro_damp"]
+
+    # And the group it dilates exists in both modes.
+    assert s.group_commands(params, controlled_id=7) == [
+        "group membrane subtract all controlled"]
+    assert s.group_commands(params, controlled_id=None) == ["group membrane type 1"]
+
+
 def test_scenario_kwargs_split_into_params_and_attributes():
     s = HexPatch(n_rings=2, timestep=0.001, sim_time_per_frame=0.02)
     assert s.timestep == 0.001              # attribute, not a parameter
