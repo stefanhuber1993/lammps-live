@@ -7,15 +7,28 @@ inventing one, so this is the path: drop your `pair_*.cpp` / `.h` plus a small
 style is compiled into a runtime-loadable shared library and pulled into the
 stock pip-installed LAMMPS with `plugin load` -- no full LAMMPS rebuild.
 
-The artifact is cached next to the sources and rebuilt only when a source file is
-newer, so the edit-C++-restart-and-the-sliders-still-work loop costs one compile.
+WHAT COMMAND does the compiling is not decided here any more: toolchain.py picks
+the compiler, the architecture flags and the MPI headers for whatever machine
+this is, from the config file's `[build]` table and the environment. This file is
+only the caching -- when is the artifact stale, and what does it get called.
+
+Both of those are per-machine too:
+
+  * THE NAME carries a platform tag (`mesomem-linux-x86_64.so`). A checkout on a
+    shared home directory is normal on a cluster, and two machines writing one
+    filename is a `plugin load` of a library for the wrong ISA.
+  * STALENESS is not only "is a source newer". A build also has to be redone when
+    the way it is built changes -- otherwise adding `arch = "native"` to the
+    config gives back the same old unoptimised library and the knob looks broken.
+    So the command line is written next to the artifact and compared.
 """
-import glob
+import json
 import os
-import shutil
 import subprocess
-import sys
 from dataclasses import dataclass
+
+from . import toolchain
+from .toolchain import ToolchainError  # re-exported: callers catch one type
 
 
 @dataclass(frozen=True)
@@ -33,8 +46,14 @@ class PluginSpec:
 
     @property
     def lib_path(self):
-        ext = ".dylib" if sys.platform == "darwin" else ".so"
-        return os.path.join(self.directory, self.lib_stem + ext)
+        return os.path.join(
+            self.directory,
+            f"{self.lib_stem}-{toolchain.platform_tag()}{toolchain.LIB_SUFFIX}")
+
+    @property
+    def info_path(self):
+        """Where the command line that produced `lib_path` is recorded."""
+        return self.lib_path + ".build.json"
 
     def source_paths(self):
         return [os.path.join(self.directory, s) for s in self.sources]
@@ -44,102 +63,69 @@ class PluginSpec:
                                       for h in self.headers]
 
 
-def _lammps_include_dir():
-    """The LAMMPS headers bundled inside the pip `lammps` package."""
-    import lammps
-    inc = os.path.join(os.path.dirname(lammps.__file__), "include", "lammps")
-    if not os.path.isdir(inc):
-        raise RuntimeError(f"LAMMPS headers not found at {inc}")
-    return inc
+def _recorded_signature(spec):
+    try:
+        with open(spec.info_path) as handle:
+            return json.load(handle).get("signature", "")
+    except (OSError, ValueError):
+        return ""
 
 
-def _mpi_include_dir():
-    """Header dir for the MPI implementation LAMMPS was built against.
-
-    A pair style transitively includes <mpi.h> (via LAMMPS' pointers.h), so we
-    must compile against the SAME MPI's headers as the loaded liblammps (MPICH
-    here). Try, in order: an explicit override, the MPI compiler wrapper's
-    reported include dir, then the usual per-OS install locations.
-    """
-    env = os.environ.get("LAMMPS_LIVE_MPI_INCLUDE") or os.environ.get("MESOMEM_MPI_INCLUDE")
-    if env and os.path.isfile(os.path.join(env, "mpi.h")):
-        return env
-    for wrapper in ("mpicxx", "mpic++", "mpicc"):
-        exe = shutil.which(wrapper)
-        if not exe:
-            continue
-        for flag in ("-showme:incdirs", "-show"):
-            try:
-                out = subprocess.check_output([exe, flag], text=True,
-                                              stderr=subprocess.DEVNULL)
-            except Exception:
-                continue
-            for tok in out.replace("-I", " -I").split():
-                cand = tok[2:] if tok.startswith("-I") else tok
-                if os.path.isfile(os.path.join(cand, "mpi.h")):
-                    return cand
-    # Fallbacks when no MPI wrapper is on PATH: Homebrew (macOS) and the common
-    # Linux MPICH header locations. Debian/Ubuntu put mpi.h under a multiarch
-    # subdir (/usr/include/<arch>/mpich); Fedora uses /usr/include/mpich-<arch>
-    # or /usr/lib64/mpich/include, so those are globbed rather than hardcoded.
-    candidates = ["/opt/homebrew/include", "/usr/local/include", "/usr/include/mpich"]
-    candidates += glob.glob("/usr/include/*/mpich")     # Debian/Ubuntu multiarch
-    candidates += glob.glob("/usr/include/mpich-*")     # Fedora
-    candidates += glob.glob("/usr/lib*/mpich/include")  # Fedora modules
-    for cand in candidates:
-        if os.path.isfile(os.path.join(cand, "mpi.h")):
-            return cand
-    raise RuntimeError(
-        "Could not locate mpi.h. Install the MPI whose runtime LAMMPS uses, with "
-        "its development headers -- macOS: `brew install mpich`; Debian/Ubuntu: "
-        "`sudo apt install mpich libmpich-dev`; Fedora: `sudo dnf install mpich "
-        "mpich-devel` -- or set LAMMPS_LIVE_MPI_INCLUDE to the dir containing mpi.h."
-    )
-
-
-def _needs_build(spec):
+def _needs_build(spec, chain):
+    """Why this has to be compiled again, or "" if it does not."""
     lib = spec.lib_path
     if not os.path.isfile(lib):
-        return True
+        return "no compiled library yet"
     lib_mtime = os.path.getmtime(lib)
     for path in spec.watched_paths():
         if os.path.isfile(path) and os.path.getmtime(path) > lib_mtime:
-            return True
-    return False
+            return f"{os.path.basename(path)} is newer than the library"
+    if chain is not None and _recorded_signature(spec) != chain.signature():
+        return "the build settings changed"
+    return ""
 
 
-def _build(spec):
-    cxx = os.environ.get("CXX") or shutil.which("clang++") or shutil.which("g++")
-    if cxx is None:
-        raise RuntimeError(
-            f"No C++ compiler (clang++/g++) found to build the {spec.lib_stem} plugin."
-        )
-    if sys.platform == "darwin":
-        link_flags = ["-undefined", "dynamic_lookup"]
-    else:
-        # ELF resolves undefined plugin symbols against the already-loaded
-        # liblammps at dlopen time; allow them to stay unresolved at link.
-        link_flags = ["-Wl,--allow-shlib-undefined"]
-    cmd = [
-        cxx, "-std=c++17", "-O3", "-shared", "-fPIC", *link_flags,
-        f"-I{_lammps_include_dir()}", f"-I{_mpi_include_dir()}", f"-I{spec.directory}",
-        *spec.source_paths(),
-        "-o", spec.lib_path,
-    ]
+def build(spec, chain=None, force=False, log=None):
+    """Compile the plugin if it is stale. Returns (path, what_was_done).
+
+    `log` is any `print`-alike; --build-plugin passes one so the command is
+    visible, the app passes none so a first launch does not spray a compile line
+    across a demo.
+    """
+    chain = chain or toolchain.detect(stub_dir_for=spec.directory)
+    reason = "asked to" if force else _needs_build(spec, chain)
+    if not reason:
+        return spec.lib_path, "up to date"
+
+    cmd = chain.compile_command(
+        spec.source_paths(), spec.lib_path,
+        include_dirs=[toolchain.lammps_include_dir(), spec.directory],
+        lammps_lib=toolchain.lammps_import_library())
+    if log and (chain.verbose or force):
+        log(" ".join(cmd))
+    if chain.flavour == "msvc":
+        # cl writes its .obj files where /Fo points and will not create the
+        # directory itself.
+        os.makedirs(os.path.join(os.path.dirname(spec.lib_path) or ".", "_obj"),
+                    exist_ok=True)
     proc = subprocess.run(cmd, capture_output=True, text=True)
     if proc.returncode != 0:
-        raise RuntimeError(
-            f"Failed to compile the {spec.lib_stem} pair-style plugin:\n"
-            + " ".join(cmd) + "\n" + proc.stderr
+        raise ToolchainError(
+            f"Failed to compile the {spec.lib_stem} pair-style plugin ({reason}).\n"
+            + " ".join(cmd) + "\n" + (proc.stderr or proc.stdout)
+            + "\nRun `lammps-live --doctor` to see how the compiler, the "
+              "architecture flags and the MPI headers were chosen, and set "
+              "[build] in your config file to correct any of them."
         )
-    return spec.lib_path
+    with open(spec.info_path, "w") as handle:
+        json.dump({"signature": chain.signature(), "command": cmd}, handle, indent=1)
+    return spec.lib_path, reason
 
 
 def ensure_loaded(spec, lmp):
-    """Compile (if a source is newer than the cached library) and `plugin load`
-    the style into `lmp`. Idempotent per LAMMPS instance -- loading twice is
-    harmless (LAMMPS warns and keeps the existing style)."""
-    if _needs_build(spec):
-        _build(spec)
+    """Compile (if stale) and `plugin load` the style into `lmp`. Idempotent per
+    LAMMPS instance -- loading twice is harmless (LAMMPS warns and keeps the
+    existing style)."""
+    build(spec)
     lmp.command(f"plugin load {spec.lib_path}")
     return spec.lib_path
