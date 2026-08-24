@@ -1,5 +1,11 @@
 # Running the MesoMem demo on Snellius
 
+**This file is Snellius-specific.** For running the live demo on *any* cluster --
+what the far-side LAMMPS has to be, how to check a candidate build, and the config
+file that carries your login, account and paths -- see
+[../cluster-setup.md](../cluster-setup.md). Everything below assumes the build that
+already exists here.
+
 Decks for the scale-up in [../a100-plan.md](../a100-plan.md). Same physics as
 `lammps_live/playgrounds/mesomem_assembly.py`, written out as plain LAMMPS input
 and sized for 100k beads instead of 1500.
@@ -25,6 +31,10 @@ The decks above are for benchmarking. The demo itself is a playground in the app
 node builds the same `Playground` file the client draws, so there is exactly one
 definition of the experiment. Select it in the app (key 4, or Tab), press **N**, and
 press Connect.
+
+The login and the paths come from your config file rather than from the playground
+source (`lammps-live --write-config`, then `--doctor` to check it); the values in
+`mesomem_remote.py` are only what this machine happened to need first.
 
 `mesomem_polymer` is the second playground on the same target and reaches the node
 by exactly the same route -- a closed vesicle with a melt of ring polymers sealed
@@ -109,7 +119,8 @@ It reports whether `import lammps` works, whether `mesomem`, `mesomem/kk`,
 `dipole_sphere_angle` and `nve/sphere/kk` are registered, and whether `pair_coeff`
 takes 8 or 9 values (the client is told, so the coefficients it sends match what
 this build accepts). If the module is missing, rebuild with
-`-DBUILD_SHARED_LIBS=yes -DPKG_PYTHON=yes` and `make install-python`. The connect
+`-DBUILD_SHARED_LIBS=yes` and `make install-python` (`-DPKG_PYTHON` is a different
+feature -- Python *inside* LAMMPS -- and is not what this needs). The connect
 flow runs this itself and refuses to allocate a GPU for a build that cannot serve.
 
 ### Debugging the SSH and Slurm half without the GUI

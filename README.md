@@ -52,8 +52,9 @@ model whose parameters otherwise stay pretty abstract.
 
 ## It runs on a supercomputer
 
-`mesomem_remote` and `mesomem_polymer` put the simulation on an A100 at
-[Snellius](https://www.surf.nl) and keeps the picture here at 60 fps. You press
+`mesomem_remote` and `mesomem_polymer` put the simulation on a cluster GPU -- an
+A100 at [Snellius](https://www.surf.nl), or whichever machine you point them at --
+and keep the picture here at 60 fps. You press
 `N` and the app does the rest: asks Slurm for the GPU, ships itself over, starts
 the server there, tunnels a port back, and gives the allocation up again when
 you close the window. Both ends build the same scene file, so there's one
@@ -87,8 +88,36 @@ a number to pad -- and a longer request may sit in the queue longer:
 lammps-live --playground mesomem_remote --gpu-hours 3
 ```
 
+**On your cluster, not just mine.** The login, the account, the partition and the
+paths on the far side live in a config file, not in the scene file, so running
+this is not a source edit:
+
+```bash
+lammps-live --write-config       # ~/.config/lammps-live/config.toml
+```
+
+```toml
+[remote.systems.mycluster]
+host = "cluster.example.org"
+user = "your-login"
+partition = "gpu"
+account = "prj1234"
+remote_dir = "~/lammps-mesomem"  # where the cluster's LAMMPS build lives
+env_script = "env.sh"            # sourced there before the server starts
+profile = "cluster-gpu"          # "cluster-cpu" if there is no GPU to have
+```
+
+Define several and `--hpc mycluster` picks one for a run. The caveat is the one
+thing this app can't do for you: **the LAMMPS on the far side has to exist
+already**, with a Python module, numpy, the MesoMem pair style compiled in, and
+Kokkos+CUDA if you want the GPU profile. The connect flow probes for exactly that
+and refuses to allocate anything for a build that can't serve, and
+`lammps-live --doctor` prints the probe command with your own paths already in
+it.
+
 How it works: [docs/remote-gpu.md](docs/remote-gpu.md).
-How to run it: [docs/snellius/README.md](docs/snellius/README.md).
+How to run it on your own cluster: [docs/cluster-setup.md](docs/cluster-setup.md).
+Snellius specifically: [docs/snellius/README.md](docs/snellius/README.md).
 
 ## The joystick
 
@@ -154,6 +183,7 @@ doing, and what the membrane is doing about it.
 brew install mpich git          # Linux: apt install build-essential mpich libmpich-dev git
 python3 -m venv venv && source venv/bin/activate
 pip install -e .
+lammps-live --doctor            # what this machine resolved to
 lammps-live --input mouse
 ```
 
@@ -169,8 +199,25 @@ lammps-live --ui-scale 1.5                 # bigger UI on a 4K screen
 lammps-live --list                         # everything runnable
 ```
 
-On Linux the joystick also needs a udev rule so you can get at `/dev/hidraw*`
-without root:
+**Other machines, other compilers.** The pair style is compiled here, so the
+compiler, the architecture flags and which MPI's headers to use are all
+configurable rather than hardcoded — `-march=native` by default (probed, not
+assumed), `g++` or MSVC where that's what there is, LAMMPS' own MPI stubs for a
+serial build. Windows works natively and works with no surprises at all under
+WSL2. `lammps-live --doctor` prints every one of those decisions and
+`--build-plugin` compiles on the spot:
+
+```toml
+# ~/.config/lammps-live/config.toml   (lammps-live --write-config makes one)
+[build]
+compiler = "g++"
+arch = "native"                  # or "none", or "-march=x86-64-v3"
+mpi_include = "/usr/lib/x86_64-linux-gnu/openmpi/include"
+```
+
+Per-platform install notes, the whole `[build]` table and a symptom-to-fix table
+are in [docs/install.md](docs/install.md). The Linux joystick also needs a udev
+rule so you can get at `/dev/hidraw*` without root:
 
 ```bash
 echo 'SUBSYSTEM=="hidraw", ATTRS{idVendor}=="045e", ATTRS{idProduct}=="001b", TAG+="uaccess"' \
@@ -211,3 +258,9 @@ Some things worth knowing, the details are elsewhere:
   mode was losing the GPU with it.
 - `docs/a100-plan.md` is the plan for making the remote one bigger, with the
   measurements it's based on.
+- Nothing about your machine is hardcoded any more: the compiler and its flags,
+  the MPI headers, your cluster login and its paths are all one TOML file
+  (`lammps-live --write-config`), layered under the environment for one-off
+  overrides. [docs/install.md](docs/install.md) is this end,
+  [docs/cluster-setup.md](docs/cluster-setup.md) is the other one, and
+  `lammps-live --doctor` prints what both of them came out as.
