@@ -108,6 +108,39 @@ def test_verify_reach_catches_a_rod_placed_outside_its_leash():
     assert any("outside the leash" in p for p in problems)
 
 
+def test_lifting_the_membrane_buys_depth_and_is_checked_against_the_leash():
+    """`plane_z` moves the membrane up the container so the invagination has
+    somewhere to go.
+
+    The leash and the frame are centred on the ORIGIN rather than on the membrane,
+    so raising the plane converts headroom the rod never uses into depth below it
+    -- for free, since the container does not get any deeper. What it must not do
+    is push the rod's own starting height out through the top of the leash, and
+    that is the thing `verify_reach` is here to catch.
+    """
+    from lammps_live.playground.spec import Control
+    control = Control(plane="xz", leash=(14.0, 10.0))
+
+    lifted = RodOnSheet(plane_z=5.0, rod_height=3.5)
+    build = lifted.build(lifted.new_params(), np.random.default_rng(0))
+    # The membrane is up there, and the rod is above it by its own clearance --
+    # `rod_height` is a clearance, not an absolute z.
+    assert build.positions[:-1, 2] == pytest.approx(5.0)
+    assert build.positions[-1, 2] == pytest.approx(8.5)
+    # The container is unchanged: this is a reallocation, not a bigger box.
+    flat = RodOnSheet(plane_z=0.0, rod_height=3.5)
+    assert build.box.lengths[2] == flat.build(
+        flat.new_params(), np.random.default_rng(0)).box.lengths[2]
+    # Which is the point: 15 sigma of travel below the membrane instead of 10.
+    assert lifted.verify_reach(control, 3.24) == []
+
+    # Lift it too far and the rod starts outside the leash's ceiling.
+    too_high = RodOnSheet(plane_z=8.0, rod_height=3.5)
+    assert any("outside the leash" in p for p in too_high.verify_reach(control, 3.24))
+    # Lift it to the ceiling and the rod can never be pulled clear of the membrane.
+    at_ceiling = RodOnSheet(plane_z=8.0, rod_height=3.5)
+    assert any("lifted clear" in p for p in at_ceiling.verify_reach(control, 3.24))
+
 
 # --- the LAMMPS commands ------------------------------------------------------
 

@@ -728,7 +728,25 @@ class HexSheet(Scenario):
         # control net stay centred.
         structural("view_headroom", 1.20,
                    "camera framing: extra in-plane room for the barostat"),
-        structural("k_plane", 0.1, "pull toward the central z-plane"),
+        # WHERE THE MEMBRANE SITS IN THE CONTAINER, as a height. 0 is the middle,
+        # which is right for a sheet that is pulled at from both sides.
+        #
+        # It is a lever for a scenario whose interesting direction is DOWN. The
+        # rod's invagination goes one way -- the rod needs a few sigma of
+        # clearance above the membrane to start out of contact, and everything
+        # after that is depth -- so a membrane in the middle of its container
+        # spends half the container on headroom nothing uses. Lifting the plane
+        # spends that on depth instead, and it is free: the box does not get any
+        # bigger, which matters because an over-deep box costs ~20% in the pair
+        # loop for no extra pairs (measured, see mesomem_rod.py on `z_half`).
+        #
+        # The leash is centred on the ORIGIN, not on the membrane (see
+        # modes.GameMode.constrain), so raising the plane also deepens the travel
+        # the existing leash allows below it, and drops the membrane's image into
+        # the top of the frame where a camera aimed at the origin is looking under
+        # it. Both of those are the point.
+        structural("plane_z", 0.0, "height of the membrane plane in the container"),
+        structural("k_plane", 0.1, "pull toward the membrane's own z-plane"),
         structural("k_align", 10.0, "normal-up alignment rate"),
         structural("tracer_fraction", 0.3,
                    "where to place the highlighted diffusion tracer, as a "
@@ -738,7 +756,7 @@ class HexSheet(Scenario):
     def build(self, params, rng):
         n_cols, n_rows, a = int(params["n_cols"]), int(params["n_rows"]), params["a"]
         pts2d = hex_lattice_2d(n_cols, n_rows, a)
-        pos = np.column_stack([pts2d, np.zeros(len(pts2d))])
+        pos = np.column_stack([pts2d, np.full(len(pts2d), float(params["plane_z"]))])
         dirs = np.tile([0.0, 0.0, 1.0], (len(pos), 1))
         # Sized exactly to the lattice so the sheet tiles seamlessly.
         lx = n_cols * a
@@ -829,7 +847,8 @@ class HexSheet(Scenario):
         ]
 
     def housekeeping(self, positions, params, controlled=None, box=None):
-        """Plane centring toward z = 0, plus a rigid normal-up rotation of the
+        """Plane centring toward the membrane's own plane (`plane_z`, which is
+        z = 0 unless a scenario lifted it), plus a rigid normal-up rotation of the
         whole sheet -- the same "smallest principal component upward" idea as the
         patch's ring torque, made size-independent by applying it as a rotation
         rate rather than a torque."""
@@ -838,7 +857,7 @@ class HexSheet(Scenario):
             return None
         p = positions[sel]
         f = np.zeros((len(positions), 3))
-        f[sel, 2] += -params["k_plane"] * p[:, 2]
+        f[sel, 2] += -params["k_plane"] * (p[:, 2] - float(params["plane_z"]))
         omega = align_normal_rate(p, params["k_align"])
         f[sel] += np.cross(omega[None, :], p - p.mean(axis=0))
         return f
@@ -996,7 +1015,13 @@ class RodOnSheet(HexSheet):
         sheet = super().build(params, rng)
         axis = np.asarray(params["rod_axis"], dtype=float)
         axis = axis / max(np.linalg.norm(axis), 1e-12)
-        rod = np.array([[0.0, 0.0, float(params["rod_height"])]])
+        # ABOVE THE PLANE, which is what `rod_height` has always said it was and
+        # was only ever the same as an absolute z while the plane sat at 0. A
+        # scenario that lifts the membrane (see `plane_z`) lifts the rod with it,
+        # so the clearance it starts at -- outside the rod-membrane cutoff, which
+        # is the one thing that number has to get right -- is preserved.
+        rod = np.array([[0.0, 0.0, float(params["plane_z"])
+                         + float(params["rod_height"])]])
         positions = np.vstack([sheet.positions, rod])
         directors = np.vstack([sheet.directors, axis[None, :]])
         # Type 2 LAST, so `Control(atom="last")` names it -- and so the membrane
@@ -1074,7 +1099,7 @@ class RodOnSheet(HexSheet):
         hy = 0.5 * box.lengths[1] * span
         declared = params["view_z_half"]
         hz = (float(declared) if declared is not None
-              else float(params["rod_height"]) + 1.5)
+              else float(params["plane_z"]) + float(params["rod_height"]) + 1.5)
         return np.array([(x, y, 0.0) for x in (-hx, hx) for y in (-hy, hy)]
                         + [(0.0, 0.0, hz), (0.0, 0.0, -hz)])
 
@@ -1088,22 +1113,30 @@ class RodOnSheet(HexSheet):
         test and not worth a runtime check on every build.
         """
         params = self.new_params()
+        # TWO COORDINATES, and keeping them apart is the whole of this method now
+        # that the membrane can be lifted off the container's midplane. `h` is the
+        # rod's CLEARANCE above the membrane, which is what the cutoff is about;
+        # `z` is where that puts it in the world, which is what the leash -- centred
+        # on the ORIGIN, not on the membrane -- is about.
         h = float(params["rod_height"])
+        plane = float(params["plane_z"])
+        z = plane + h
         problems = []
-        if h > control.leash[1]:
+        if z > control.leash[1]:
             problems.append(
-                f"rod_height {h} is outside the leash's z half-extent "
-                f"{control.leash[1]}: the rod would be clamped down to the limit "
-                f"on the first frame")
+                f"the rod starts at z {z} (plane {plane} + rod_height {h}), outside "
+                f"the leash's z half-extent {control.leash[1]}: it would be clamped "
+                f"down to the limit on the first frame")
         if h <= rod_cutoff:
             problems.append(
                 f"rod_height {h} is inside the rod-membrane cutoff {rod_cutoff:.2f}: "
                 f"the rod starts already in contact")
-        if control.leash[1] < rod_cutoff:
+        if control.leash[1] - plane < rod_cutoff:
             problems.append(
-                f"the leash's z half-extent {control.leash[1]} is inside the "
-                f"rod-membrane cutoff {rod_cutoff:.2f}: the rod can never be "
-                f"lifted clear of the membrane")
+                f"the leash reaches z {control.leash[1]}, only "
+                f"{control.leash[1] - plane:.2f} above the membrane at {plane}, "
+                f"which is inside the rod-membrane cutoff {rod_cutoff:.2f}: the rod "
+                f"can never be lifted clear of the membrane")
         return problems
 
 

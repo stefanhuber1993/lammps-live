@@ -236,6 +236,27 @@ PLAYGROUND = Playground(
         # (2.5 tau/s) and 30 sigma in 48 (2.1). So the rule for this number is
         # "the least the demo needs", not "round it up for safety".
         z_half=13.0,
+        # LIFT THE MEMBRANE OFF THE MIDPLANE, because this scenario's interesting
+        # direction is DOWN and it was spending half its container on headroom
+        # nothing uses.
+        #
+        # The rod needs 3.5 sigma above the membrane -- that is the whole of what
+        # it wants up there, just enough to start out of contact -- and everything
+        # after that is depth to invaginate into. With the plane at 0 the leash
+        # gave it 10 sigma down, two rod lengths, and 10 sigma up that nothing
+        # ever went near. At 5.0 the same leash gives 15 down (three rod lengths)
+        # and 5 up, which is still 1.5 sigma of room above where the rod starts and
+        # comfortably clear of the rod-membrane cutoff, so it can still be lifted
+        # off the membrane entirely. RodOnSheet.verify_reach pins all three of
+        # those, and tests/test_rod_wrapping.py runs it.
+        #
+        # It costs nothing. The container is the same depth as before -- which
+        # matters, because an over-deep box costs ~20% in the pair loop for no
+        # extra pairs (see `z_half` below) -- and the leash and the frame are
+        # centred on the ORIGIN rather than on the membrane, so raising the plane
+        # also lifts the membrane's image into the top of the picture and puts the
+        # space the invagination happens in where the eye is already looking.
+        plane_z=5.0,
         settle_steps=1000,
         # HOW FAST THIS RUNS, and where the limit actually is. Two things set the
         # pace and only one of them is here.
@@ -308,8 +329,8 @@ PLAYGROUND = Playground(
         # needs the rod to go DOWN past the membrane's own surface until a neck can
         # close over it, and then to stand upright inside what it has made. 10
         # sigma of z is two rod lengths of depth, which is enough room for all
-        # three stages and still leaves the container floor (z_half = 15 above)
-        # clear. The 14 across is the same doubling: it is what lets a wrapped rod
+        # three stages and still leaves the container floor (z_half = 13 above)
+        # clear -- the rod sweeps to 12.5 when it stands end-on at the limit. The 14 across is the same doubling: it is what lets a wrapped rod
         # be dragged sideways far enough to see whether the invagination travels
         # with it or the membrane hands it on.
         leash=LEASH,
