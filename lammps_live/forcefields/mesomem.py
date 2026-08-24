@@ -53,7 +53,11 @@ C0 = 0.0           # spontaneous curvature (0 -> flat preferred)
 
 # Term labels, shared by the energy panels and the verifier so a label can never
 # drift between them.
-ISO = "isotropic  (repel + attract)"
+# "van der Waals" rather than "isotropic": it is the term everyone already has a
+# name for -- a hard core with an attractive tail -- and the panels and the
+# two-bead connector both show the short form (everything before the bracket), so
+# that name is what the reader is left with.
+ISO = "van der Waals  (repel + attract)"
 TILT = "tilt  (directors normal to bonds)"
 SPLAY = "splay  (neighbour directors align)"
 
@@ -155,6 +159,26 @@ class MesoMem(ForceField):
 
     def interaction_cutoff(self, params):
         return float(params["rc"])
+
+    def pair_landmarks(self, params):
+        """The three radii the potential's story is told against (see
+        ForceField.pair_landmarks), inside out.
+
+        sigma is where the 4-2 core takes over from the attractive branch and the
+        isotropic term turns from a pull into a wall; wc is where the orientational
+        weight w(r) vanishes, so the tilt AND splay terms are exactly zero outside
+        it; rc is where everything stops. sigma is the force field's length unit
+        and therefore fixed at 1; the other two are live dials, so a ring moves
+        when its slider does.
+
+        wc carries the TILT index rather than the splay one because both terms
+        share it and tilt is the larger of the two by an order of magnitude at
+        these coefficients (k_tilt = 12 against k_splay = 1) -- the ring is
+        labelled for the term whose arrival the hand actually notices.
+        """
+        return (("sigma", SIGMA, 0),
+                ("wc", float(params["wc"]), 1),
+                ("rc", float(params["rc"]), 0))
 
     # ---- the Python reference expression ------------------------------------
 

@@ -160,6 +160,54 @@ def _coordination(state, pairs, params):
     return 2.0 * len(pairs) / n / max(pairs.dilution, 1e-9)
 
 
+# --- the two-bead tutorial ----------------------------------------------------
+# Both of these are statements about the FIRST TWO particles, which is meaningless
+# on a membrane and is exactly the readout the bead-and-partner scene wants: the
+# force field as a function of one separation and one angle, with the numbers on
+# screen while the hand moves. See scenario.BeadAndPartner.
+
+@observable("pair_separation", "separation", unit=" sigma", every=1)
+def _pair_separation(state, pairs, params):
+    """Centre-to-centre distance between the first two particles.
+
+    Every one on the energy panel has a landmark on this scale -- sigma is where
+    the core takes over, wc is where the orientational terms switch on, rc is
+    where everything stops -- so this is the x-axis the panels are being read
+    against, said out loud. Every frame (`every=1`): it is two subtractions, and it
+    is what the hand is changing.
+    """
+    p = state.positions
+    if len(p) < 2:
+        return float("nan")
+    d = p[1] - p[0]
+    if state.box is not None:
+        d = state.box.minimum_image(d[None, :])[0]
+    return float(np.linalg.norm(d))
+
+
+@observable("pair_director_angle", "director vs. bond", unit=" deg", every=1,
+            needs_directors=True)
+def _pair_director_angle(state, pairs, params):
+    """Angle between the FIRST particle's director and the line joining the pair.
+
+    The quantity the tilt term is built on: it penalises (n . rhat), so 90 degrees
+    -- the director broadside to its neighbour -- is what a flat membrane looks
+    like locally and what the term is holding, and driving this away from 90 is
+    what makes the tilt bar on the energy panel move. Reported for the driven
+    particle, since the partner's is fixed by construction.
+    """
+    p, d = state.positions, state.directors
+    if d is None or len(p) < 2:
+        return float("nan")
+    r = p[1] - p[0]
+    if state.box is not None:
+        r = state.box.minimum_image(r[None, :])[0]
+    norm = np.linalg.norm(r) * np.linalg.norm(d[0])
+    if norm < 1e-12:
+        return float("nan")
+    return float(np.degrees(np.arccos(np.clip(float(r @ d[0]) / norm, -1.0, 1.0))))
+
+
 @observable("mean_tilt_deg", "mean director tilt", unit=" deg", every=4,
             needs_directors=True)
 def _mean_tilt(state, pairs, params):

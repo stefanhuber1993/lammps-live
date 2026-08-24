@@ -116,12 +116,29 @@ TORQUE_ARC_WIDTH = 3
 TORQUE_ARC_HEAD_LEN = 9
 
 # TORQUE RINGS -- what a torque drive draws instead (see Renderer._draw_torque_ring).
-# A real circle in the scene, in the plane the rotation happens in, so the camera
-# turns it into the ellipse that plane is actually seen as. Radii are multiples of
-# the bead's WORLD radius, and both are outside the bead: the ring has to pass
-# behind its own bead for the near/far halves to be tellable apart.
-TORQUE_RING_APPLIED_RADIUS = 1.30   # x bead radius (green, your steering torque)
-TORQUE_RING_REACTION_RADIUS = 1.75  # x bead radius (red, the membrane's answer)
+# A real curve in the scene, turning about the axis the rotation is about, so the
+# camera foreshortens it exactly as much as that plane is foreshortened. Radii are
+# multiples of the bead's WORLD radius, and both are outside the bead: the glyph
+# has to pass behind its own bead for the near and far parts to be tellable apart.
+# Well apart from each other, too -- seen nearly edge on the two lie almost along
+# the same line, and then most of what separates them is how long that line is.
+TORQUE_RING_APPLIED_RADIUS = 1.45   # x bead radius (green, your steering torque)
+TORQUE_RING_REACTION_RADIUS = 2.05  # x bead radius (red, the membrane's answer)
+# How far the glyph advances ALONG its own axis over a full turn, as a fraction
+# of its radius -- it is one turn of a right-handed screw, not a flat circle. A
+# flat circle has a degenerate view: seen edge on it is a straight line, which on
+# this drive is the one thing the drawing must never look like, and the second of
+# the two control axes is edge on from the scenes' own camera by construction. A
+# helix has no such view -- edge on it is a slanted, offset curve, and the way it
+# advances is the axial vector's own direction (right-hand screw), which is the
+# last thing the axial arrow was there to say.
+TORQUE_RING_PITCH = 1.4
+# How far round a full-scale torque goes, in turns. Three quarters rather than the
+# half a flat arc used: half a turn centred on the near point is exactly the
+# monotone half of the coil, which seen edge on is a slanted stroke and still too
+# close to a straight arrow. Past a half turn the curve doubles back at each end,
+# and a stroke that hooks back on itself is not an arrow from any angle.
+TORQUE_RING_MAX_TURN = 0.75
 TORQUE_RING_WIDTH = 3.6             # px at the near edge, tapering with depth
 TORQUE_RING_HEAD_LEN = 11
 TORQUE_RING_MIN = 0.05              # hide below 5% of full scale, to declutter
@@ -185,6 +202,32 @@ POTENTIAL_COLORS = ((120, 205, 225), (250, 180, 95), (200, 140, 240))  # isotrop
 POTENTIAL_TOTAL_COLOR = (225, 228, 236)
 POTENTIAL_PANEL_BG = (10, 12, 18, 185)
 POTENTIAL_TRACK_COLOR = (58, 62, 76)
+# The two-bead scene's term-by-term connector (see
+# Renderer._draw_pair_annotation and playground/pair_probe.py). It is drawn IN the
+# scene, over whatever background that scene has, so the panel colours above --
+# which live on a dark plate of their own -- cannot simply be reused: the term
+# colours are dragged toward black by PAIR_INK_DARKEN on a light ground, where the
+# pastels they are read as bright accents on vanish.
+PAIR_CALLOUT_WIDTH = 360        # px at UI scale 1
+PAIR_CALLOUT_BG_DARK = (10, 12, 18, 210)
+PAIR_CALLOUT_BG_LIGHT = (250, 251, 253, 218)
+PAIR_INK_DARKEN = 0.42
+# How far off the bond the callout sits, in bead radii, measured perpendicular to
+# it: far enough that the box never covers either bead or the force arrows on
+# them, close enough that the leader line reads as pointing at the pair.
+PAIR_CALLOUT_OFFSET_R = 3.0
+# The bond line between the two beads, and the arrowheads on the per-term force
+# glyphs beside each number.
+PAIR_LINE_WIDTH = 2
+PAIR_GLYPH_MAX_PX = 15.0        # half-length of a full-scale force glyph
+PAIR_GLYPH_HEAD_PX = 4.0
+# The landmark rings around the fixed partner (ForceField.pair_landmarks): points
+# per ring, and how solid they are drawn. Faint on purpose -- they are the scale
+# the scene is read against, not the subject of it.
+PAIR_SHELL_SAMPLES = 72
+PAIR_SHELL_ALPHA = 105
+PAIR_SHELL_LABEL_ALPHA = 235
+
 # Membrane bead fill. (The stick backbone linking neighbours in 3D, and the
 # simulation-box outline drawn around the scene, are RenderStyle.bond_color and
 # .box_color/.box_alpha -- both are faded by depth cueing toward the scene's

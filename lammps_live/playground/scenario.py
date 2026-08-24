@@ -435,6 +435,158 @@ class HexPatch(Scenario):
                          (-w, 0.0, z + h), (w, 0.0, z + h)])
 
 
+class BeadAndPartner(HexPatch):
+    """One driven bead and one bead nailed down, so the pair potential can be felt
+    one interaction at a time.
+
+    The tutorial scene of `mesomem_bead` is a single bead in an empty box: it
+    teaches the CONTROLS and, deliberately, no physics -- one bead has no
+    neighbours, so every pair term in the force field is silent. This adds the
+    smallest thing that makes them speak: a SECOND bead, held still, that the first
+    can be driven toward, past, and around.
+
+    WHY THE PARTNER IS FROZEN RATHER THAN HEAVY. What is being read here is the
+    force field as a function of one separation and two orientations, and any motion
+    of the partner turns that into a two-body problem whose answer moves while you
+    are reading it. So it is genuinely fixed: it is left OUT of the integrator group
+    (see `integrator_commands`), which pins its position and its director exactly
+    and for free -- no restraining spring to fight, and no stiff spring's own
+    timescale added to the deck. A `fix setforce` would hold the position and leave
+    the director spinning, which is half the point missed: the tilt term is about
+    the angle between a director and the line joining the pair, so the partner's
+    director has to stay where it was put.
+
+    WHAT IT IS FOR, in the order the terms come in as the beads approach:
+
+      * far apart, nothing. The energy panels sit at zero and the net is just a net.
+      * inside rc (2.5 sigma at the paper's values) the isotropic attraction turns
+        on and the driven bead is PULLED -- the first force in this app that the
+        hand did not apply.
+      * inside wc (2.0) the tilt and splay terms join, and they depend on the
+        angle, so twisting the driven bead's director now changes the force on it.
+        This is the one scene where that is a clean statement rather than an average
+        over a dozen neighbours.
+      * inside sigma the 4-2 core repels, hard. The leash cannot push through it,
+        which is worth feeling once.
+
+    The partner sits on the control plane at the RIGHT-HAND EDGE of the net, at the
+    height the driven bead starts at -- so the demo is "push right until something
+    happens", the net's own edge marks how far there is to go, and the whole
+    approach happens along one joystick axis.
+    """
+
+    name = "bead_and_partner"
+
+    params = HexPatch.params + (
+        # In the control plane, which for these playgrounds is the world xz-plane.
+        # The default puts it at the net's right edge; the playground is what has to
+        # keep the two agreeing (see mesomem_bead.py, which derives both from one
+        # number).
+        structural("partner_x", 3.0, "the fixed partner's x, in sigma"),
+        structural("partner_z", 0.0, "the fixed partner's z, in sigma"),
+        # Along +z, like the membrane's own beads: the driven bead then starts
+        # side-on to it, which is the configuration the tilt term has most to say
+        # about. Turn it to put the partner's director anywhere and read the pair
+        # off against a fixed orientation.
+        structural("partner_director", (0.0, 0.0, 1.0),
+                   "the fixed partner's director (it never moves, so this is the "
+                   "orientation the whole demo is read against)"),
+    )
+
+    def build(self, params, rng):
+        """The patch, plus the partner LAST.
+
+        Last, because the driven particle is chosen by `Control(atom="first")` and
+        that has to be the one the hand is on. It also keeps the patch's own bond
+        list -- which indexes into the patch's positions -- correct without
+        rewriting it.
+        """
+        patch = super().build(params, rng)
+        partner = np.array([[float(params["partner_x"]), 0.0,
+                             float(params["partner_z"])]])
+        director = np.asarray(params["partner_director"], dtype=float)
+        director = director / max(np.linalg.norm(director), 1e-12)
+        positions = np.vstack([patch.positions, partner])
+        directors = np.vstack([patch.directors, director[None, :]])
+        return ScenarioBuild(positions=positions, directors=directors,
+                             box=patch.box, bonds=patch.bonds)
+
+    def create_commands(self, params, build, seed):
+        """Everything up, then the partner's own orientation over the top of it.
+
+        By ID rather than by type: both beads are the same species, which is the
+        whole point -- the interaction being felt is the membrane's own, not a
+        second force field bolted on for the demo.
+        """
+        director = np.asarray(params["partner_director"], dtype=float)
+        director = director / max(np.linalg.norm(director), 1e-12)
+        pid = len(build.positions)
+        return [
+            "set group all dipole 0.0 0.0 1.0",
+            f"set atom {pid} dipole {director[0]} {director[1]} {director[2]}",
+        ]
+
+    def group_commands(self, params, controlled_id):
+        """`anchor` is the partner; `mobile` is everything else.
+
+        The partner is the LAST id, which `build` guarantees. Named groups rather
+        than a bare id on the fix so the integrator line below reads as what it is.
+        """
+        pid = self.n_particles(params)
+        return [f"group anchor id {pid}",
+                "group mobile subtract all anchor"]
+
+    def integrator_commands(self, params):
+        """The integrator, on `mobile` only -- which IS how the partner is fixed.
+
+        An atom in no integrator group has no equation of motion: forces and
+        torques still accumulate on it (and are still felt by everything else, which
+        is what makes it a partner rather than a wall) but nothing integrates them,
+        so its position and its director are exactly where they were put. That is
+        cheaper and more honest than any restraint, which would move a little, ring
+        at its own frequency, and add a stiffness to the deck that the physics being
+        demonstrated does not contain.
+
+        `nve/sphere update dipole` rather than plain `nve` because this scenario
+        exists for MesoMem, whose beads carry directors that have to be integrated.
+        Stated here rather than taken from the force field because installing ANY
+        scenario integrator suppresses the force field's global one (see
+        PlaygroundSystem._issue_setup), so this line has to be the whole answer.
+        """
+        return ["fix integrate mobile nve/sphere update dipole"]
+
+    def n_particles(self, params):
+        """How many particles this scenario builds -- the patch's sites plus one.
+
+        Its own method because `group_commands` needs the partner's id before any
+        build is in hand.
+        """
+        return len(hex_ring_2d(int(params["n_rings"]), params["a"])) + 1
+
+    def thermostat_group(self):
+        """The bath is `mobile`, not the mode's `bath`.
+
+        GameMode's bath is "everything except the driven particle", which here
+        includes the partner -- and a Langevin fix on an atom nothing integrates is
+        merely pointless, but it also makes the panel's measured temperature an
+        average over a particle that can never have any. `mobile` minus the driven
+        one is what is left, and on this scenario that is nothing at all, which is
+        the honest answer: there is no bath here, and the temperature slider says so
+        by doing nothing (see mesomem_bead.py).
+        """
+        return "mobile"
+
+    def housekeeping(self, positions, params, controlled=None, box=None):
+        """None of the patch's soft corrections.
+
+        They act on "everything except the driven particle", which here is the
+        partner -- and the partner is fixed, so a centring force on it is a force on
+        nothing. Returning None also keeps the per-frame gather out of the loop
+        entirely (see PlaygroundSystem._apply_housekeeping).
+        """
+        return None
+
+
 class HexSheet(Scenario):
     """A periodic hexagonal monolayer -- the paper's planar-stability test.
 
@@ -1466,6 +1618,10 @@ def _configured(cls, at, overrides):
 
 def hex_patch(at=None, **overrides):
     return _configured(HexPatch, at, overrides)
+
+
+def bead_and_partner(at=None, **overrides):
+    return _configured(BeadAndPartner, at, overrides)
 
 
 def hex_sheet(at=None, **overrides):

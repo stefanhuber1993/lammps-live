@@ -29,6 +29,9 @@ from .theme import (
     HAZE_STRENGTH, HBOND_COLOR, HBOND_DASH,
     HBOND_WIDTH, HEADER_TEXT_COLOR, HUD_BG, HUD_TEXT_COLOR, INPUT_VEC_COLOR,
     ION_LABEL_COLOR, MELT_MARK_COLOR, MEMBRANE_BEAD_COLOR,
+    PAIR_CALLOUT_BG_DARK, PAIR_CALLOUT_BG_LIGHT, PAIR_CALLOUT_OFFSET_R,
+    PAIR_CALLOUT_WIDTH, PAIR_GLYPH_HEAD_PX, PAIR_GLYPH_MAX_PX, PAIR_INK_DARKEN,
+    PAIR_LINE_WIDTH, PAIR_SHELL_ALPHA, PAIR_SHELL_LABEL_ALPHA, PAIR_SHELL_SAMPLES,
     PANEL_BG, PANEL_DIVIDER, PANEL_PAD, PANEL_WIDTH, PLOT_COLORS,
     POTENTIAL_COLORS, POTENTIAL_PANEL_BG, POTENTIAL_TOTAL_COLOR, POTENTIAL_TRACK_COLOR,
     PULLER_BOND_COLOR, PULLER_LABEL_BG, PULLER_LABEL_COLOR, PULLER_RADIUS_BOOST,
@@ -37,8 +40,9 @@ from .theme import (
     SPHERE_LIGHT_DIR, TEXT_COLOR, TORQUE_ARC_APPLIED_RADIUS,
     TORQUE_ARC_HEAD_LEN, TORQUE_ARC_REACTION_RADIUS, TORQUE_ARC_WIDTH,
     TORQUE_RING_APPLIED_RADIUS, TORQUE_RING_DEPTH_FADE, TORQUE_RING_DEPTH_TAPER,
-    TORQUE_RING_HEAD_LEN, TORQUE_RING_MIN, TORQUE_RING_REACTION_RADIUS,
-    TORQUE_RING_WIDTH, VECTOR_MAX_PX,
+    TORQUE_RING_HEAD_LEN, TORQUE_RING_MAX_TURN, TORQUE_RING_MIN,
+    TORQUE_RING_PITCH, TORQUE_RING_REACTION_RADIUS, TORQUE_RING_WIDTH,
+    VECTOR_MAX_PX,
 )
 
 
@@ -1067,6 +1071,324 @@ class Renderer:
             pygame.draw.line(self.screen, col, a, b, max(2, int(round(0.08 * r_px))))
             self._draw_cone(b, t, max(2.5, 0.19 * r_px), col)
 
+    # ---- the two-bead scene's term-by-term connector ------------------------
+    # What the energy panels cannot say. They report a bead's whole neighbourhood
+    # summed per term, which is the only sensible question on a membrane; on a
+    # scene of exactly two beads the sharper one is available, and this is it --
+    # at THIS separation and THIS director angle, each additive term of the force
+    # field is worth this much energy and pushes along the bond this hard, written
+    # between the two beads it is about. See playground/pair_probe.py for where the
+    # numbers come from (and why the forces are differenced off the one energy
+    # expression rather than hand-differentiated a second time).
+
+    def _pair_ink(self, color):
+        """A term colour that reads on THIS scene's background.
+
+        The panel colours are pastels chosen against the void, on a dark plate of
+        their own. The connector is drawn IN the scene, and on the light ground the
+        tutorial playgrounds use those pastels have nothing to be brighter than --
+        so they are dragged toward black instead, which keeps the term-to-colour
+        correspondence with the panels while staying legible.
+        """
+        bg = self._scene_style.background
+        luma = 0.299 * bg[0] + 0.587 * bg[1] + 0.114 * bg[2]
+        return _lerp_color(color, (0, 0, 0), PAIR_INK_DARKEN) if luma > 140 else color
+
+    def _pair_fade(self, color, alpha):
+        """`color` at `alpha` over the scene background, pre-blended.
+
+        Pre-blended rather than drawn with an alpha channel because the two draw
+        paths differ underneath: in GL mode self.screen is a transparent overlay
+        surface (where an RGBA line would punch its own alpha through to the
+        composited scene), in CPU mode it is the display itself (where the alpha is
+        simply dropped). Lerping toward the background is what both paths agree on,
+        and it is the same thing the depth cue does to every other line in here.
+        """
+        return _lerp_color(color, self._scene_style.background,
+                           1.0 - alpha / 255.0)
+
+    def _term_color(self, index):
+        return self._pair_ink(POTENTIAL_COLORS[index % len(POTENTIAL_COLORS)])
+
+    @staticmethod
+    def _pair_number(value):
+        """`value` as the callout prints it, snapped through zero on the way.
+
+        Without the snap a term that is doing nothing reads "-0.00", because the
+        difference quotient behind it really does return -0.0 for -(0 - 0) -- and a
+        minus sign in front of an exactly-zero reading is the display inventing a
+        direction for something that has none. The threshold is half of what the
+        second decimal can show, so nothing that would have printed a nonzero digit
+        is touched.
+        """
+        return f"{0.0 if abs(value) < 5e-3 else value:+.2f}"
+
+    def _draw_pair_annotation(self, camera, ann, pts, screen, radii, spec, shown):
+        """The whole annotation: landmark shells, the bond, and the callout.
+
+        Skipped entirely if either bead is cut away by the view slice or is behind
+        the lens -- an annotation on an invisible pair is a floating table of
+        numbers about nothing, and the same two numbers are on the HUD regardless.
+        """
+        i, j = ann.i, ann.j
+        if max(i, j) >= len(pts):
+            return
+        if shown is not None and not (bool(shown[i]) and bool(shown[j])):
+            return
+        a = (float(screen[i][0]), float(screen[i][1]))
+        b = (float(screen[j][0]), float(screen[j][1]))
+        if not all(math.isfinite(v) for v in a + b):
+            return
+        # ONE side decision, shared by everything that has to sit clear of the
+        # bond: `perp` is the unit normal to it, always pointing DOWN the screen.
+        # The callout goes that way, the separation label the other way, and the
+        # landmark ticks ride on the bond itself between them -- so the three
+        # cannot land on top of each other however the pair is oriented.
+        dx, dy = b[0] - a[0], b[1] - a[1]
+        length = max(math.hypot(dx, dy), 1e-6)
+        perp = (-dy / length, dx / length)
+        if perp[1] < 0.0:
+            perp = (-perp[0], -perp[1])
+        bead_r = max(float(radii[i]), float(radii[j]))
+        self._draw_pair_shells(camera, ann, pts[j], pts[i], perp, bead_r)
+        self._draw_pair_bond(ann, a, b, float(radii[i]), float(radii[j]), perp)
+        self._draw_pair_callout(ann, a, b, bead_r, perp, spec)
+
+    def _draw_pair_shells(self, camera, ann, center_world, driven_world, perp,
+                          bead_r):
+        """The force field's landmark radii as rings around the FIXED partner --
+        where the potential's behaviour changes, drawn before the bead gets there.
+
+        A landmark is a sphere, but the driven bead is held on the control plane,
+        so what it can actually cross is that sphere's intersection with its own
+        plane: a circle in the plane, projected, which the camera shows as the
+        ellipse it sees that plane as. Around the partner rather than the driven
+        bead because the partner is the one that holds still -- a ring drawn round
+        a moving bead is a ring the eye cannot use as a scale.
+        """
+        if not ann.shells:
+            return
+        if ann.plane_normal is not None:
+            n = np.asarray(ann.plane_normal, dtype=float)
+            n = n / max(float(np.linalg.norm(n)), 1e-12)
+            helper = (np.array([1.0, 0.0, 0.0]) if abs(n[0]) < 0.9
+                      else np.array([0.0, 1.0, 0.0]))
+            u = np.cross(n, helper)
+            u = u / max(float(np.linalg.norm(u)), 1e-12)
+            v = np.cross(n, u)
+        else:
+            # No plane to cut: draw the sphere as the camera sees its silhouette.
+            u, v = camera.right, camera.true_up
+        t = np.linspace(0.0, 2.0 * math.pi, PAIR_SHELL_SAMPLES, endpoint=False)
+        ring = np.cos(t)[:, None] * u + np.sin(t)[:, None] * v
+        center = np.asarray(center_world, dtype=float)
+        # Each ring is labelled where it crosses the line the driven bead is coming
+        # in ALONG, in the plane -- so the three labels lay themselves out as a
+        # ruler down the approach, always between the beads and never off the frame
+        # (which is where "at the ring's widest point" put them the moment the
+        # camera framed the pair tightly).
+        toward = np.asarray(driven_world, dtype=float) - center
+        toward = toward - float(toward @ np.cross(u, v)) * np.cross(u, v)
+        norm = float(np.linalg.norm(toward))
+        toward = toward / norm if norm > 1e-9 else u
+        for label, radius, term in ann.shells:
+            if radius <= 0.0:
+                continue
+            world = center + radius * ring
+            pts2, depth, _ = camera.project(world)
+            if not np.all(np.isfinite(depth)):
+                continue
+            ink = self._term_color(term)
+            pygame.draw.lines(self.screen, self._pair_fade(ink, PAIR_SHELL_ALPHA),
+                              True, [(float(x), float(y)) for x, y in pts2],
+                              UI.w(1))
+            tick, tick_depth, _ = camera.project_point(center + radius * toward)
+            if not math.isfinite(tick_depth):
+                continue
+            text = self.small_font.render(
+                label, True, self._pair_fade(ink, PAIR_SHELL_LABEL_ALPHA))
+            # Centred on the crossing, and pushed clear of the BEADS on the
+            # callout's side of the bond -- a bead is the width of half a landmark
+            # at this framing, so a tick label sitting on the line itself is a
+            # label sitting on a sphere. The separation goes above the bond, these
+            # go below it, the callout is further below again.
+            off = bead_r * 0.8 + UI.f(8)
+            self.screen.blit(text, (tick[0] + perp[0] * off
+                                    - text.get_width() / 2.0,
+                                    tick[1] + perp[1] * off
+                                    - text.get_height() / 2.0))
+
+    def _draw_pair_bond(self, ann, a, b, ra, rb, perp):
+        """The line joining the pair, edge to edge, with the separation on it.
+
+        Solid while the pair is inside the force field's reach and dashed outside
+        it, which is the one thing about this scene that is easy to miss and
+        impossible to misread once drawn: a dashed line means every number below is
+        exactly zero because the beads cannot see each other yet.
+        """
+        dx, dy = b[0] - a[0], b[1] - a[1]
+        length = math.hypot(dx, dy)
+        mid = (0.5 * (a[0] + b[0]), 0.5 * (a[1] + b[1]))
+        col = self._pair_ink(POTENTIAL_TOTAL_COLOR if ann.in_range
+                             else self._scene_style.dim_text_color)
+        gap = ra + rb + UI.f(6)
+        if length > gap:
+            ux, uy = dx / length, dy / length
+            p0 = (a[0] + ux * ra, a[1] + uy * ra)
+            p1 = (b[0] - ux * rb, b[1] - uy * rb)
+            if ann.in_range:
+                pygame.draw.line(self.screen, col, p0, p1, UI.w(PAIR_LINE_WIDTH))
+            else:
+                self._draw_dashed(p0, p1, col, UI.w(PAIR_LINE_WIDTH), UI(6))
+        text = self.font.render(f"r = {ann.r:.2f} sigma", True,
+                                self._scene_style.text_color)
+        # Off the bond on the side the callout is NOT on, and far enough out to
+        # clear the beads themselves: the midpoint of a bond this short is inside
+        # both spheres, and a number written there is a number written on a bead.
+        off = max(ra, rb) + UI.f(6) + text.get_height() / 2.0
+        self.screen.blit(text, (mid[0] - perp[0] * off - text.get_width() / 2.0,
+                                mid[1] - perp[1] * off - text.get_height() / 2.0))
+
+    def _draw_pair_callout(self, ann, a, b, bead_r, perp, spec):
+        """The numbers: one row per additive term, with the energy it holds, the
+        force it contributes ALONG the bond, and the torque it puts on the driven
+        bead -- plus their totals.
+
+        THREE COLUMNS BECAUSE THEY ARE THREE DIFFERENT QUESTIONS, and a term can
+        answer them independently. `U` is what the term is worth; `F` is what it is
+        doing to the hand right now (a term can be large and quiet at the bottom of
+        its well, or small and violent on the wall of the core); `torque` is what it
+        is doing to the DIRECTOR, and it is the column that shows what makes this
+        force field more than a pair potential -- the van der Waals term depends on
+        nothing but r, so its torque is identically zero, and that zero sitting
+        still while the tilt row swings is the whole meaning of "orientational".
+        """
+        w, pad = UI(PAIR_CALLOUT_WIDTH), UI(10)
+        row_h, head_h = UI(19), UI(21)
+        rows = len(ann.terms) + 1                       # the terms, plus the net
+        h = pad + head_h + UI(16) + rows * row_h + UI(19)
+        # Below the bond (`perp` points down the screen -- see
+        # _draw_pair_annotation), clear of the beads and of the force arrows drawn
+        # on the driven one, then clamped into the sim viewport so a pair driven
+        # into a corner does not push its own reading off the edge.
+        mid = (0.5 * (a[0] + b[0]), 0.5 * (a[1] + b[1]))
+        off = bead_r * PAIR_CALLOUT_OFFSET_R + UI.f(10)
+        cx, cy = mid[0] + perp[0] * off, mid[1] + perp[1] * off
+        x = max(UI(8), min(cx - w / 2.0, self.sim_width - w - UI(8)))
+        y = max(UI(8), min(cy, self.window_size[1] - h - UI(8)))
+
+        bg = self._scene_style.background
+        luma = 0.299 * bg[0] + 0.587 * bg[1] + 0.114 * bg[2]
+        plate = pygame.Surface((int(w), int(h)), pygame.SRCALPHA)
+        plate.fill(PAIR_CALLOUT_BG_LIGHT if luma > 140 else PAIR_CALLOUT_BG_DARK)
+        self.screen.blit(plate, (x, y))
+        pygame.draw.rect(self.screen, self._pair_fade(
+            self._scene_style.dim_text_color, 200), (x, y, w, h), UI.w(1))
+        # A leader from the bond to the plate's nearest edge, so a box pushed away
+        # from the pair by the viewport clamp still reads as belonging to it.
+        pygame.draw.line(self.screen, self._pair_fade(
+            self._scene_style.dim_text_color, 130), mid,
+            (max(x, min(mid[0], x + w)), y if y > mid[1] else y + h), UI.w(1))
+
+        text_col = self._scene_style.text_color
+        dim_col = self._scene_style.dim_text_color
+        # Column anchors: the label runs from the swatch, the three numbers are
+        # right-aligned at their own columns, and each number's glyph sits in the
+        # gap to its left.
+        x_label = x + pad + UI(14)
+        x_energy = x + pad + UI(164)
+        x_force = x + pad + UI(248)
+        x_torque = x + pad + UI(328)
+
+        # The angle is the tilt term's own argument, and the same quantity the
+        # `pair_director_angle` observable puts on the HUD -- named the same way
+        # here so the two obviously are one number. NaN where the particles carry
+        # no director at all, in which case there is nothing to say about it.
+        angle = ("" if ann.angle_deg != ann.angle_deg else
+                 f"   |   director vs. bond = {ann.angle_deg:.0f} deg")
+        head = self.small_font.render(f"the pair, term by term{angle}", True,
+                                      text_col)
+        self.screen.blit(head, (x + pad, y + UI(7)))
+        for label, right in (("U", x_energy), ("F along bond", x_force),
+                             ("torque on bead", x_torque)):
+            t = self.small_font.render(label, True, dim_col)
+            self.screen.blit(t, (right - t.get_width(), y + head_h + UI(2)))
+
+        knee = spec.force_feedback.ff_knee
+        ry = y + head_h + UI(18)
+        items = [(t.label, t.energy, t.radial_force, t.twist, self._term_color(k))
+                 for k, t in enumerate(ann.terms)]
+        items.append(("net", ann.total_energy, ann.total_radial_force,
+                      ann.total_twist, self._pair_ink(POTENTIAL_TOTAL_COLOR)))
+        for k, (label, energy, force, twist, col) in enumerate(items):
+            is_net = (k == len(items) - 1)
+            if is_net:
+                pygame.draw.line(self.screen, self._pair_fade(dim_col, 160),
+                                 (x + pad, ry - UI(3)), (x + w - pad, ry - UI(3)),
+                                 UI.w(1))
+            else:
+                pygame.draw.rect(self.screen, col, (x + pad, ry + UI(4),
+                                                    UI(9), UI(9)))
+            # The short name: every label here reads "name  (what it does)", and
+            # the parenthetical is for a panel with room for it.
+            name = self.small_font.render(label.split("(")[0].strip(), True,
+                                          col if is_net else text_col)
+            self.screen.blit(name, (x + pad if is_net else x_label, ry))
+            mid_y = ry + name.get_height() / 2.0
+            ev = self.small_font.render(self._pair_number(energy), True, col)
+            self.screen.blit(ev, (x_energy - ev.get_width(), ry))
+            fv = self.small_font.render(self._pair_number(force), True, col)
+            self.screen.blit(fv, (x_force - fv.get_width(), ry))
+            tv = self.small_font.render(self._pair_number(twist), True, col)
+            self.screen.blit(tv, (x_torque - tv.get_width(), ry))
+            self._draw_pair_force_glyph(
+                x_energy + UI(8), mid_y,
+                x_force - fv.get_width() - UI(6) - (x_energy + UI(8)),
+                force, knee, col)
+            # The torque as the little circular arrow the bead itself wears, at the
+            # same handedness and off the same full-scale torque -- so the glyph in
+            # the row and the arc on the bead are one instrument seen twice.
+            arc_lo = x_force + UI(8)
+            arc_hi = x_torque - tv.get_width() - UI(6)
+            radius = min(UI.f(7.0), max(arc_hi - arc_lo, 0.0) / 2.0)
+            if radius >= UI.f(4.0):
+                self._draw_torque_arc(((arc_lo + arc_hi) / 2.0, mid_y), radius,
+                                      twist / max(ann.torque_scale, 1e-9), col)
+            ry += row_h
+        # The units, once, at the bottom: three columns in three different units is
+        # exactly the situation where leaving them to be inferred is unkind.
+        units_line = self.small_font.render(
+            "eps   |   eps/sigma   |   eps per radian      (reduced units)",
+            True, self._pair_fade(dim_col, 210))
+        self.screen.blit(units_line, (x + pad, ry + UI(1)))
+
+    def _draw_pair_force_glyph(self, x, y, width, force, knee, color):
+        """A two-headed arrow saying which way this term is pushing the pair:
+        heads inward for a pull, outward for a shove, nothing at all for a term
+        that is not pushing.
+
+        Inward/outward rather than left/right because the pair is a pair -- the
+        force is equal and opposite on the two beads, and an arrow that picked one
+        screen direction would be a statement about which bead is on the left. The
+        length is tanh-scaled on the SAME knee the big red reaction arrow uses
+        (see _draw_arrow_3d), so the glyph and the arrow saturate together and a
+        glyph at full length means the same thing in both places.
+        """
+        reach = min(UI.f(PAIR_GLYPH_MAX_PX), max(width, 0.0) / 2.0)
+        span = reach * math.tanh(abs(force) / max(knee, 1e-9))
+        if span < UI.f(2.0) or reach <= 0.0:
+            return
+        cx = x + max(width, 0.0) / 2.0
+        head = UI.f(PAIR_GLYPH_HEAD_PX)
+        pull = force < 0.0
+        for sign in (-1, 1):
+            tail = (cx + sign * span, y) if pull else (cx + sign * span * 0.15, y)
+            tip = (cx + sign * span * 0.15, y) if pull else (cx + sign * span, y)
+            pygame.draw.line(self.screen, color, tail, tip, UI.w(2))
+            for dy in (-head * 0.6, head * 0.6):
+                pygame.draw.line(self.screen, color, tip,
+                                 (tip[0] - sign * head, tip[1] + dy), UI.w(2))
+
     def _draw_potential_panel(self, decomposition, x=12):
         """A compact live breakdown of an interaction energy into the force
         field's additive terms (see MDSystem.get_potential_terms): each term as a
@@ -1166,23 +1488,34 @@ class Renderer:
     @staticmethod
     def _torque_ring_points(camera, center_world, vec_world, radius_world,
                             samples_per_rad=11.0):
-        """The world-space circle a torque draws, or None if it is too small to be
+        """The world-space curve a torque draws, or None if it is too small to be
         worth drawing.
 
         `vec_world` is the torque as the axial vector it is: the direction is the
         axis the rotation is about (right-hand rule), the length is the fraction of
         that torque's display maximum. What comes back is (points (N, 3), sweep) --
-        an arc of the circle of `radius_world` about that axis, through
-        `center_world`, swept by the right-hand rule and reaching a semicircle at
-        full scale.
+        an arc about that axis, at `radius_world` from it, centred on
+        `center_world`, swept by the right-hand rule and reaching
+        `TORQUE_RING_MAX_TURN` of a turn at full scale.
 
-        PHI = 0 IS THE POINT OF THE CIRCLE NEAREST THE CAMERA, and the sweep runs
-        half either side of it. That is what keeps the arc the part of the ring
-        facing the viewer, whichever way the axis happens to point -- so the
-        arrowhead at its leading end is on the near side and reads, instead of
-        being the piece that disappears behind the bead. The alternative (a fixed
-        start, like the flat arc's "top of the ring") has no meaning once the ring
-        is a real object in the scene: there is no top.
+        ONE TURN OF A SCREW, NOT A FLAT CIRCLE: the arc also advances along its own
+        axis, by `TORQUE_RING_PITCH` of the radius per full turn, and the advance
+        is right-handed so it runs the way the axial vector points. Two things come
+        of that, and the second is the reason for it. It puts the direction of the
+        axis into the glyph, which is what the axial ARROW used to be for and what
+        a bare circle leaves out. And it has no degenerate view: a flat circle seen
+        edge on is a straight line -- indistinguishable from the force arrow this
+        drive must not appear to have, and the camera these scenes ship with sees
+        the second control axis exactly that way -- where a helix seen edge on is a
+        curve offset across the screen, which no arrow ever is.
+
+        PHI = 0 IS THE POINT NEAREST THE CAMERA, and the sweep runs half either
+        side of it. That is what keeps the drawn piece the part facing the viewer,
+        whichever way the axis happens to point -- so the arrowhead at its leading
+        end is on the near side and reads, instead of being the piece that
+        disappears behind the bead. The alternative (a fixed start, like the flat
+        arc's "top of the ring") has no meaning once this is a real object in the
+        scene: there is no top.
         """
         mag = float(np.linalg.norm(vec_world))
         if mag < TORQUE_RING_MIN:
@@ -1200,12 +1533,14 @@ class Renderer:
                 e1 = np.cross(axis, (0.0, 1.0, 0.0))
         e1 = e1 / np.linalg.norm(e1)
         e2 = np.cross(axis, e1)          # +phi turns e1 toward e2: right-handed
-        sweep = min(mag, 1.0) * math.pi
+        sweep = min(mag, 1.0) * TORQUE_RING_MAX_TURN * 2.0 * math.pi
         n = max(8, int(sweep * samples_per_rad))
         phi = np.linspace(-0.5 * sweep, 0.5 * sweep, n + 1)
-        pts = (c[None, :] + radius_world
-               * (np.cos(phi)[:, None] * e1[None, :]
-                  + np.sin(phi)[:, None] * e2[None, :]))
+        rise = radius_world * TORQUE_RING_PITCH / (2.0 * math.pi)
+        pts = (c[None, :]
+               + radius_world * (np.cos(phi)[:, None] * e1[None, :]
+                                 + np.sin(phi)[:, None] * e2[None, :])
+               + (rise * phi)[:, None] * axis[None, :])
         return pts, sweep
 
     def _ring_occluders(self, pts, depth, center_world, reach, shown):
@@ -1224,32 +1559,34 @@ class Renderer:
 
     def _draw_torque_ring(self, camera, center_world, vec_world, radius_world,
                           color, pts, screen, depth, radii, phys_r, occ):
-        """A torque drawn as what it is in the scene: a circular arrow lying in the
-        plane the rotation happens in, put through the same camera as everything
-        else.
+        """A torque drawn as what it is in the scene: one turn of a screw about the
+        axis it turns about, put through the same camera as everything else.
 
         WHY NOT A CIRCLE ON THE SCREEN, which is what this used to be. A rotation
         about an axis pointing at the camera is seen as a circle; the SAME rotation
-        about an axis lying across the screen is seen edge-on, as a straight line;
-        anything between is an ellipse. A screen-space circle throws all of that
-        away -- it says "something is turning" and nothing about what it is turning
-        around, which on a drive whose whole point is that the director can be
-        turned about two independent axes is precisely the part worth seeing. Here
-        the axis is IN the picture: the ring tips as the director tips, and going
-        edge-on is not a degenerate case to avoid but the correct reading that the
-        rotation is happening in the plane of the screen.
+        about an axis lying across the screen is seen very nearly edge on; anything
+        between is an ellipse. A screen-space circle throws all of that away -- it
+        says "something is turning" and nothing about what it is turning around,
+        which on a drive whose whole point is that the director can be turned about
+        two independent axes is precisely the part worth seeing. Here the axis is
+        IN the picture: the glyph tips as the axis tips, and its foreshortening is
+        the reading that the rotation is swinging into the plane of the screen.
 
-        Three cues carry the depth, because the projected ellipse alone is
+        Two cues carry the depth, because a projected outline on its own is
         ambiguous -- an axis tipped toward the camera and one tipped away give the
         same outline, and they are opposite rotations:
 
           IT GOES BEHIND THINGS. Clipped against the front surface of every bead it
             reaches, the same sphere test the net and the box are clipped by, so
-            the far half passes behind its own bead and the near half in front.
-          THE FAR HALF IS THINNER, tapering with depth measured in units of the
-            ring's own radius -- so a face-on ring, whose near and far are the same
-            distance away, is drawn evenly and does not pretend otherwise.
-          THE FAR HALF IS FADED toward the background, on the same measure.
+            the far part passes behind its own bead and the near part in front.
+          THE FAR PART IS THINNER AND FADED toward the background, over the depth
+            the arc actually spans and at a strength that arrives with that span --
+            so a glyph turned face-on to the camera, which has no near and no far,
+            is drawn evenly instead of being given a tilt it does not have.
+
+        And the shape itself carries the rest: see _torque_ring_points for why the
+        curve is a screw rather than a flat circle, which is what stops the nearly
+        edge-on case reading as the straight force arrow this drive does not have.
         """
         made = self._torque_ring_points(camera, center_world, vec_world,
                                         radius_world)
@@ -1258,8 +1595,6 @@ class Renderer:
         ring, _ = made
         scr, dep, _ = camera.project(ring)
         vis = np.isfinite(dep) & np.isfinite(scr[:, 0]) & np.isfinite(scr[:, 1])
-        if not np.any(vis):
-            return
         eps = 0.02          # reach exactly to a silhouette, not a pixel short
         for i in occ:
             r_px = max(float(radii[i]), 1e-6)
@@ -1267,11 +1602,22 @@ class Renderer:
                      + (scr[:, 1] - screen[i][1]) ** 2) / (r_px * r_px))
             front = depth[i] - phys_r * np.sqrt(np.clip(1.0 - rho2, 0.0, 1.0))
             vis &= ~((rho2 <= 1.0) & (dep > front + eps))
-        # Depth in units of the ring's own radius, about the bead's own depth: 0 at
-        # the near edge of the circle, 1 at the far one, 0.5 everywhere on a ring
-        # seen face on.
-        _, d_center, _ = camera.project_point(center_world)
-        t = np.clip(0.5 + (dep - d_center) / (2.0 * radius_world), 0.0, 1.0)
+        if not np.any(vis):
+            return              # entirely behind the beads, or behind the lens
+        # How far back each sample is, over the depth the arc ACTUALLY spans, and
+        # how strong a cue that span has earned. Self-normalizing on purpose: an
+        # arc turned face-on to the camera is all at one depth, and fading a near
+        # half it does not have would invent a tilt it does not have either. The
+        # strength ramps in with the span, measured against the ring's own radius,
+        # so the cue arrives as the ring tips over and is absent when it is flat
+        # on -- which is itself the reading that there is no near or far here.
+        d_lo, d_hi = float(np.min(dep[vis])), float(np.max(dep[vis]))
+        span = d_hi - d_lo
+        if span > 1e-9:
+            cue = min(1.0, span / (0.5 * radius_world))
+            t = cue * (dep - d_lo) / span
+        else:
+            t = np.zeros(len(dep))
         bg = self._scene_style.background
         last = -1
         for k in range(len(ring) - 1):
@@ -1355,7 +1701,7 @@ class Renderer:
                     brightness=None, total_potential_terms=None, box_bounds=None,
                     puller_attached=True, bead_energies=None,
                     bead_clusters=None, box_periodic=None, glyph_spheres=None,
-                    bead_tints=None, view_slice=None):
+                    bead_tints=None, view_slice=None, pair_annotation=None):
         pts = np.asarray(positions3d, dtype=float)
         screen, depth, scale = camera.project(pts)
         # Depth cueing anchored to the scene's own near->far extent, not to an
@@ -1454,7 +1800,7 @@ class Renderer:
                                total_steps, steps_per_frame, potential_terms,
                                torque_signals, torque_vectors, hud_lines,
                                debug_line, total_potential_terms,
-                               shown=shown)
+                               shown=shown, pair_annotation=pair_annotation)
 
     # ---- GPU scene: hand the beads + occluded lines to the GL pipeline ------
 
@@ -2097,7 +2443,7 @@ class Renderer:
                           total_steps, steps_per_frame, potential_terms,
                           torque_signals, torque_vectors, hud_lines,
                           debug_line, total_potential_terms=None,
-                          shown=None):
+                          shown=None, pair_annotation=None):
         # Force arrows at the puller (map control-plane (x,z) -> world x,z).
         # Everything anchored ON a particle is skipped for a scene that has none --
         # which is a real state, not a degenerate one: a remote playground holds an
@@ -2109,6 +2455,12 @@ class Renderer:
         # drawn is a vector floating in space, and the ring that would have marked
         # its bead is already gone with it. The numbers it stands for are still on
         # the header line below, which is not cut by anything.
+        # The two-bead scene's term-by-term connector, under everything anchored
+        # on the beads: the force arrows and the puller ring are what the hand is
+        # doing and have to stay on top of the reading it produces.
+        if pair_annotation is not None and len(pts):
+            self._draw_pair_annotation(camera, pair_annotation, pts, screen,
+                                       radii, spec, shown)
         puller_idx = int(np.argmax(is_puller)) if np.any(is_puller) else 0
         anchored = bool(len(pts)) and (shown is None or bool(shown[puller_idx]))
         # What is drawn at the puller, in whichever domain drives it. Same colours
@@ -2206,8 +2558,8 @@ class Renderer:
         self.screen.blit(label, (UI(10), UI(10)))
         legend = self.font.render(
             "green = your twist, red = membrane reaction   |   the stick tips the "
-            "center bead's director (WASD/mouse); arrows are the torque AXES "
-            "(right-hand rule), arcs the rotation you see"
+            "center bead's director (WASD/mouse); each ring is that torque's "
+            "rotation, drawn in the plane it turns in"
             if torque_drive else
             "green = your pull/twist, red = membrane reaction   |   drag the center bead (WASD/mouse); twist / Q-E / L-R click rotates its director",
             True, spec.render_style.dim_text_color,
@@ -2816,6 +3168,7 @@ class Renderer:
                 glyph_spheres=scene_3d.get("glyph_spheres"),
                 bead_tints=scene_3d.get("bead_tints"),
                 view_slice=scene_3d.get("view_slice"),
+                pair_annotation=scene_3d.get("pair_annotation"),
             )
         else:
             self.draw_sim(positions, is_puller, puller_pos, input_force, reaction_force,

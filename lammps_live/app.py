@@ -1101,6 +1101,9 @@ class App:
                 "control_grid": self.system.get_control_grid(),
                 "potential_terms": self.system.get_potential_terms(),
                 "total_potential_terms": self.system.get_total_potential_terms(),
+                # The two-bead scene's term-by-term connector, or None everywhere
+                # else (see MDSystem.get_pair_annotation).
+                "pair_annotation": self.system.get_pair_annotation(),
                 "torque_signals": self.system.get_torque_signals(),
                 # The two torques as world vectors, for the two RINGS at the puller
                 # (a torque is a rotation in a plane, and that is what gets drawn --

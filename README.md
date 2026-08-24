@@ -38,7 +38,7 @@ model whose parameters otherwise stay pretty abstract.
 
 | | |
 |---|---|
-| `mesomem_bead` | one bead, filling a quarter of the frame. No physics -- just the controls, for the start of a talk |
+| `mesomem_bead` | two beads: one in your hand, one nailed down at the edge of the net. Drive them together and feel the pair potential switch on, term by term |
 | `mesomem_patch` | seven beads. Pull the middle one out and feel tilt and splay resist |
 | `mesomem_patch_torque` | the same seven, twisted instead of pulled: the stick turns the middle bead's director and the ring splays after it |
 | `mesomem_sheet` | ~900 beads, periodic, so a piece of an endless membrane. Watch a deformation spread |

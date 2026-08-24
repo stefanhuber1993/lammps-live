@@ -195,6 +195,17 @@ class Playground:
     # "the setting I found interesting", and is what makes a demo reproducible.
     presets: dict = field(default_factory=dict)
     observables: tuple = ()
+    # Draw the force field's additive terms as an annotated connector BETWEEN the
+    # first two particles: the separation, the director angle, and each term's
+    # energy and radial force as live numbers, with the force field's landmark
+    # radii as rings around the second one. See playground/pair_probe.py.
+    #
+    # The first two particles, on the same argument as the `pair_separation` /
+    # `pair_director_angle` observables: it is meaningless on a membrane, where a
+    # bead has a dozen neighbours and no distinguished one, and it is the whole
+    # readout on the two-bead scene, where the pair IS the system. Declaring it
+    # anywhere else annotates an arbitrary pair, which is why it is off by default.
+    pair_annotation: bool = False
     # Temperature dial, in the force field's own units.
     temperature: tuple = (0.0, 0.5)    # (min, max)
     temperature_default: float = 0.001

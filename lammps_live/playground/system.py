@@ -21,6 +21,7 @@ from .modes import GameMode, SimMode, select_controlled
 from .faults import Fault
 from . import jitter
 from .observables import Analysis
+from .pair_probe import probe_pair
 from .rdf import InPlaneRDF, RadialRDF3D
 from .scenario import Scenario
 from .clustering import ClusterTracker, contact_cutoff
@@ -1024,7 +1025,7 @@ class PlaygroundSystem(MDSystem3D):
         The analysis works in id order, where id k sits at position k - 1, so no
         index translation is needed.
         """
-        if self.controlled_id is None:
+        if self.controlled_id is None or self.playground.pair_annotation:
             return None
         scale = (self.playground.pulled_energy_scale
                  or self.force_field.energy_scale_per_particle * 2.0)
@@ -1032,10 +1033,48 @@ class PlaygroundSystem(MDSystem3D):
             "Pulled bead energy -- additive (reduced units)", scale,
             index=self.controlled_id - 1)
 
+    def get_pair_annotation(self):
+        """The first two particles' interaction, taken apart term by term, or None.
+
+        AND IT REPLACES BOTH ENERGY PANELS, which is why the two methods around it
+        go quiet when it is on. A playground only declares this where the scene is
+        one pair (see Playground.pair_annotation), and there the pulled bead's
+        panel and the whole-system panel are the same three numbers as each other
+        AND as this -- the bead has exactly one neighbour, so its share IS the
+        system. Three copies of one reading, two of them in the corner of the
+        screen and one between the beads it is about.
+
+        Only where the playground asked for it (`Playground.pair_annotation`),
+        because on any scene bigger than a pair it annotates an arbitrary two beads
+        out of a crowd. See pair_probe.py for what is in it and how the per-term
+        forces are obtained.
+
+        Off the RENDER state, not the physics one, so the numbers can never
+        disagree with the positions of the two beads the connector is drawn
+        between -- the annotation is a label on a picture, and a label reading 1.4
+        on a bond drawn at 1.5 is worse than no label. (They are the same arrays on
+        the two-bead scene, which switches smoothing off; this is what keeps that
+        from being load-bearing.)
+        """
+        if not self.playground.pair_annotation:
+            return None
+        # The plane the driven particle is confined to, as its normal -- what turns
+        # the force field's landmark SPHERES into the circles the particle can
+        # actually cross (see PairAnnotation.plane_normal). A mode with no control
+        # plane has no pin axis and hands back None, and the renderer falls back.
+        pin = getattr(self.mode, "pin_axis", None)
+        normal = None if pin is None else tuple(np.eye(3)[pin])
+        return probe_pair(self.force_field, self._render_state(), self.params,
+                          plane_normal=normal,
+                          torque_scale=self.playground.effective_control()
+                          .reaction_torque_max)
+
     def get_total_potential_terms(self):
         """The whole system's additive energy. Comes from the SAME evaluation as
         get_potential_terms -- the energy expression runs once per analysis frame,
         not once per panel."""
+        if self.playground.pair_annotation:
+            return None
         n = max(1, len(self.all_ids))
         scale = self.force_field.energy_scale_per_particle * n
         return self.analysis.energy_panel(

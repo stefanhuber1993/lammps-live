@@ -24,7 +24,7 @@ os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 
 from lammps_live.ui.camera import Camera3D
 from lammps_live.ui.renderer import Renderer
-from lammps_live.ui.theme import TORQUE_RING_MIN
+from lammps_live.ui.theme import TORQUE_RING_MAX_TURN, TORQUE_RING_MIN
 
 CENTER = np.zeros(3)
 RADIUS = 0.8
@@ -41,23 +41,39 @@ def _ring(vec, radius=RADIUS, camera=None):
                                         np.asarray(vec, dtype=float), radius)
 
 
-def test_a_ring_is_a_circle_in_the_plane_the_rotation_happens_in():
-    """Perpendicular to the axis, at the radius asked for, about the bead. That is
+def test_a_ring_turns_about_the_axis_at_the_radius_asked_for():
+    """One turn of a screw about the torque's axis: every point is `RADIUS` from
+    that axis, and the advance ALONG it is even and centred on the bead. That is
     the whole geometric claim -- everything else is where the camera puts it."""
     for axis in ((0, 0, 1), (0, 1, 0), (1, 0, 0), (0.3, -0.5, 0.81)):
         axis = np.asarray(axis, dtype=float)
         axis /= np.linalg.norm(axis)
         pts, _ = _ring(axis * 0.7)
         rel = pts - CENTER
-        assert np.allclose(np.linalg.norm(rel, axis=1), RADIUS)
-        assert np.allclose(rel @ axis, 0.0, atol=1e-12), f"{axis} is not the normal"
+        along = rel @ axis
+        assert np.allclose(np.linalg.norm(rel - np.outer(along, axis), axis=1),
+                           RADIUS), f"{axis}: not a constant radius about the axis"
+        # Even advance, and as much of it one side of the bead as the other.
+        assert np.all(np.diff(along) > 0.0), f"{axis}: the screw does not advance"
+        assert np.allclose(np.diff(along), np.diff(along)[0])
+        assert along[0] == pytest.approx(-along[-1])
 
 
-def test_the_sweep_grows_with_the_torque_and_stops_at_a_semicircle():
-    """Length of the vector is how far round it goes -- a semicircle at full scale,
-    and no further when the reaction runs past its ceiling, or a big enough torque
-    would close the ring and stop reading as an arrow at all."""
-    for mag, expect in ((0.25, 0.25 * math.pi), (1.0, math.pi), (3.0, math.pi)):
+def test_the_screw_advances_the_way_the_axis_points():
+    """Right-handed, so the advance carries the axial vector's own direction -- the
+    one thing the straight arrow said that a bare circle would have dropped."""
+    for axis in ((0.0, 0.0, 1.0), (0.0, 0.0, -1.0), (0.0, 1.0, 0.0)):
+        axis = np.asarray(axis, dtype=float)
+        pts, _ = _ring(axis * 0.8)
+        assert float((pts[-1] - pts[0]) @ axis) > 0.0, f"{axis} advances backwards"
+
+
+def test_the_sweep_grows_with_the_torque_and_stops_at_the_full_turn():
+    """Length of the vector is how far round it goes -- `TORQUE_RING_MAX_TURN` of a
+    turn at full scale, and no further when the reaction runs past its ceiling, or
+    a big enough torque would wind the coil closed and stop reading at all."""
+    full = TORQUE_RING_MAX_TURN * 2.0 * math.pi
+    for mag, expect in ((0.25, 0.25 * full), (1.0, full), (3.0, full)):
         _, sweep = _ring((0.0, 0.0, mag))
         assert sweep == pytest.approx(expect)
 
@@ -69,15 +85,17 @@ def test_a_negligible_torque_draws_nothing():
 
 
 def test_the_ring_sweeps_the_way_the_right_hand_says():
-    """Seen from +z, a torque about +z runs counter-clockwise. The sense is the
-    only thing the arrowhead is there to say, and it is the thing a flat circle
-    could not get right for an axis it did not know about."""
-    pts, _ = _ring((0.0, 0.0, 0.8))
-    start, end = pts[0], pts[-1]
-    assert float(np.cross(start, end)[2]) > 0.0
-    # ...and the other way about -z, which is the same rotation seen from behind.
-    pts, _ = _ring((0.0, 0.0, -0.8))
-    assert float(np.cross(pts[0], pts[-1])[2]) < 0.0
+    """Seen from +z, a torque about +z runs counter-clockwise. The sense is what
+    the arrowhead is there to say, and it is the thing a flat circle could not get
+    right for an axis it did not know about. Checked step by step rather than
+    end to end -- past a half turn the two ends no longer say which way round it
+    got there.
+    """
+    for sign in (1.0, -1.0):
+        axis = np.array([0.0, 0.0, sign])
+        pts, _ = _ring(axis * 0.8)
+        turn = np.cross(pts[:-1], pts[1:]) @ axis
+        assert np.all(turn > 0.0), f"about {axis}: it turns the other way"
 
 
 def test_the_arc_is_centred_on_the_point_nearest_the_camera():
@@ -91,24 +109,44 @@ def test_the_arc_is_centred_on_the_point_nearest_the_camera():
     assert d[0] == pytest.approx(d[-1])
 
 
+def _aspect(camera, vec):
+    """How round the glyph projects: the ratio of the two principal axes of its
+    projected outline. 1 is a circle, 0 is a straight line."""
+    pts, _ = _ring(vec, camera=camera)
+    scr, _, _ = camera.project(pts)
+    scr = scr - scr.mean(axis=0)
+    s = np.linalg.svd(scr, compute_uv=False)
+    return s[1] / s[0]
+
+
 def test_the_camera_is_what_makes_it_an_ellipse():
     """The test the old screen-space circle could not have passed. One torque, two
-    axes, same magnitude: about the axis pointing AT the camera the ring projects
-    to a round shape; about an axis lying across the view it is seen edge on and
-    collapses to a line. Nothing here says "ellipse" -- the projection does."""
+    axes, same magnitude: turned toward the camera it projects round, turned across
+    the view it is seen nearly edge on and flattens. Nothing here says "ellipse" --
+    the projection does."""
     camera = _camera()
-    def extent(vec):
-        pts, _ = _ring(vec, camera=camera)
-        scr, _, _ = camera.project(pts)
-        scr = scr - scr.mean(axis=0)
-        # Singular values of the projected cloud: the two axes of the ellipse.
-        s = np.linalg.svd(scr, compute_uv=False)
-        return s[1] / s[0]
-    face_on = extent((0.0, -1.0, 0.0))      # axis along the view direction
-    edge_on = extent((0.0, 0.0, 1.0))       # axis across it
-    assert face_on > 0.4, "a ring turned toward the camera should read as round"
-    assert edge_on < 0.02, "a ring seen edge on should read as a line"
-    assert face_on > 20.0 * edge_on
+    face_on = _aspect(camera, (0.0, -1.0, 0.0))     # axis along the view direction
+    tilted = _aspect(camera, (0.0, -0.7, 0.7))
+    edge_on = _aspect(camera, (0.0, 0.0, 1.0))      # axis across it
+    assert face_on > 0.6, "turned toward the camera it should read as round"
+    assert face_on > tilted > edge_on, "and flatten as the axis swings away"
+    assert edge_on < 0.25, "seen edge on it should read as flat"
+
+
+def test_edge_on_is_still_not_a_straight_line():
+    """Why the glyph is a screw and not a flat circle. A circle seen edge on IS a
+    line, and a line at the puller of a drive that pushes nothing is the one
+    reading the drawing must not admit -- it is the force arrow, which this
+    playground deliberately does not have. The coil hooks back at both ends
+    instead, and no camera angle takes that away.
+
+    A quarter of the axes in the shipped scene are exactly this case: the camera
+    sits on the control plane's normal and the second torque axis lies across it,
+    so "nearly edge on" is not a corner to wave off -- it is half the stick.
+    """
+    camera = _camera()
+    flat = _aspect(camera, (0.0, 0.0, 1.0))
+    assert flat > 0.05, "a full-scale coil seen edge on has collapsed to a line"
 
 
 def test_only_the_beads_the_ring_reaches_can_hide_it():
@@ -196,3 +234,20 @@ def test_a_force_drive_still_draws_its_arrows_and_its_flat_arcs(renderer,
     down -- the one axis a circle drawn flat is honest about."""
     calls = _overlay(renderer, monkeypatch, "force")
     assert calls == {"arrow": 2, "arc": 2, "ring": 0}
+
+
+def test_a_glyph_hidden_behind_a_bead_draws_nothing_and_does_not_crash(renderer):
+    """Every sample clipped is a real state -- a big enough bead in front, or the
+    puller swinging behind one -- and the depth cue is computed off the samples
+    that survived, so it has to be checked for having none."""
+    camera = _camera()
+    pts = np.array([[0.0, 0.0, 0.0], [0.0, -3.0, 0.0]])   # one bead between us
+    screen, depth, scale = camera.project(pts)
+    renderer._scene_style = _spec("torque").render_style
+    occ = renderer._ring_occluders(pts, depth, pts[0], reach=9.0, shown=None)
+    assert list(occ) == [0, 1]
+    # The screen radius of the near bead is huge (it is right in front of the
+    # lens), so it covers the whole glyph.
+    radii = np.array([float(0.5 * scale[0]), 4000.0])
+    renderer._draw_torque_ring(camera, pts[0], np.array([0.0, 0.0, 1.0]), 0.8,
+                               (0, 255, 0), pts, screen, depth, radii, 0.5, occ)

@@ -290,6 +290,20 @@ class MDSystem(ABC):
         -> nothing drawn."""
         return None
 
+    def get_pair_annotation(self):
+        """Optional (3D): ONE pair of particles taken apart term by term, drawn as
+        an annotated connector between them -- separation, director angle, and each
+        additive term's energy and radial force as live numbers.
+
+        A `playground.pair_probe.PairAnnotation`, or None (the default). This is
+        the two-particle counterpart of get_potential_terms: the panels answer "how
+        much of each term is in this bead's whole neighbourhood", which on a scene
+        of exactly two beads is a question with a much sharper version -- what each
+        term is worth at THIS separation and THIS angle, written between the two
+        beads it is about.
+        """
+        return None
+
     def get_box_bounds_3d(self):
         """Optional (3D): the simulation box to outline in the scene, as
         (xlo, xhi, ylo, yhi, zlo, zhi) in world units, or None to draw no box.
@@ -355,10 +369,11 @@ class MDSystem(ABC):
     def get_torque_vectors(self):
         """Optional: (applied, reaction) torques as world 3-vectors -- the axes the
         two rotations are about, by the right-hand rule -- each normalized so 1.0 is
-        its own display maximum. Drawn as the two arrows at the puller on a system
-        whose input is a TORQUE rather than a force (spec.control_drive); a force
-        drive has real force vectors to draw there instead and returns None, which
-        is also the default."""
+        its own display maximum. Drawn at the puller as two RINGS, each the circle
+        of the rotation in the plane it happens in, on a system whose input is a
+        TORQUE rather than a force (spec.control_drive). A force drive has real
+        force vectors to draw there instead and returns None, which is also the
+        default."""
         return None
 
     def get_box_periodic(self):

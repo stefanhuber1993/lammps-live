@@ -179,6 +179,22 @@ class ForceField(ABC):
         to build the pair list for the energy decomposition and observables."""
         return 0.0
 
+    def pair_landmarks(self, params):
+        """The separations where this force field's behaviour CHANGES -- a term
+        switching on, a branch of one taking over -- as
+        ((label, radius, term_index), ...) in increasing radius.
+
+        Drawn by the two-bead scene as rings around the fixed partner, coloured by
+        the term each landmark belongs to (`term_index` indexes
+        energy_terms_labels), so the shells the driven bead crosses are visible
+        before it crosses them. They are read off the LIVE parameters, so dragging
+        the rc or wc slider moves the ring it names.
+
+        Empty (the default) -> a force field with nothing to point at, or one
+        nobody has asked to be explained this way. See pair_probe.py.
+        """
+        return ()
+
     def extended_pairs(self, state, pairs, params):
         """Extra pairs to append to the analysis list, or None.
 
