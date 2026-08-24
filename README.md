@@ -109,6 +109,12 @@ that undoes all of it. 3 and 4 are scene back and forward. Every scene shows
 Play, Pause and Reset buttons for the same three actions, and Space, R and Tab
 are the keyboard twins.
 
+The remote scenes' Connect card takes the stick while it is up, because it is
+modal and there is no simulation behind it to steer: left and right pick a
+button, and the trigger presses the one with the cyan ring on it. Standing in
+front of a room with a stick in one hand, reaching back for a trackpad to press
+Connect is exactly the kind of thing that goes wrong in public.
+
 The thrust lever cuts the scene open, and it's a position, not a button: shove it
 to either stop and there's no cut at all, and anywhere in between the view
 narrows to a slab 15% of the box thick, square-on to whichever direction you're

@@ -876,13 +876,28 @@ class App:
         what the trigger means everywhere; the puller is grabbed and released with
         B, and by moving the focus off the viewport.
 
-        The remote connect panel is modal, so while it is up the only buttons that
-        still fire are 3/4: switching away is how you leave the card, and it costs
-        the session nothing (the job, the tunnel and the server survive, see
-        RemotePanel.detach_system). Everything else -- the focus, the trigger,
-        reset -- belongs to a scene that is not running yet. The device state is
-        still recorded, so a button held through the panel does not fire the moment
-        the panel closes.
+        THE CONNECT PANEL REMAPS ALL OF THIS WHILE IT IS UP, because it is modal and
+        it is the one place a demo can get stuck without a mouse: the GPU is not
+        connected, so there is nothing for the stick to steer, and every button that
+        matters -- Connect, Cancel, Disconnect, Close -- is on the card. So while it
+        shows:
+
+            hat left/right    move between the card's buttons
+            stick left/right  the same, latched (see RemotePanel.push_axis, driven
+                              from _route_stick -- this method only sees the hat)
+            1 (trigger)       press the focused button
+            3 / 4             previous / next playground, as everywhere
+
+        Nothing else fires. The trigger's usual meaning (start/stop the run) has
+        nothing to act on behind a card that is up precisely because no run exists
+        yet, so it is free to mean "click" -- and it is the button a hand already
+        reaches for. Reset and the focus keys stay out: they belong to a scene that
+        is not running. All of it needs the FOCUS ON THE VIEWPORT, so a hat that was
+        walking the slider panel when the card came up keeps doing that rather than
+        silently changing meaning under the hand.
+
+        The device state is still recorded either way, so a button held through the
+        panel does not fire the moment the panel closes.
         """
         buttons = self.source.poll_buttons()
         hat = self.source.poll_hat()
@@ -891,6 +906,11 @@ class App:
         self._prev_buttons = buttons
         self._prev_hat = hat
         if self.remote_panel.visible:
+            if self.focus.on_viewport:
+                if hat_moved and hat[0]:
+                    self.remote_panel.step_focus(1 if hat[0] > 0 else -1)
+                if config.JOYSTICK_PLAY_PAUSE_BUTTON in fired:
+                    self.remote_panel.activate_focus()
             self._cycle_system_buttons(fired)
             return
 
@@ -916,8 +936,8 @@ class App:
         """Send this frame's stick deflection where the focus points it, and hand
         back what is left for the puller.
 
-        There are three things the stick can drive and the focus picks exactly
-        one, so the other two must read a real zero rather than last frame's
+        There are four things the stick can drive and the focus picks exactly
+        one, so the others must read a real zero rather than last frame's
         value:
 
           * a focused slider -- left/right walks its value, with the deadzone and
@@ -926,6 +946,8 @@ class App:
             ControlFocus.row_step). Both axes are the panel's while it holds the
             focus, which is what lets a whole demo be driven without the hand
             leaving the stick: pick the row, set the value, pick the next;
+          * the connect card's buttons, while that card is up -- it is modal and
+            there is no simulation behind it to drive (see RemotePanel.push_axis);
           * the turntable camera, on a playground with nothing to pull: the stick
             flies around the box and the twist axis dollies in and out;
           * the puller, which is what a game-mode playground has always done with
@@ -938,6 +960,16 @@ class App:
         if self.input_mode != "joystick":
             self._stick_target = "puller"
             return jx, jy, yaw
+        # The connect card first, and it takes the stick outright: it is modal, and
+        # what is behind it is a scene with no simulation in it yet. Left/right walks
+        # its buttons (the trigger presses one -- see _poll_device_buttons); up/down
+        # and the twist axis are simply dropped, because there is nothing on the card
+        # for them to mean. Only from the viewport, so a hand that was setting a
+        # slider when the card appeared keeps setting it.
+        if self.remote_panel.visible and self.focus.on_viewport:
+            self._stick_target = "panel"
+            self.remote_panel.push_axis(jx)
+            return 0.0, 0.0, 0.0
         if not self.focus.on_viewport:
             self._stick_target = "slider"
             # Which row first, then its value: a frame that does both would move

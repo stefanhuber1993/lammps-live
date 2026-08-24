@@ -21,15 +21,26 @@ playground. What follows from that is the behaviour a conference talk needs --
     and takes nothing away. The card comes up saying the GPU is held and what is
     running on it; the run you left is still running, and going back to it is one
     socket.
-    CONNECTING on the other one moves the allocation: the far side closes the
-    simulation it was holding and builds this one in its place, on the same node,
-    through the same tunnel, with the same job (see session.switch_playground).
-    Nothing queues, and nothing asks for a one-time code a second time.
+    CONNECTING on the other one moves the allocation: the far side sets the
+    simulation it was holding ASIDE and builds this one in its place, on the same
+    node, through the same tunnel, with the same job (see
+    session.switch_playground). Nothing queues, and nothing asks for a one-time code
+    a second time.
 
 -- so the GPU is requested once, at the start, and the rest of the hour is spent
-switching between demos. What a switch costs is the state of the run being left
-behind, which is the honest price and the reason it takes a button press rather
-than happening on Tab.
+switching between demos. A switch used to cost the state of the run being left
+behind, which is why it takes a button press rather than happening on Tab; it does
+not any more (the far side parks it and puts it back -- see
+server.FrameServer.switch_playground), and what it costs now is about a second of
+rebuild.
+
+DRIVEABLE FROM THE STICK, not just the mouse. This card is modal, and it is up
+precisely when there is no simulation for the joystick to steer -- so while it
+shows, left/right (the hat, or the stick's own x axis) walks its buttons and the
+trigger presses the one with the cyan ring on it. Which matters because standing in
+front of a room with a joystick in one hand and reaching back for a trackpad to
+press Connect is the kind of thing that goes wrong in public. See `push_axis` /
+`step_focus` / `activate_focus` below, and App._poll_device_buttons for the mapping.
 
 NOTHING HERE BLOCKS. Every step runs on the session's worker thread, the switch
 included; this reads its state once per frame. The app keeps drawing at 60 fps
@@ -81,6 +92,17 @@ class RemotePanel:
             "close": Button("close", "Close (N)"),
         }
         self._shown = ()               # which buttons are on screen right now
+        # WHICH BUTTON THE JOYSTICK IS ON. The card is modal and it is the one place
+        # in the app a demo can get stuck without a mouse: the GPU is not connected
+        # yet, so there is nothing for the stick to steer and every button that
+        # matters is here. Left/right (the hat, or the stick's own x axis) walks
+        # these; the trigger presses one. See App._poll_device_buttons.
+        #
+        # An index into `_shown`, which is rebuilt every frame as the session
+        # changes state -- so `_aim_focus` re-points it whenever that set changes
+        # rather than leaving a stale number to be clamped into something arbitrary.
+        self.focus_button = 0
+        self._axis_armed = True
         self._last_state = None
         # What the copy button just did, and until when to say so. A copy that
         # produces no visible change is a copy the user does again, and again.
@@ -286,6 +308,81 @@ class RemotePanel:
                     return True
         return False
 
+    # ---- the joystick's way in -----------------------------------------------
+
+    @property
+    def focused_button(self):
+        """The name of the button a press would hit, or None when the card is not
+        up (or has, somehow, no buttons on it)."""
+        if not self.visible or not self._shown:
+            return None
+        return self._shown[self.focus_button % len(self._shown)]
+
+    def step_focus(self, direction):
+        """Move the focus `direction` buttons along, wrapping. True if it moved.
+
+        Wrapping rather than stopping at the ends: there are two to four buttons on
+        this card and they are in one row, so "keep pushing right" reaching the one
+        you want is the behaviour a hand expects. Nothing else on the card takes
+        left/right while it is up, so there is no other meaning to collide with.
+        """
+        if not self.visible or not self._shown or not direction:
+            return False
+        self.focus_button = ((self.focus_button + direction) % len(self._shown))
+        return True
+
+    def push_axis(self, x):
+        """One frame of the stick's left/right deflection. True if the focus moved.
+
+        A latched step, not a rate: these are four discrete buttons, so one push has
+        to mean one button however long it is held, and the stick has to come back
+        near centre before it will step again. Same Schmitt trigger, and the same two
+        thresholds, as the bead-colouring choice in the panel proper -- see
+        control_focus.Choice, which this deliberately borrows rather than inventing a
+        second feel for the same gesture.
+        """
+        from ..control_focus import CHOICE_REARM, CHOICE_STEP
+        if not self.visible:
+            return False
+        if abs(x) < CHOICE_REARM:
+            self._axis_armed = True
+            return False
+        if not self._axis_armed or abs(x) < CHOICE_STEP:
+            return False
+        self._axis_armed = False
+        return self.step_focus(1 if x > 0 else -1)
+
+    def activate_focus(self):
+        """Press the focused button. True if anything was pressed."""
+        name = self.focused_button
+        if name is None:
+            return False
+        self._act(name)
+        return True
+
+    def set_shown(self, names, active="connect"):
+        """Declare which buttons are on the card, and re-aim the joystick focus if
+        that set has changed. Called from `draw`, which is what lays them out."""
+        self._aim_focus(names, active)
+        self._shown = tuple(names)
+
+    def _aim_focus(self, names, active):
+        """Point the focus at the recommended button whenever the button SET
+        changes, and leave it alone otherwise.
+
+        The set changes exactly when the session changes state -- Connect gives way
+        to Cancel while it queues, Cancel to Disconnect when it lands -- and at those
+        moments an index is not a button any more: hold the number and "the third
+        one" is whatever happens to be third now, which is how a hand that was
+        resting on Cancel ends up on Disconnect. So each new set starts on the one
+        the card itself recommends, which is the one a press was about to mean
+        anyway.
+        """
+        if tuple(names) == tuple(self._shown):
+            return
+        self.focus_button = (list(names).index(active) if active in names else 0)
+        self._axis_armed = True
+
     def _act(self, name):
         session = self.session
         if name == "connect":
@@ -457,14 +554,18 @@ class RemotePanel:
         # over a held GPU reads as free and is not.
         self.buttons["connect"].label = ("Move GPU here" if self._is_switch()
                                          else "Connect")
-        self._shown = names
+        # The joystick's focus follows the button SET, not the index -- see
+        # `set_shown` / `_aim_focus`.
+        self.set_shown(names, "connect")
+        focused = self.focused_button
         bw, bh, gap = UI(130), UI(30), UI(10)
         bx = rect.right - UI(18) - (len(names) * bw + (len(names) - 1) * gap)
         by = rect.bottom - UI(18) - bh
         for i, name in enumerate(names):
             button = self.buttons[name]
             button.rect = pygame.Rect(bx + i * (bw + gap), by, bw, bh)
-            button.draw(screen, font, active=(name == "connect"))
+            button.draw(screen, font, active=(name == "connect"),
+                        focused=(name == focused))
 
         # On its own line above the buttons, not beside them: with three buttons
         # there is no room left on that row, and a hint that runs under a button is
@@ -478,8 +579,8 @@ class RemotePanel:
                     f"allocation is not. N hides this panel.")
             tint = BUTTON_BORDER
         else:
-            hint = ("N hides this panel, C copies the whole report. Closing the "
-                    "window cancels the job.")
+            hint = ("Stick or hat left/right picks a button, trigger presses it. "
+                    "N hides this panel, C copies the report.")
             tint = BUTTON_BORDER
         screen.blit(small.render(hint, True, tint), (x, by - UI(18)))
 

@@ -21,12 +21,25 @@ class Button:
         self.label = label
         self.rect = pygame.Rect(0, 0, 0, 0)
 
-    def draw(self, screen, font, active=False):
+    def draw(self, screen, font, active=False, focused=False):
+        """`active` is which button the caller recommends; `focused` is which one
+        the joystick is on.
+
+        Two marks rather than one, because they answer different questions and can
+        land on different buttons -- "the one you probably want" is the panel's
+        opinion and does not move, "the one a press would hit right now" is the
+        hand's and does. The focus ring is the same cyan frame the viewport and the
+        slider rows get (see control_focus.py), drawn just outside the button so it
+        does not eat into the label.
+        """
         bg = BUTTON_ACTIVE_BG if active else BUTTON_BG
         fg = BUTTON_ACTIVE_TEXT if active else BUTTON_TEXT
         pygame.draw.rect(screen, bg, self.rect, border_radius=UI(6))
         pygame.draw.rect(screen, BUTTON_BORDER, self.rect, width=UI.w(1),
                          border_radius=UI(6))
+        if focused:
+            pygame.draw.rect(screen, FOCUS_COLOR, self.rect.inflate(UI(6), UI(6)),
+                             width=UI.w(FOCUS_WIDTH), border_radius=UI(8))
         surf = font.render(self.label, True, fg)
         screen.blit(surf, surf.get_rect(center=self.rect.center))
 

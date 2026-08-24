@@ -320,6 +320,87 @@ def test_the_copy_button_is_offered_in_every_state(panel):
         assert "copy" in p._shown, state
 
 
+# ---- driving the card from the joystick --------------------------------------
+
+def test_the_stick_walks_the_cards_buttons_and_the_trigger_presses_one(panel):
+    """The card is modal and comes up when there is nothing else for the stick to
+    steer, so it has to be reachable from the device -- otherwise a demo with a
+    joystick in one hand needs a trackpad to press Connect."""
+    p, _system, session = panel
+    session.state = session_mod.DOWN
+    p.visible = True
+    p.draw(_renderer())
+    # A held allocation whose link has gone: Connect moves it, and Disconnect is on
+    # the card too (see RemotePanel.draw).
+    assert p._shown == ("copy", "disconnect", "connect", "close")
+    # It starts on the recommended button, which is the one Connect's highlight is
+    # already pointing at.
+    assert p.focused_button == "connect"
+
+    assert p.step_focus(1) and p.focused_button == "close"
+    # Wrapping, not stopping: one row of buttons, and "keep pushing right" has to
+    # arrive somewhere.
+    assert p.step_focus(1) and p.focused_button == "copy"
+    assert p.step_focus(-1) and p.focused_button == "close"
+
+    # Disconnect, because it is unambiguous: the stub records shutdowns, so this
+    # says the press reached `_act` and reached the button the ring was on rather
+    # than some other one.
+    p.step_focus(-2)
+    assert p.focused_button == "disconnect"
+    assert p.activate_focus()
+    assert session.shutdowns == 1, "the trigger should have pressed Disconnect"
+
+
+def test_the_stick_steps_once_per_push_however_long_it_is_held(panel):
+    """Four discrete buttons, so this is a latch and not a rate: without the
+    re-arm, one push sweeps the whole row in a few frames."""
+    p, _system, session = panel
+    session.state = session_mod.DOWN
+    p.visible = True
+    p.draw(_renderer())
+    start = p.focused_button
+
+    assert p.push_axis(0.9)                      # one step
+    moved = p.focused_button
+    assert moved != start
+    for _ in range(20):                          # held over: nothing more
+        assert not p.push_axis(0.9)
+    assert p.focused_button == moved
+    assert not p.push_axis(0.1)                  # back near centre: re-arms
+    assert p.push_axis(0.9)
+    assert p.focused_button != moved
+
+
+def test_the_focus_follows_the_button_set_not_the_index(panel):
+    """The buttons change as the session changes state, and an index is not a
+    button: hold the number through a state change and a hand resting on Cancel
+    ends up on Disconnect."""
+    p, _system, session = panel
+    session.state = session_mod.DOWN
+    p.visible = True
+    p.draw(_renderer())
+    p.step_focus(1)
+    assert p.focused_button == "close"
+
+    session.state = session_mod.LOGIN            # busy: copy + cancel only
+    p.draw(_renderer())
+    assert p._shown == ("copy", "cancel")
+    # Not "the second one of whatever is there now" -- the card's own recommendation.
+    assert p.focused_button in p._shown
+
+
+def test_a_hidden_card_has_no_focused_button(panel):
+    """So the app can ask unconditionally, and a stick pushed while the card is
+    down presses nothing."""
+    p, _system, _session = panel
+    p.visible = False
+    assert p.focused_button is None
+    assert not p.push_axis(1.0)
+    assert not p.step_focus(1)
+    assert not p.activate_focus()
+
+
 def test_releasing_shuts_the_session_down(panel):
     p, system, session = panel
     session.state = session_mod.READY
