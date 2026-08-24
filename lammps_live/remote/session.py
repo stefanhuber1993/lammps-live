@@ -410,8 +410,10 @@ class RemoteSession:
                 str(self.playground_asked) if self.playground_ref == self.playground_asked
                 else f"{self.playground_asked} (shipped to {self.playground_ref})"),
             f"login       {target.destination}",
-            f"allocation  {target.partition}, {target.gpus} gpu, "
-            f"{target.cpus_per_task} cores, {target.time}"
+            f"allocation  {target.partition}, "
+            + (f"{target.gres}, " if target.gres
+               else f"{target.gpus} gpu, " if target.gpus else "cpus only, ")
+            + f"{target.cpus_per_task} cores, {target.time}"
             + (f", account {target.account}" if target.account else ""),
             f"job         {self.job_id or '-'} on node {self.node or '-'}",
             f"tunnel      {target.tunnel}: 127.0.0.1:{self.local_port or target.local_port}"
@@ -829,7 +831,9 @@ class RemoteSession:
         tar = subprocess.Popen(
             ["tar", "czf", "-", "-C", parent,
              "--exclude", "__pycache__", "--exclude", "*.pyc",
-             "--exclude", "*.so", "--exclude", "*.dylib", "--exclude", "*.o",
+             "--exclude", "*.so", "--exclude", "*.dylib", "--exclude", "*.dll",
+             "--exclude", "*.o", "--exclude", "*.build.json",
+             "--exclude", "_mpi_stub", "--exclude", "_obj",
              name],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         unpack = (f"mkdir -p {self.target.deploy_dir} && "
@@ -940,8 +944,9 @@ class RemoteSession:
         # login_shell=False because the srun flags must reach the remote shell as
         # plain words; the probe command inside them is quoted by _login_shell.
         proc = self._remote(
-            f"srun --jobid={self.job_id} --ntasks=1 --gpus={self.target.gpus} "
-            f"--cpus-per-task={self.target.cpus_per_task} "
+            f"srun --jobid={self.job_id} --ntasks=1 "
+            + "".join(f"{a} " for a in self.target.gpu_request())
+            + f"--cpus-per-task={self.target.cpus_per_task} "
             + self._login_shell(self._probe_command("full")),
             timeout=900, check=False, login_shell=False)
         report = None
@@ -968,7 +973,9 @@ class RemoteSession:
 
     def _allocate(self):
         target = self.target
-        self._say(f"asking for {target.gpus} GPU on {target.partition} "
+        want = (f"{target.gres}" if target.gres else
+                f"{target.gpus} GPU" if target.gpus else "cpus only")
+        self._say(f"asking for {want} on {target.partition} "
                   f"for {target.time}", ALLOCATE)
         # NOTHING IS ASKED FOR AFTER THE SESSION HAS BEEN TOLD TO STOP. Every other
         # step reaches the cluster through `_remote`, which refuses once `_cancel`
@@ -1147,7 +1154,7 @@ class RemoteSession:
         argv = self._ssh_base() + [
             target.destination,
             "srun", f"--jobid={self.job_id}", "--unbuffered",
-            f"--ntasks={target.ntasks}", f"--gpus={target.gpus}",
+            f"--ntasks={target.ntasks}", *target.gpu_request(),
             f"--cpus-per-task={target.cpus_per_task}",
             # The srun flags are plain words and survive being joined; the command
             # itself has to be one quoted word (see _login_shell).

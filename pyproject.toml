@@ -23,6 +23,9 @@ dependencies = [
     # Only needed for --input joystick, but kept a hard dependency so a plain
     # `pip install -e .` gives a working joystick mode with no extra step.
     "sidewinder @ git+https://github.com/stefanhuber1993/sidewinder.git",
+    # The config file (~/.config/lammps-live/config.toml) is TOML, which is in
+    # the standard library from 3.11 on and a small package before it.
+    "tomli>=1.2 ; python_version < '3.11'",
 ]
 
 [project.optional-dependencies]

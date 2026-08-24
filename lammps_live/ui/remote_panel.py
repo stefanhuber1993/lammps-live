@@ -608,7 +608,7 @@ class RemotePanel:
 # asked for. These are the fields that describe the LOGIN and the ALLOCATION, which
 # is the thing being shared -- if any of them differs, the held session simply is
 # not a session for the arriving playground.
-_ALLOCATION_FIELDS = ("host", "user", "partition", "gpus", "ntasks",
+_ALLOCATION_FIELDS = ("host", "user", "partition", "gpus", "gres", "ntasks",
                       "cpus_per_task", "account", "remote_dir", "env_script",
                       "deploy_dir", "python", "profile", "tunnel")
 

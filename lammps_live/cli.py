@@ -15,8 +15,12 @@ path).
     lammps-live --playground mesomem_sheet --preset buckled --input joystick
     lammps-live --verify                        # check the force fields' energy
     lammps-live --playground ./my_idea.py       # your own file, anywhere
+    lammps-live --doctor                        # what this machine resolved to
+    lammps-live --write-config                  # a config file of your own
+    lammps-live --hpc groupbox --playground mesomem_remote   # your cluster
 
-See README.md for setup, controls, and how to write a playground.
+See README.md for setup, controls, and how to write a playground; docs/install.md
+for per-platform build options and docs/cluster-setup.md for the remote side.
 """
 import argparse
 import sys
@@ -73,6 +77,35 @@ def build_parser():
                              "SSH and Slurm machinery entirely")
     parser.add_argument("--token", default="", metavar="SECRET",
                         help="shared secret for --remote (the server's --token)")
+    parser.add_argument("--config", default=None, metavar="PATH",
+                        help="config file to use, instead of searching "
+                             "./lammps-live.toml and "
+                             "~/.config/lammps-live/config.toml (see --write-config)")
+    parser.add_argument("--hpc", "--system-name", dest="hpc", default=None,
+                        metavar="NAME",
+                        help="which [remote.systems.NAME] block of the config "
+                             "file to run remote playgrounds on, for this run "
+                             "only. Overrides the file's own `system = ...`")
+    parser.add_argument("--doctor", action="store_true",
+                        help="print what this machine resolved to -- compiler, "
+                             "architecture flags, MPI headers, config file, and "
+                             "the resolved remote target of every remote "
+                             "playground -- then exit. The thing to paste into a "
+                             "bug report")
+    parser.add_argument("--write-config", nargs="?", const="", default=None,
+                        metavar="PATH",
+                        help="write a commented starter config file (default: "
+                             "~/.config/lammps-live/config.toml) and exit. This "
+                             "is where your cluster login, your account and your "
+                             "compiler flags go, so nothing in the repo has to be "
+                             "edited to run it as someone else")
+    parser.add_argument("--build-plugin", action="store_true",
+                        help="compile the MesoMem pair style now, with the flags "
+                             "this machine resolves to, and exit. It is otherwise "
+                             "built on demand the first time a 3D scene opens")
+    parser.add_argument("--rebuild-plugin", action="store_true",
+                        help="like --build-plugin, but compile even if the cached "
+                             "library looks current")
     parser.add_argument("--gpu-hours", type=float, default=None, metavar="HOURS",
                         help="how long to ask Slurm for the GPU, in hours (e.g. "
                              "2, or 0.5 for half an hour). This is the WALL CLOCK "
@@ -97,6 +130,29 @@ def _slurm_walltime(hours):
     """
     minutes = max(1, int(round(hours * 60.0)))
     return f"{minutes // 60:02d}:{minutes % 60:02d}:00"
+
+
+def _apply_app_defaults(args, settings, parser):
+    """Fill in what the config file's [app] table says, for anything not passed.
+
+    Only defaults: a flag on the command line always wins, because the flag is
+    the thing you typed thirty seconds ago and the file is the thing you wrote
+    last month.
+    """
+    if not settings:
+        return
+    if args.target is None and settings.get("playground"):
+        args.target = str(settings["playground"])
+    if args.input == "mouse" and settings.get("input"):
+        choice = str(settings["input"])
+        if choice not in ("mouse", "keyboard", "joystick"):
+            parser.error(f'config [app] input = "{choice}" is not mouse, '
+                         "keyboard or joystick")
+        args.input = choice
+    if args.ui_scale is None and settings.get("ui_scale") is not None:
+        args.ui_scale = float(settings["ui_scale"])
+    if not args.fullscreen and settings.get("fullscreen"):
+        args.fullscreen = True
 
 
 def _print_listing():
@@ -143,9 +199,80 @@ def _run_verify(target):
     return 0 if ok else 1
 
 
+def _apply_config_selection(args):
+    """Put --config and --hpc into the environment, before anything reads them.
+
+    Through the environment on purpose: userconfig and RemoteTarget.resolved()
+    are the one door every consumer already goes through (the panel, the session,
+    the toolchain), and a second plumbing route would be a second answer to the
+    same question -- the same reasoning as --gpu-hours below.
+    """
+    import os
+    if args.config:
+        path = os.path.expanduser(args.config)
+        if not os.path.isfile(path):
+            return f"no config file at {path}"
+        os.environ["LAMMPS_LIVE_CONFIG"] = path
+    if args.hpc:
+        os.environ["LAMMPS_LIVE_SYSTEM"] = args.hpc
+    return ""
+
+
+def _write_config(path):
+    from . import userconfig
+    try:
+        written = userconfig.write_template(path or None)
+    except FileExistsError as exc:
+        print(f"{exc} already exists -- edit it, or pass a path to write "
+              "somewhere else.")
+        return 1
+    print(f"Wrote {written}\n\n"
+          "Set your login and cluster under [remote], your compiler flags under\n"
+          "[build], then check it with:  lammps-live --doctor")
+    return 0
+
+
+def _build_plugin(force):
+    """Compile the pair style now and say what it did."""
+    from .forcefields.mesomem import MESOMEM_PLUGIN
+    from .playground import plugin, toolchain
+    try:
+        chain = toolchain.detect(stub_dir_for=MESOMEM_PLUGIN.directory)
+    except toolchain.ToolchainError as exc:
+        print(f"[build] {exc}")
+        return 1
+    for line in chain.describe():
+        print(f"[build] {line}")
+    try:
+        path, what = plugin.build(MESOMEM_PLUGIN, chain=chain, force=force,
+                                  log=lambda line: print(f"[build] {line}"))
+    except toolchain.ToolchainError as exc:
+        print(f"[build] {exc}")
+        return 1
+    print(f"[build] {path}  ({what})")
+    return 0
+
+
 def main(argv=None):
     parser = build_parser()
     args = parser.parse_args(argv)
+
+    problem = _apply_config_selection(args)
+    if problem:
+        parser.error(problem)
+
+    from . import userconfig
+    userconfig.report_problems()
+
+    if args.write_config is not None:
+        return _write_config(args.write_config)
+    if args.doctor:
+        from . import doctor
+        return doctor.report()
+    if args.build_plugin or args.rebuild_plugin:
+        return _build_plugin(force=args.rebuild_plugin)
+
+    _apply_app_defaults(args, userconfig.load().app_settings(), parser)
 
     if args.list_all:
         return _print_listing()

@@ -5,15 +5,28 @@ than as flags on the command line, because it is a property of the demo -- "this
 one runs on the A100" -- and because the connect flow has to be driveable from a
 button, with nothing to type but the login prompt's answer.
 
-Every field can be overridden from the environment (LAMMPS_LIVE_REMOTE_USER,
-_HOST, _TIME, _PARTITION, _PORT, ...), which is what makes the same playground
-file work for a second person with a different account and a different scratch
-path without editing it.
+Every field can be overridden twice over -- from the CONFIG FILE (a
+`[remote.systems.NAME]` block; see userconfig.py) and then from the ENVIRONMENT
+(LAMMPS_LIVE_REMOTE_USER, _HOST, _TIME, _PARTITION, _PORT, ...). That is what
+makes the same playground file work for a second person with a different account,
+a different cluster and a different scratch path without editing it, and it is
+the whole answer to "so I am not the only one who can run this":
+
+    RemoteTarget(...) in the playground   what the DEMO needs
+    [remote] in the config file           what YOUR MACHINE is    <- persistent
+    LAMMPS_LIVE_REMOTE_*                  this run only           <- --gpu-hours
+
+The order is deliberate. The playground declares the shape of the run (a GPU, an
+hour, this many ranks); the config file says whose account and which cluster,
+because that is a property of the person and not of the demo; the environment is
+the one-off on top, which is why the CLI flags write variables rather than
+threading values down -- both places a target is resolved go through `resolved()`.
 """
 import os
 from dataclasses import dataclass, fields, replace
 
 from . import protocol
+from .. import userconfig
 
 
 @dataclass(frozen=True)
@@ -27,6 +40,13 @@ class RemoteTarget:
     # --- the allocation -------------------------------------------------------
     partition: str = "gpu_a100"
     gpus: int = 1
+    # HOW THIS SITE ASKS FOR A GPU. `--gpus=N` is Slurm 20.11 and later; plenty of
+    # clusters are older or simply configure GPUs as a generic resource, where the
+    # only spelling that works is `--gres=gpu:1` (or `gpu:a100:1`). Setting this to
+    # anything non-empty replaces `--gpus=N` with `--gres=<this>` -- which is the
+    # kind of thing that must be a config key, because it is a property of the site
+    # and there is no way to guess it from here.
+    gres: str = ""
     ntasks: int = 1
     cpus_per_task: int = 18
     # Wall clock for the allocation. This is the backstop that releases the GPU if
@@ -105,17 +125,26 @@ class RemoteTarget:
     exit_when_idle: float = 900.0
 
     def resolved(self):
-        """A copy with LAMMPS_LIVE_REMOTE_* environment overrides applied."""
-        overrides = {}
+        """A copy with the config file, then LAMMPS_LIVE_REMOTE_*, applied.
+
+        Both layers are optional and the common case is neither. A value that
+        cannot be read (a partition given as a list, `gpus = "one"`) is skipped
+        with a message rather than raised: the config file is edited by hand and
+        one bad line should cost that line, not the demo.
+        """
+        overrides = dict(userconfig.remote_overrides(self))
         for f in fields(self):
             raw = os.environ.get(f"LAMMPS_LIVE_REMOTE_{f.name.upper()}")
             if raw is None:
                 continue
-            if f.type is int or isinstance(getattr(self, f.name), int):
+            current = overrides.get(f.name, getattr(self, f.name))
+            if isinstance(current, bool):
+                overrides[f.name] = raw.strip().lower() not in ("0", "false", "no", "")
+            elif isinstance(current, int):
                 overrides[f.name] = int(raw)
-            elif isinstance(getattr(self, f.name), float):
+            elif isinstance(current, float):
                 overrides[f.name] = float(raw)
-            elif isinstance(getattr(self, f.name), tuple):
+            elif isinstance(current, tuple):
                 overrides[f.name] = tuple(raw.split())
             else:
                 overrides[f.name] = raw
@@ -137,18 +166,34 @@ class RemoteTarget:
         so loopback would be unreachable."""
         return "127.0.0.1" if self.tunnel == "jump" else "0.0.0.0"
 
+    def gpu_request(self):
+        """How to ask for the GPU, as argv -- empty on a CPU-only target.
+
+        One place, because the same request is made three times (salloc, the
+        probe's srun, the server's srun) and three copies of a site-specific
+        spelling is three chances to fix two of them.
+        """
+        if self.gres:
+            return [f"--gres={self.gres}"]
+        if self.gpus:
+            return [f"--gpus={self.gpus}"]
+        return []
+
     def salloc_args(self):
         """The allocation request, as argv. `--no-shell` is the whole trick: the
         allocation is created and the command returns, so it does not have to be
         held open by an interactive shell on a pipe -- which is what made the
         obvious `ssh host salloc ... bash` approach so fragile."""
-        args = ["salloc", "--no-shell",
-                f"--partition={self.partition}",
-                f"--gpus={self.gpus}",
-                f"--ntasks={self.ntasks}",
-                f"--cpus-per-task={self.cpus_per_task}",
-                f"--time={self.time}",
-                f"--job-name={self.job_name}"]
+        args = ["salloc", "--no-shell", f"--partition={self.partition}"]
+        # A CPU-only target asks for no GPU AT ALL rather than for zero of them:
+        # `--gpus=0` is not "never mind", it is a request some Slurm versions
+        # reject outright and others grant while binding nothing -- and a CPU
+        # cluster (profile "cluster-cpu") is a supported target, not a mistake.
+        args += self.gpu_request()
+        args += [f"--ntasks={self.ntasks}",
+                 f"--cpus-per-task={self.cpus_per_task}",
+                 f"--time={self.time}",
+                 f"--job-name={self.job_name}"]
         if self.account:
             args.append(f"--account={self.account}")
         args.extend(self.extra_salloc)

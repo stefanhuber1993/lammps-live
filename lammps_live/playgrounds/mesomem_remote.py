@@ -56,7 +56,7 @@ from ..render_style import CameraOrbit
 # phi = 0.1 is 37.41 sigma, which holds several independent membranes rather than
 # the single one the 1500-bead cell manages.
 N_BEADS = 50_000
-PHI = 0.02
+PHI = 0.04
 BOX = (N_BEADS * (math.pi / 6.0) / PHI) ** (1.0 / 3.0)
 
 # The visual style is imported, not copied: this is the same scene as the local
@@ -100,8 +100,10 @@ PLAYGROUND = Playground(
     # aggregate barely changes between frames is still free. The observables keep
     # their own declared cadences.
     analysis_energy_every=8,
-    # Where it runs. Everything here is overridable from the environment
-    # (LAMMPS_LIVE_REMOTE_USER, _TIME, _PARTITION, ...) -- see remote/target.py.
+    # Where it runs. Nothing here is a private fact: every field is overridden by
+    # a `[remote]` block in your config file (lammps-live --write-config) and then
+    # by LAMMPS_LIVE_REMOTE_* -- so a second person runs this on a second cluster
+    # without touching this file. See userconfig.py and docs/cluster-setup.md.
     remote=RemoteTarget(
         host="snellius.surf.nl",
         user="stefanh",
