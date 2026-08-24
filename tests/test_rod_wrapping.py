@@ -108,6 +108,7 @@ def test_verify_reach_catches_a_rod_placed_outside_its_leash():
     assert any("outside the leash" in p for p in problems)
 
 
+
 # --- the LAMMPS commands ------------------------------------------------------
 
 def test_pair_style_is_hybrid_and_every_type_pair_is_assigned():
@@ -627,16 +628,34 @@ def test_the_cell_shrinks_as_the_wrap_grows_and_the_runtime_notices():
         for _ in range(60):
             system.set_input_force(0.0, -30.0)
             system.step(6)
+
+        def shrink():
+            return (before - system.box.lengths[0]) / before
+
         for _ in range(200):
             system.set_input_force(0.0, 0.0)
             system.step(6)
-        after = system.box.lengths[0]
-        assert after < before, "the cell did not give up any area to the wrap"
-        # A couple of per cent, not a collapse: a barostat that ran away would
-        # show up here long before it showed up as a wrong-looking picture.
-        assert 0.0005 < (before - after) / before < 0.10
+        early = shrink()
+        for _ in range(400):
+            system.set_input_force(0.0, 0.0)
+            system.step(6)
+        late = shrink()
+
+        # IT KEEPS GIVING UP AREA AS THE WRAP GROWS, which is the claim -- and it
+        # is the claim because a fixed offset would also satisfy "the cell got
+        # smaller". Measured: 0.0004 at the first mark and 0.0012 at the second.
+        #
+        # The absolute numbers are an order of magnitude smaller than they used to
+        # be, and that is the point of the change that shrank them: this deck used
+        # to start on a lattice 26% too large in area, so the cell was contracting
+        # under its own unrelaxed tension the whole time and most of what this test
+        # measured had nothing to do with the rod. Idle, with the rod left hanging
+        # out of contact, the same number of steps now moves the cell by 0.0002.
+        assert late > 2.0 * early, f"the cell stopped following the wrap: {early} -> {late}"
+        assert 0.0008 < late < 0.10, "a couple of per cent, not a collapse"
         # The frame state carries the live cell, not the one that was asked for.
-        assert system.current_state().box.lengths[0] == pytest.approx(after)
+        assert system.current_state().box.lengths[0] == pytest.approx(
+            system.box.lengths[0])
         assert system.analysis.values()["rod_contacts"] > 50
     finally:
         system.close()

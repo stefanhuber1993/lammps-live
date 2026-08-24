@@ -688,7 +688,14 @@ class HexSheet(Scenario):
         # behind it (see RenderStyle.periodic_images).
         structural("view_aim_ahead", 0.0, "camera framing: aim this far past the centre"),
         structural("baro_press", 0.0, "target lateral pressure (tension-free)"),
-        structural("baro_damp", 2.0, "settle barostat relaxation time"),
+        # Quick, because this one has a JOB TO FINISH rather than a hand to keep
+        # up with: it runs once, at build time, with nothing watching, and what it
+        # is for is arriving at the tension-free cell before the user sees
+        # anything. At 2.0 it did not -- it left the sheet at -0.055 and the rod
+        # deck (which starts from a coarser lattice) at -0.082 and still moving,
+        # so the demo began under a lateral tension that had nothing to do with
+        # the physics being shown. See `baro_damp_run` for the other one.
+        structural("baro_damp", 0.2, "settle barostat relaxation time"),
         # The relaxation time of the barostat that KEEPS RUNNING. Ten times
         # quicker than the settle's, and the reason is that this one has to track
         # a LIVE dial: the tension-free area at T = 0.2 is 22% above the one at

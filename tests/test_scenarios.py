@@ -277,9 +277,16 @@ def test_the_sheets_barostat_outlives_the_setup_and_spares_the_driven_bead():
     assert fix.split()[2] == "membrane"
     # Zero target pressure IS the tension-free ensemble.
     assert "x 0.0 0.0" in fix and "y 0.0 0.0" in fix
-    # Quicker than the settle's, because this one tracks a live temperature dial.
+    # Quick, because this one tracks a LIVE temperature dial and should have
+    # finished before the user notices: measured, 0.2 reaches zero pressure in
+    # ~150 frames with no overshoot. (A deliberately slow one is a playground's
+    # choice, not this default's -- mesomem_rod.py sets 5.0, because there the
+    # barostat's lag IS how stiff the membrane feels under the hand.)
     params = s.new_params()
-    assert params["baro_damp_run"] < params["baro_damp"]
+    assert params["baro_damp_run"] <= 0.5
+    # And the settle's is quick too, because it has a job to finish rather than a
+    # hand to keep up with: at 2.0 it left the sheet short of its own target.
+    assert params["baro_damp"] <= 0.5
 
     # And the group it dilates exists in both modes.
     assert s.group_commands(params, controlled_id=7) == [

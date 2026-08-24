@@ -174,10 +174,26 @@ PLAYGROUND = Playground(
     # gives up to a wrap is a small strain rather than a visible squeeze.
     scenario=rod_on_sheet(
         n_cols=60, n_rows=60,
-        # The reference deck's lattice spacing. The barostat settle then relaxes
-        # it to whatever this force field's tension-free spacing actually is, so
-        # this is a starting point rather than a claim.
-        a=0.9,
+        # THIS FORCE FIELD's TENSION-FREE SPACING, measured. The reference deck's
+        # lattice is 0.9, and this used to be too, on the reasoning that the
+        # barostat settle would relax it to whatever this force field actually
+        # wants. It never got there. 0.9 is 26% too large in AREA: left to
+        # converge, the cell contracts to 0.861 of what it starts at, and the
+        # settle's 1000 steps moved it by under 1% of that. So the whole demo ran
+        # with the membrane stretched, at a lateral tension of -0.07 that drifted
+        # for as long as anyone watched -- and lateral tension is exactly what
+        # SUPPRESSES wrapping (see RodOnSheet, and `baro_press`, which is the dial
+        # for asking for it on purpose). The rod was being pushed into a membrane
+        # pulled taut by an accident of the starting lattice.
+        #
+        # Starting at the answer costs nothing and leaves the settle a fraction of
+        # a percent to remove, where converging from 0.9 costs ~4000 steps and
+        # eight seconds of build time on 3600 beads. It is a starting point rather
+        # than a claim in the other direction now: it is right for the parameters
+        # this file ships, and every one of those is a live slider, which is
+        # precisely why the barostat below has to keep running anyway.
+        a=0.775,
+
         # --- two housekeeping terms turned down, because on THIS scenario they
         # are the thing that reads as "the membrane refuses to be deformed" -----
         #
