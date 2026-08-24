@@ -95,10 +95,12 @@ the hand never has to leave the stick: push forward or back to pick the control,
 left or right to move its value. A flick is exactly one row, and holding it walks
 about two rows a second -- slow enough to let go on the one you wanted.
 
-The trigger starts and stops the simulation, on every scene, and 2 resets it to a
-fresh state; 3 and 4 are scene back and forward. Every scene shows Play, Pause
-and Reset buttons for the same three actions, and Space, R and Tab are the
-keyboard twins.
+The trigger starts and stops the simulation, on every scene, and 2 resets it --
+back to the beginning, which means the sliders too: the reason to push a dial
+somewhere absurd is to see what happens, and what you want next is one button
+that undoes all of it. 3 and 4 are scene back and forward. Every scene shows
+Play, Pause and Reset buttons for the same three actions, and Space, R and Tab
+are the keyboard twins.
 
 The thrust lever cuts the scene open, and it's a position, not a button: shove it
 to either stop and there's no cut at all, and anywhere in between the view

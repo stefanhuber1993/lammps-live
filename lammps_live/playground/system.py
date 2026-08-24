@@ -534,9 +534,30 @@ class PlaygroundSystem(MDSystem3D):
         # of leaving it stuck on "warming up".
         return InPlaneRDF(3.0 * self._spacing(), nbins=48, box=None, sample_every=1)
 
-    def reset(self):
-        """Rebuild from a fresh random state, keeping the current live parameters.
-        Used by sim mode's Reset.
+    def reset(self, restore_params=True):
+        """Put it back how it started: the playground's own parameter values, and a
+        fresh initial state. Used by sim mode's Reset, and by R everywhere.
+
+        THE PARAMETERS GO BACK TOO, which they did not use to. Reset used to keep
+        whatever the sliders were holding, on the reasoning that you are resetting
+        the STATE and not your settings. In front of an audience that is the wrong
+        default by a wide margin: half the value of these playgrounds is that you
+        can push a dial somewhere absurd, and the thing you then want is one button
+        that undoes all of it -- not a hunt back down five sliders for the value
+        each of them started at, with no record of what that was. So R means "back
+        to the beginning", both halves of it, and the sliders follow the system
+        afterwards (App._reset_simulation puts them where this left the values).
+
+        A preset counts as the beginning: `_initial_params` is snapshotted after the
+        playground's presets have been applied, so Reset on `--preset buckled`
+        returns to buckled rather than to the bare declaration.
+
+        `restore_params=False` keeps whatever the sliders hold, which is what the
+        app's automatic recovery after a blow-up wants: nobody pressed anything, so
+        the values being explored with must survive the rebuild that saves them (see
+        App._handle_faults). That is also the path the fallback ladder below exists
+        for -- with the declared values restored, its first rung is already the last
+        resort.
 
         A PARAMETER VALUE CANNOT MAKE THIS RAISE. That is the whole point: Reset is
         the way out of a simulation the sliders destroyed, so if Reset itself dies
@@ -558,6 +579,13 @@ class PlaygroundSystem(MDSystem3D):
         self.analysis = Analysis(self.force_field, self.playground.observables,
                                  **self._analysis_kwargs)
         self._unstable = None      # a rebuild is the way out of an unstable state
+        # Back to the declared values BEFORE the rebuild, so the fresh state is
+        # built with them rather than with whatever was on the sliders. That also
+        # makes the fallback ladder in `_rebuild` a formality on this path (the
+        # first rung IS the playground's own values now) rather than something a
+        # bad slider can reach -- which is the point of Reset being the way out.
+        if restore_params:
+            self._restore_params(self._initial_params)
         self._rebuild()
 
     def _rebuild(self):

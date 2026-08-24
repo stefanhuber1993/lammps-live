@@ -414,10 +414,27 @@ class App:
         idx = keys.index(self.system_key)
         self._build_system(keys[(idx + step) % len(keys)])
 
-    def _reset_simulation(self):
-        """Restart the system from a fresh initial state (e.g. re-randomize the
-        self-assembly box), keeping the current slider values, and clear the
-        derived per-run state (plots, trails, energy baseline, step count).
+    def _reset_simulation(self, restore_params=True):
+        """Put everything back to how the playground starts: a fresh initial state,
+        every parameter at its declared value, and the derived per-run state
+        (plots, trails, energy baseline, step count) cleared.
+
+        THE SLIDERS GO BACK WITH IT. Reset used to leave them exactly where they
+        were, on the reasoning that the state and the settings are separate things.
+        In front of an audience they are not: the reason to push k_tilt to 40 is to
+        see what happens, and what you want next is one button that undoes ALL of
+        it -- not a hunt back down five sliders for values nothing recorded. So R
+        (and the joystick's button 2, and the Reset button) means the beginning,
+        both halves of it, on every playground and on the remote ones too. The
+        system restores its own parameters (see PlaygroundSystem.reset and
+        RemoteSystem.reset) and the panel follows it here, in that order -- the
+        system is what the physics is running on, so it is the thing that decides
+        and the widgets are the thing that agrees.
+
+        `restore_params=False` is the AUTOMATIC recovery after a blow-up (see
+        _handle_faults), and it is the one caller that wants the old behaviour: no
+        button was pressed, so the settings someone is exploring with have to survive
+        the rebuild that saves them from it.
 
         It leaves the run in whatever state that playground STARTS in -- paused for
         a playback scene, so the fresh configuration is visible before it moves;
@@ -434,13 +451,39 @@ class App:
         wedged. Every other rebuild path in this file already waits first.
         """
         self._sim_idle()
-        self.system.reset()
+        self.system.reset(restore_params=restore_params)
+        if restore_params:
+            self._reset_controls_to_defaults()
         self.history.reset()
         self.atom_trails.reset()
         self._trail_frame_counter = 0
         self.energy_baseline = None
         self.total_steps = 0
         self.sim_playing = not self.system.spec.playback_controls
+
+    def _reset_controls_to_defaults(self):
+        """Every slider back to its spec's default, in place.
+
+        In place -- `Slider.reset` rather than fresh Slider objects -- because the
+        focus holds references to these very objects (see ControlFocus.set_stops),
+        and rebuilding them would leave the joystick driving a widget that is no
+        longer drawn. Same reason the mid-drag flag is cleared: a slider that was
+        being dragged when R was pressed must not carry the drag over onto the
+        value that just replaced it, which `reset` does for us.
+
+        The bead colouring and the view slab are deliberately NOT touched. They are
+        how the viewer is looking at the scene rather than what the scene is, and
+        resetting the physics should not also throw away the angle it was being
+        watched from.
+        """
+        spec = self.system.spec
+        self.temp_slider.reset(spec.temperature)
+        self.damping_slider.reset(spec.damping)
+        for slider, ss in zip(self.extra_sliders, spec.extra_sliders):
+            slider.reset(ss)
+        # And the values the system actually settled on win over the specs, since a
+        # rebuild is free to clamp or fall back (see _handle_faults).
+        self._sync_sliders_to_system()
 
     # How long to wait before rebuilding automatically a second time. A value that
     # destroys every fresh state (a temperature far above the melt, say) would
@@ -471,7 +514,15 @@ class App:
                 # that silently stops until you find the Play button has still
                 # failed in front of an audience.
                 was_playing = self.sim_playing
-                self._reset_simulation()
+                # KEEPING THE PARAMETERS, unlike the Reset button. Nobody pressed
+                # anything here: the simulation died of a value somebody is in the
+                # middle of exploring, and putting every dial back to its default
+                # would hide what they had just found out. It would also make the
+                # cooldown below unreachable -- a rebuild from the declared values
+                # always succeeds, so the app could never say "these settings destroy
+                # every fresh state". The fault card says what happened; the settings
+                # stay where the hand left them.
+                self._reset_simulation(restore_params=False)
                 self.sim_playing = was_playing
                 # A rebuild that had to fall back reports its own, better-informed
                 # fault -- it knows which parameter it put back.

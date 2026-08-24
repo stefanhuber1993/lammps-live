@@ -115,39 +115,92 @@ def test_wrapping_never_loses_a_long_path():
 
 # ---- the rebuild ladder ----------------------------------------------------
 
-def test_a_rebuild_falls_back_off_a_value_lammps_refuses():
-    """The zeta failure, reproduced with a build-time check the local style lacks."""
-    pytest.importorskip("lammps")
+def _ladder_playground():
     from lammps_live.playground import Playground, random_fill
-    from lammps_live.playground.system import PlaygroundSystem
-
-    playground = Playground(
+    return Playground(
         name="fault ladder", force_field="mesomem",
         scenario=random_fill(n=120, box=8.0), mode="sim", seed=11,
     )
-    system = PlaygroundSystem(playground, mode_name="sim", analysis=False)
+
+
+def test_reset_puts_a_refused_value_back_before_it_can_reach_the_rebuild():
+    """The zeta failure, and why it is now unreachable through Reset.
+
+    A value the local style accepts and the cluster's rejects (stood in for here by
+    a coefficient that only appears when zeta < 1) used to stream happily and then
+    kill the rebuild that Reset triggered -- which on the cluster took the server
+    and its allocation with it. The recovery was the fallback ladder below.
+
+    Reset now restores every parameter to what the playground declares BEFORE it
+    rebuilds, so the rebuild is never handed the value in the first place. No fault,
+    because nothing failed: the sliders are back where they started and so is the
+    run.
+    """
+    pytest.importorskip("lammps")
+    from lammps_live.playground.system import PlaygroundSystem
+
+    system = PlaygroundSystem(_ladder_playground(), mode_name="sim", analysis=False)
     try:
-        # Stand in for `mesomem/kk requires zeta >= 1`: a coefficient this build
-        # accepts until a rebuild validates it.
         real = system.force_field.pair_commands
-        system.force_field.pair_commands = (
-            lambda params: (real(params) + ["pair_coeff 1 1 nonsense"]
-                            if float(params["zeta"]) < 1.0 else real(params)))
+        seen = []
+
+        def sabotaged(params):
+            if float(params["zeta"]) < 1.0:
+                seen.append(float(params["zeta"]))
+                return real(params) + ["pair_coeff 1 1 nonsense"]
+            return real(params)
+
+        system.force_field.pair_commands = sabotaged
         good = system.params["zeta"]
 
         system.set_extra_param("zeta", 0.4)
+        assert system.params["zeta"] == pytest.approx(0.4)
+        seen.clear()
+        system.reset()                          # must NOT raise, and must not fail
+
+        assert not seen, f"the rebuild was handed zeta={seen}"
+        assert system.take_fault() is None, "nothing failed, so nothing to report"
+        assert system.params["zeta"] == good
+        assert system.live_param_values()["zeta"] == good
+        system.step(5)
+        assert system.unstable is None
+    finally:
+        system.close()
+
+
+def test_a_rebuild_that_fails_anyway_falls_back_instead_of_raising():
+    """The ladder itself, for the failures Reset's parameter restore cannot
+    pre-empt.
+
+    Injected as a ONE-SHOT poison -- the first `pair_commands` of the rebuild is
+    broken and the next is not -- because that is the shape of what a ladder can
+    recover from at all. A failure that depends on a VALUE cannot be, now that every
+    rung is holding the same declared values, and it is right that such a thing is
+    fatal: nothing this playground declares builds, which is not a slider problem.
+    """
+    pytest.importorskip("lammps")
+    from lammps_live.playground.system import PlaygroundSystem
+
+    system = PlaygroundSystem(_ladder_playground(), mode_name="sim", analysis=False)
+    try:
+        real = system.force_field.pair_commands
+        remaining = [1]
+
+        def poison_once(params):
+            if remaining and remaining.pop():
+                return real(params) + ["pair_coeff 1 1 nonsense"]
+            return real(params)
+
+        system.force_field.pair_commands = poison_once
         system.reset()                          # must NOT raise
 
         fault = system.take_fault()
         assert fault is not None
         assert not fault.fatal, "there is a running simulation, so not fatal"
-        assert fault.reverted == {"zeta": good}
-        assert "Restarted with the values it last built with." in fault.summary
+        assert "Restarted with" in fault.summary
         assert "pair_coeff 1 1 nonsense" in fault.detail
-        # And it is really running, with the value that works.
+        # And it is really running.
         assert system.lmp is not None
-        assert system.params["zeta"] == good
-        assert system.live_param_values()["zeta"] == good
         system.step(5)
         assert system.unstable is None
         # Popped, not latched: the card is shown once.
