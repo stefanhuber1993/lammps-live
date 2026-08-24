@@ -10,6 +10,7 @@ path).
     lammps-live --playground mesomem_sheet      # drag one bead out of a membrane
     lammps-live --playground mesomem_assembly   # watch 1500 beads self-assemble
     lammps-live --playground mesomem_remote      # 10k beads on a cluster GPU
+    lammps-live --playground mesomem_remote --gpu-hours 3   # ... for three hours
     lammps-live --playground mesomem_assembly --mode game   # ... then poke it
     lammps-live --playground mesomem_sheet --preset buckled --input joystick
     lammps-live --verify                        # check the force fields' energy
@@ -72,7 +73,30 @@ def build_parser():
                              "SSH and Slurm machinery entirely")
     parser.add_argument("--token", default="", metavar="SECRET",
                         help="shared secret for --remote (the server's --token)")
+    parser.add_argument("--gpu-hours", type=float, default=None, metavar="HOURS",
+                        help="how long to ask Slurm for the GPU, in hours (e.g. "
+                             "2, or 0.5 for half an hour). This is the WALL CLOCK "
+                             "on the allocation and the backstop that gives the "
+                             "GPU back if everything else fails to -- a crashed "
+                             "app, a lost network, a closed lid -- so it is not a "
+                             "budget to pad. A longer request may also queue "
+                             "longer. Applies to every remote playground this "
+                             "session, and overrides both the playground's own "
+                             "declared time (1 hour) and LAMMPS_LIVE_REMOTE_TIME")
     return parser
+
+
+def _slurm_walltime(hours):
+    """Hours as a float -> Slurm's HH:MM:SS.
+
+    Rounded to the nearest minute and floored at one, because `--time=00:00:00`
+    is a request Slurm grants and then immediately kills -- and a typo that
+    silently means "no time at all" is the wrong failure for a flag whose whole
+    job is to keep the session alive. Hours are not capped: which partitions
+    allow what is the cluster's business, and it says so plainly when it refuses.
+    """
+    minutes = max(1, int(round(hours * 60.0)))
+    return f"{minutes // 60:02d}:{minutes % 60:02d}:00"
 
 
 def _print_listing():
@@ -149,6 +173,19 @@ def main(argv=None):
         if not keys:
             parser.error("no playgrounds found")
         initial_key = keys[0]
+
+    # THE GPU WALL CLOCK, applied through the environment rather than threaded
+    # down to the panel. Not laziness: RemoteTarget already resolves every field
+    # from LAMMPS_LIVE_REMOTE_* precisely so the same playground file works for a
+    # second person with different limits (see remote/target.py), and both places a
+    # target is resolved -- the RemoteSystem and the RemoteSession -- go through
+    # that one door. A parallel plumbing route would have to reach both and would
+    # be a second answer to the same question.
+    if args.gpu_hours is not None:
+        if args.gpu_hours <= 0:
+            parser.error("--gpu-hours wants a positive number of hours")
+        import os
+        os.environ["LAMMPS_LIVE_REMOTE_TIME"] = _slurm_walltime(args.gpu_hours)
 
     remote_address = None
     if args.remote:

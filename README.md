@@ -79,6 +79,14 @@ about a second and neither of them starts over. Reset is about as quick, for the
 same reason: placing 50,000 beads with a minimum separation used to be 47 seconds
 of LAMMPS rejecting candidates one at a time, and is now half a second of numpy.
 
+`--gpu-hours` says how long to ask Slurm for (the default is one hour). It is the
+backstop that gives the GPU back when everything else has failed to, so it is not
+a number to pad -- and a longer request may sit in the queue longer:
+
+```bash
+lammps-live --playground mesomem_remote --gpu-hours 3
+```
+
 How it works: [docs/remote-gpu.md](docs/remote-gpu.md).
 How to run it: [docs/snellius/README.md](docs/snellius/README.md).
 

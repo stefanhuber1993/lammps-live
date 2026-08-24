@@ -68,6 +68,18 @@ runs `scancel $SLURM_JOB_ID` when it exits (including after `--exit-when-idle`,
 default 15 minutes, which covers a hard-killed app), and Slurm's `--time` ends it
 regardless.
 
+**How long to ask for.** One hour by default, and `--gpu-hours` changes it:
+
+```
+lammps-live --playground mesomem_remote --gpu-hours 3
+```
+
+It becomes the `--time=HH:MM:SS` on `salloc`, applies to every remote playground in
+the session, and overrides both the playground's own declaration and
+`LAMMPS_LIVE_REMOTE_TIME`. Two reasons not to pad it: it is the outermost of the
+three releases above -- the one that still works when the app has been killed and
+the network has gone -- and a longer request can sit in the queue longer.
+
 ### Check the build first, in one command
 
 The one hard requirement is that this build has a **Python module**, not just an
