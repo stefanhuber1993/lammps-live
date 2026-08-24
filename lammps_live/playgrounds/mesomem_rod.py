@@ -21,14 +21,42 @@ control plane as the patch, drawn as the net) until adhesion grabs it. From ther
     in a groove with about a hundred beads on it; turn `eps_rod` up and the beads
     climb further round, turn it down and the rod barely dents the surface.
 
+WHAT THERE IS TO WATCH FOR, in order. Sideways engulfment first: the rod lies
+flat, the beads climb its flanks and close over the top of it. Then a NECK -- the
+membrane pinching shut above the rod rather than merely draping over it. And then,
+if it gets that far, the rod standing UP inside the pit it has made, because a
+vertical rod inside a closed invagination costs less membrane area than a
+horizontal one does. Nothing here forces that sequence; what this file guarantees
+is that there is room for it -- the leash reaches two rod lengths down, the
+container is deep enough for the rod to turn end-over-end at the bottom of it, and
+the cell is wide enough that the dimple dies away before it meets its own image.
+
 THE MEMBRANE IS AT CONSTANT LATERAL PRESSURE, not in a fixed cell, and that is
 what makes an invagination possible at all: covering a rod costs area, and in a
 frozen periodic cell the only place that area can come from is stretching the
 lattice, so the membrane dents instead of engulfing. A barostat runs throughout
-here -- as it does through all three rod phases of the reference deck -- so the
-projected area shrinks as the wrap grows. You can watch it: the cell is visibly
-smaller by a couple of per cent once the rod is in. `baro_press` is the dial for
-putting the membrane under tension instead, which suppresses wrapping.
+here -- `fix baro membrane press/berendsen x 0 0 <damp> y 0 0 <damp> couple xy
+dilate partial`, installed in RodOnSheet.post_control_settle and never removed, as
+it is through all three rod phases of the reference deck -- so the projected area
+shrinks as the wrap grows. You can watch it: the cell is visibly smaller by a
+couple of per cent once the rod is in. `baro_press` is the dial for putting the
+membrane under tension instead, which suppresses wrapping.
+
+BUT THE BAROSTAT IS NOT WHAT MAKES THE MEMBRANE FEEL STIFF, and it is worth
+saying so because it is the natural suspect. Three other things resist a wrap, and
+two of them were resisting it much harder than the physics wanted:
+
+  `k_plane`  the sheet's plane-centring spring, pulling every bead back toward
+    z = 0. It is bookkeeping on a flat sheet and a SUBSTRATE on this one -- an
+    invagination is a piece of membrane leaving the plane. Turned down by two
+    orders of magnitude below (see the scenario), which is where most of the
+    "it will not deform" went.
+  `baro_damp_run`  how fast the cell may give up area. At 20 tau the barostat
+    needed ten seconds of wall time to answer a push, so the membrane WAS stiff,
+    just not permanently. Now 5.
+  `k_tilt`  the membrane's own bending modulus, and the one that should resist:
+    it is the real physics of the wrapping transition, it is on the everyday
+    slider, and turning it down is how you find where the transition sits.
 
 Where the wrapping transition sits -- how much adhesion it takes to make the
 membrane pay the bending cost of covering a rod of a given radius -- is a live
@@ -44,11 +72,16 @@ The HUD's three numbers are the wrapping story: how deep the rod sits (negative
 once the mean membrane surface has closed over its centre), how many beads are
 touching it, and whether it is lying flat or standing up.
 
-The view is a SECTION. The near half of the cell is not drawn, because a monolayer
-is opaque and the rows of beads between the camera and the rod sit at exactly the
-height the rod is being pushed to -- so they hide the invagination from every
-angle. Cut them away and the remaining face is the picture: the membrane as a
-line, and the rod sinking into it.
+THE WHOLE MEMBRANE IS DRAWN, near rows included. This scene used to cut the near
+half of the cell away (`section_min`) because a monolayer is opaque and an
+edge-on camera puts those rows exactly in front of the rod. The cut is gone: the
+foreground beads ARE the membrane, and hiding them permanently to make one camera
+angle work is the app deciding something the viewer is better placed to decide.
+What replaces it is a camera lifted far enough above the plane to see over the
+near rows (`view_elevation_deg` below), and the joystick's thrust lever, which
+slides a slab through the box on demand (lammps_live/view_slice.py) -- so a
+section is one lever away when the wrap needs to be read in profile, and the rest
+of the time the picture is the whole membrane.
 
 Units are the paper's LJ-reduced units (sigma = eps = m = 1). The collaborator's
 original LAMMPS deck is kept beside the pair style, at
@@ -62,12 +95,15 @@ from ..render_style import DEFAULT_STYLE
 # receding surface the sheet playground is a picture of, so a strong tilt-shift
 # blur would soften exactly the contact the demo is about.
 #
-#   DEPTH OF FIELD  focused mid-scene, where the rod is: seen edge-on the cell's
-#     46 sigma of depth all lies along the view axis, so the far rows recede into
-#     a soft horizon and the near ones out of the bottom of the frame, and the
-#     section through the rod is the sharp part.
-#   SECTION  the near half of the cell is not drawn at all, which is what makes
-#     an edge-on view of an opaque monolayer readable. See `section_min` below.
+#   DEPTH OF FIELD  focused mid-scene, where the rod is: the cell's 46 sigma of
+#     depth lies mostly along the view axis, so the far rows recede into a soft
+#     horizon and the near ones blur out of the bottom of the frame, which is what
+#     keeps the near half readable now that it is drawn rather than cut away --
+#     the rod's own plane is the sharp part, and the beads in front of it are
+#     softened rather than removed.
+#   NO SECTION  every bead is drawn. The near rows do stand between the camera
+#     and the rod, which is what the camera's elevation is for; a cut on demand
+#     is the thrust lever's job, not the playground's.
 #   PERIODIC IMAGES  OFF, unlike the sheet. The sheet tiles its cell because 900
 #     beads is a small raft and the copies are what make it read as a piece of
 #     something endless. This cell is 3600 beads and 54 sigma across, the camera
@@ -80,14 +116,9 @@ from ..render_style import DEFAULT_STYLE
 STYLE = DEFAULT_STYLE.varied(
     periodic_images=(0, 0, 0),
     box_alpha=0,
-    # THE CUT. Draw only the far half of the cell, so what faces the camera is a
-    # section through the membrane at the rod's own plane. Without it this view
-    # cannot work at all: a monolayer is opaque, and the rows of beads between the
-    # camera and the rod sit at exactly the height the rod is being pushed to, so
-    # they hide the invagination however the camera is angled. The rod's body is
-    # exempt and stays whole -- see RenderStyle.section_min.
-    section_axis=(0.0, 1.0, 0.0),
-    section_min=0.0,
+    # NO CUT. `section_min=None` is the default and is left at it deliberately --
+    # see the docstring. The camera's elevation and the viewer's own slab lever do
+    # the job the fixed cut used to.
     net_alpha=150,
     dof_focus=0.5,
     dof_range=1.5,
@@ -118,6 +149,11 @@ ROD_RADIUS = 1.5
 # would be yanked down to the limit on the first frame. tests/test_rod_wrapping.py
 # pins both, via RodOnSheet.verify_reach.
 ROD_HEIGHT = 3.5
+# THE NET, and therefore three other numbers. Twice what it was (7, 5) -- see the
+# leash comment below for why -- and written here because the container has to hold
+# it, the camera has to frame it, and the Control has to declare it, and those three
+# drifting apart is how the rod ends up driven somewhere the picture does not go.
+LEASH = (14.0, 10.0)
 
 PLAYGROUND = Playground(
     name="MesoMem membrane + rod (3D)",
@@ -142,21 +178,72 @@ PLAYGROUND = Playground(
         # it to whatever this force field's tension-free spacing actually is, so
         # this is a starting point rather than a claim.
         a=0.9,
-        # Deeper than the sheet's 4.0: the rod travels several sigma out of plane
-        # and the container has to hold the whole of that, plus the dimple it
-        # pushes the membrane into.
-        z_half=6.0,
+        # --- two housekeeping terms turned down, because on THIS scenario they
+        # are the thing that reads as "the membrane refuses to be deformed" -----
+        #
+        # `k_plane` is the sheet's plane-centring: a per-bead spring pulling every
+        # bead (except the driven one) toward z = 0. On the sheet playground that
+        # is harmless bookkeeping against slow drift. Here it is a SUBSTRATE. An
+        # invagination is exactly a piece of membrane leaving the plane, and at the
+        # sheet's 0.1 a bead three sigma down feels 0.3 of restoring force pushing
+        # it back up -- comparable to the adhesion holding it on the rod, applied
+        # to every bead in the dimple at once. It is not the barostat resisting the
+        # wrap (that runs throughout, see RodOnSheet.post_control_settle); it is
+        # this. Kept, but an order of magnitude weaker, which is still enough to
+        # stop the sheet wandering out of the frame over thousands of tau.
+        k_plane=0.01,
+        # And the barostat's own relaxation time. `baro_damp_run` is how long the
+        # cell takes to give up the area a growing wrap is asking for: at 20 tau,
+        # and 0.08 tau of simulated time per drawn frame, the cell needs ~250
+        # frames -- ten seconds of standing there -- to respond to a push. The
+        # membrane genuinely is stiff for all of that, which is what "it feels like
+        # it resists being deformed" is. 5 tau follows the hand at roughly the rate
+        # the hand moves, without the cell visibly breathing under it.
+        baro_damp_run=5.0,
+        # DEEP ENOUGH FOR THE WHOLE STORY AND NO DEEPER, and the second half of
+        # that is not tidiness -- it is measured.
+        #
+        # The floor: the wrap is meant to run past a dent (engulfment sideways,
+        # then a neck closing over the rod, then the rod standing UP inside the
+        # invagination). Standing up costs half a rod length -- 2.5 -- of headroom
+        # at whatever depth it has reached, and the leash below reaches 10 sigma
+        # down, so nothing the demo can ask for goes past 12.5. (The sheet's own
+        # 4.0 is for a bead being lifted out of a lattice; this is a bacterium
+        # being swallowed.)
+        #
+        # The ceiling: an emptier container is not free. The pair list is identical
+        # -- 97,200 pairs, 27 a bead, whatever the depth, since the membrane is a
+        # monolayer and the extra volume is vacuum -- and the pair LOOP still
+        # varies by 20% with it, which is a cache-locality effect of how LAMMPS
+        # bins and sorts the atoms rather than any extra work. Measured on this
+        # playground, interleaved: 26 sigma deep runs a 16-step chunk in 39 ms
+        # (2.5 tau/s) and 30 sigma in 48 (2.1). So the rule for this number is
+        # "the least the demo needs", not "round it up for safety".
+        z_half=13.0,
         settle_steps=1000,
-        # 6 steps a frame, not the sheet's 20, and this costs the demo nothing.
-        # The step size itself is fixed by stability -- measured, dt = 0.0075 and
-        # 0.01 both blow the membrane up at the top of the adhesion dial with the
-        # temperature raised, where 0.005 survives -- so the only dial left is how
-        # many steps go into a frame. And LAMMPS costs the same per step whatever
-        # the chunk size, so a smaller chunk buys a smoother PICTURE at the same
-        # rate of physics: measured on 3600 beads, 10 steps a frame is 35 ms
-        # (28 fps, 283 steps/s) and 6 is 23 ms (44 fps, 261 steps/s). The wrap
-        # therefore takes the same wall time to form either way; it just arrives
-        # in more frames.
+        # HOW FAST THIS RUNS, and where the limit actually is. Two things set the
+        # pace and only one of them is here.
+        #
+        # The step size is fixed by STABILITY, not by taste: measured, dt = 0.0075
+        # and 0.01 both blow the membrane up at the top of the adhesion dial with the
+        # temperature raised, where 0.005 survives. So it stays.
+        #
+        # The steps per frame (16 at these two numbers) buys picture smoothness and
+        # nothing else. LAMMPS costs the same per step whatever the chunk size, so
+        # halving the chunk halves the frame time and halves the physics per frame:
+        # the wrap takes the same wall-clock time to form either way, it just arrives
+        # in more frames. 0.08 tau a frame lands at ~30 fps on 3600 beads.
+        #
+        # WHAT DID MOVE THE PACE was the pair style. Measured on this playground, a
+        # 16-step chunk was 44 ms, 92% of it inside `Pair` -- and a good quarter of
+        # that was the isotropic branch re-deriving four things per pair that depend
+        # only on the two atom TYPES: a sqrt of cutsq, a divide, a sin(), and a libm
+        # pow(). All four are now hoisted or replaced (see
+        # mesomem_ff/pair_membrane_sillano_v2.cpp's compute and init_one), the
+        # numbers agree to a few ULP (`--verify` pins that), and the chunk is 32 ms:
+        # 1.8 -> 2.5 tau/s at the same system size. What is left is genuine
+        # arithmetic over 27 neighbours a bead; the next real step up would be
+        # vectorising the neighbour loop, or fewer beads.
         timestep=0.005,
         sim_time_per_frame=0.08,
         rod_height=ROD_HEIGHT,
@@ -167,27 +254,49 @@ PLAYGROUND = Playground(
         # No diffusion tracer: on this playground the rod is the thing to watch,
         # and a second highlight elsewhere on the membrane only competes with it.
         tracer_fraction=None,
-        # Frame the middle third, not the whole cell. `view_span` scales the
-        # camera's DISTANCE as well as the zoom, so this is the same picture from
-        # closer in: the rod fills a useful part of the frame and the membrane
-        # runs off all four edges, which is what a big membrane should look like.
-        # Aimed straight at the middle, since there are no receding copies to
-        # leave room for.
-        view_span=0.38, view_aim_ahead=0.0,
-        # Edge-on, so the membrane reads as a line and the rod is seen sinking
-        # INTO it in section -- which is what a wrap looks like. A few degrees up
-        # rather than exactly zero, to lift the sight line clear of the near rows.
+        # STAND BACK, because the net is now twice the size it was. `view_span`
+        # scales the camera's DISTANCE as well as the zoom, so this is the same
+        # picture from further out: what has to fit in the frame is the whole of
+        # the rod's travel -- 28 sigma of net across and 20 down -- and at the
+        # old 0.38 (a 20-sigma window on a 54-sigma cell) the rod left the frame
+        # long before it reached the leash. 0.75 frames roughly the net, with
+        # membrane still running off both sides. Aimed straight at the middle,
+        # since there are no receding copies to leave room for.
+        view_span=0.75, view_aim_ahead=0.0,
+        # NOT edge-on any more, and this is the price of drawing the near rows.
+        # At 8 degrees a monolayer is a wall: the beads between the camera and the
+        # rod sit at the height the rod is being pushed to, and with no section cut
+        # they hide it completely. 24 degrees looks over them -- steep enough that
+        # the invagination is a visible pit in a surface rather than a line, shallow
+        # enough that the DEPTHS the demo is about (how far the rod has sunk, how
+        # far the beads have climbed) still project onto the screen instead of
+        # foreshortening away. Push the thrust lever to get the profile back.
         # See RodOnSheet.camera.
-        view_elevation_deg=8.0,
+        view_elevation_deg=24.0,
+        # And frame the WHOLE net vertically, not just the rod's clearance. The
+        # default here is `rod_height + 1.5`, which was the travel back when the
+        # leash was 5; with the leash at 10 it would put the bottom half of the
+        # drawn net -- and the rod, once it is pushed down there, which is the whole
+        # demo -- below the bottom of the picture. A sigma of margin past the limit
+        # so arriving at it is something you watch rather than something that
+        # happens off screen. This costs nothing in zoom: at the window's aspect
+        # ratio the in-plane extent above is what binds the fit.
+        view_z_half=LEASH[1] + 1.0,
     ),
     mode="game",
     control=Control(
         atom="last",            # rod_on_sheet appends the rod after the sheet
         plane="xz",
-        # z reaches from well clear of the membrane down past it, so the rod can
-        # be lifted out of contact AND pushed through to the far side; x is wide
-        # enough to drag a wrapped rod sideways through the membrane.
-        leash=(7.0, 5.0),
+        # TWICE WHAT IT WAS (7, 5), and the reason is the whole scenario rather
+        # than comfort: a dent needs a couple of sigma of travel, an invagination
+        # needs the rod to go DOWN past the membrane's own surface until a neck can
+        # close over it, and then to stand upright inside what it has made. 10
+        # sigma of z is two rod lengths of depth, which is enough room for all
+        # three stages and still leaves the container floor (z_half = 15 above)
+        # clear. The 14 across is the same doubling: it is what lets a wrapped rod
+        # be dragged sideways far enough to see whether the invagination travels
+        # with it or the membrane hands it on.
+        leash=LEASH,
         # A rod pushing on ~50 beads at once meets far more resistance than a
         # single bead does, and it weighs a dozen beads. Both want more authority
         # than the sheet's 7.

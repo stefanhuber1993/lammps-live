@@ -74,6 +74,11 @@ PairMesoMem::~PairMesoMem()
     memory->destroy(c0);
     memory->destroy(splay_symmetry);
 
+    memory->destroy(inv_span);
+    memory->destroy(inv_wr);
+    memory->destroy(rga_sq);
+    memory->destroy(zt_exp);
+
   }
 }
 
@@ -98,6 +103,23 @@ void PairMesoMem::allocate()
   memory->create(zeta, np1, np1, "pair:zeta");
   memory->create(c0, np1, np1, "pair:c0"); // Allocate c0 array
   memory->create(splay_symmetry, np1, np1, "pair:splay_symmetry");
+
+  memory->create(inv_span, np1, np1, "pair:inv_span");
+  memory->create(inv_wr, np1, np1, "pair:inv_wr");
+  memory->create(rga_sq, np1, np1, "pair:rga_sq");
+  memory->create(zt_exp, np1, np1, "pair:zt_exp");
+  // ZEROED, unlike the coefficient arrays above. Those are read only for a type
+  // pair init_one() has been through, and under `pair_style hybrid` this style's
+  // sub-list carries only the type pairs assigned to it -- so an unassigned entry
+  // is unreachable either way. But memory->create leaves whatever was in the
+  // allocation, and the difference between an unreachable zero and an unreachable
+  // inf is the difference between a bug that stays a bug and one that becomes a
+  // NaN in somebody's forces.
+  for (int i = 0; i < np1; i++)
+    for (int j = 0; j < np1; j++) {
+      inv_span[i][j] = inv_wr[i][j] = rga_sq[i][j] = 0.0;
+      zt_exp[i][j] = -1;
+    }
 
 }
 
@@ -213,6 +235,29 @@ double PairMesoMem::init_one(int i, int j)
   c0[j][i] = c0[i][j]; // Copy c0
   splay_symmetry[j][i] = splay_symmetry[i][j];
 
+  // --- the derived constants the pair loop reads (see the header) -----------
+  // The cosine branch's r -> g map is g = (pi/2)(r - sigma)/(cut - sigma), so
+  // what it needs per pair is the reciprocal of that span; a zero span (cut ==
+  // sigma) leaves no attractive branch at all, and 0 keeps g there rather than
+  // producing an inf.
+  double span = cut[i][j] - sigma[i][j];
+  inv_span[i][j] = inv_span[j][i] = (span > 0.0) ? 1.0 / span : 0.0;
+  double wr = weight_rcut[i][j];
+  inv_wr[i][j] = inv_wr[j][i] = (wr > 0.0) ? 1.0 / wr : 0.0;
+  rga_sq[i][j] = rga_sq[j][i] = 0.25 * wr * wr;
+  // THE EXPONENT. The attractive branch is -eps cos(g)^(2 zeta), and its
+  // derivative carries cos(g)^(2 zeta - 1) -- a libm pow() per pair, which is
+  // the single most expensive thing in the loop. But 2 zeta - 1 is a whole
+  // number for every HALF-INTEGER zeta, which is every value anyone runs (the
+  // paper's is 5, i.e. an exponent of 9), and a whole-number power is a handful
+  // of multiplies by squaring. So the integer is worked out once, here, and -1
+  // means "this zeta is not a half-integer, use pow()" -- which is only ever
+  // the case for a moment while a slider is being dragged through one.
+  double e = 2.0 * zeta[i][j] - 1.0;
+  double rounded = nearbyint(e);
+  int whole = (rounded >= 0.0) && (rounded <= 64.0) && (fabs(e - rounded) < 1.0e-12);
+  zt_exp[i][j] = zt_exp[j][i] = whole ? (int) rounded : -1;
+
   return cut[i][j];
 }
 
@@ -299,20 +344,43 @@ void PairMesoMem::compute(int eflag, int vflag)
           Ulj = eps_val * (t4 - 2.0 * t2);
           eps_lj = 4.0 * eps_val * inv_r * (t4 - t2);
         } else {
-          double rcut = sqrt(cutsq[itype][jtype]);
+          // THE ATTRACTIVE BRANCH, AND THE HOT PATH: rmin is sigma and the
+          // cutoff is 2.5 sigma, so on a membrane at its equilibrium spacing
+          // this is where nearly every pair lands. Measured on the 3600-bead rod
+          // playground, the isotropic term alone was 35 of the 44 ms a 16-step
+          // chunk took -- more than the whole tilt/splay block -- and it was
+          // spending it on four things it did not have to: a sqrt of cutsq, a
+          // divide, a sin(), and a libm pow(). All four are gone below; the
+          // numbers are unchanged to within a few ULP, which the energy
+          // cross-check against the Python expression (--verify) pins.
           double zt = zeta[itype][jtype];
-
-          // Precompute constant factors to avoid division in calc
-          double denom = 1.0 / (rcut - rmin);
-          double g = M_PI * 0.5 * (r - rmin) * denom;
+          // The span's reciprocal is a per-TYPE-PAIR constant (see init_one),
+          // and `cut` is what `sqrt(cutsq)` was recovering.
+          double dg_dr = M_PI * 0.5 * inv_span[itype][jtype];
+          double g = dg_dr * (r - rmin);
 
           double cos_t = cos(g);
-          double sin_t = sin(g);
+          // sin(g) WITHOUT A SECOND TRANSCENDENTAL. g runs over [0, pi/2] as r
+          // runs over [rmin, cut], so sin(g) >= 0 there and is exactly
+          // sqrt(1 - cos^2). The fmax guards the last bit of rounding at
+          // g = pi/2, where cos^2 can come out a hair above 1.
+          double sin_t = sqrt(fmax(0.0, 1.0 - cos_t * cos_t));
 
-          // Fast power calculation
-          double cos_pow = pow(cos_t, 2.0 * zt - 1.0);
-          // Alternatively, if zt is always integer, use loop for speed,
-          // but pow is safer for general zeta.
+          // cos^(2 zeta - 1), by squaring when the exponent is a whole number
+          // -- which it is for every half-integer zeta, i.e. every value anyone
+          // runs. See init_one for how the exponent is classified.
+          double cos_pow;
+          int e = zt_exp[itype][jtype];
+          if (e >= 0) {
+            cos_pow = 1.0;
+            double base = cos_t;
+            for (int k = e; k; k >>= 1) {
+              if (k & 1) cos_pow *= base;
+              base *= base;
+            }
+          } else {
+            cos_pow = pow(cos_t, 2.0 * zt - 1.0);
+          }
 
           double cos_2zt = cos_pow * cos_t;
 
@@ -320,7 +388,6 @@ void PairMesoMem::compute(int eflag, int vflag)
 
           // dU/dg * dg/dr
           double dU_dg = eps_val * (2.0 * zt) * cos_pow * sin_t;
-          double dg_dr = M_PI * 0.5 * denom;
           eps_lj = -dU_dg * dg_dr;
         }
 
@@ -336,8 +403,9 @@ void PairMesoMem::compute(int eflag, int vflag)
 
         if (r < wr) {
             // --- A. Weight Calculation ---
-            double rga = 0.5 * wr;
-            double r_wr = r / wr;
+            // Both the reciprocal of wr and (wr/2)^2 are per-type-pair
+            // constants; see init_one.
+            double r_wr = r * inv_wr[itype][jtype];
 
             // D = (r/wc)^4
             double r_wr_2 = r_wr * r_wr;
@@ -349,9 +417,9 @@ void PairMesoMem::compute(int eflag, int vflag)
             // REPLACEMENT LOGIC:
             // Only calculate if we are safely away from the singularity (denom_w < -1e-14).
             // If denom_w is closer to 0 than that, the exp() result is mathematically 0.0 anyway.
-            double rga_sq = rga * rga;
+            double rga_sq_ij = rga_sq[itype][jtype];
             if (denom_w < -1e-14) {
-                double val_exp = (r * r) / (rga_sq * denom_w);
+                double val_exp = (r * r) / (rga_sq_ij * denom_w);
                 w = exp(val_exp);
             }
             // Else: w remains 0.0, avoiding division by tiny denom_w
@@ -469,7 +537,7 @@ void PairMesoMem::compute(int eflag, int vflag)
               
               // 8 Feb 2026 removed the minus sign in rad_numerator
               double rad_numerator = 2.0 * w * (r_wr_4 + 1.0) * r;
-              double rad_denominator = rga_sq * denom_w * denom_w;
+              double rad_denominator = rga_sq_ij * denom_w * denom_w;
 
               double f_rad_mag = U_ang_sum * (rad_numerator / rad_denominator);
 

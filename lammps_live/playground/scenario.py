@@ -644,6 +644,13 @@ class RodOnSheet(HexSheet):
         structural("view_elevation_deg", 6.0,
                    "camera elevation above the membrane plane (0 = exactly "
                    "edge-on, so the membrane is a line)"),
+        # How much of the rod's OUT-OF-PLANE travel to keep in frame. None derives
+        # it from the starting height, which is right only while that is the whole
+        # of the travel; a playground whose leash reaches well past it has to say
+        # so, or the rod is driven out of the bottom of the picture. See fit_points.
+        structural("view_z_half", None,
+                   "half-height to frame, in sigma (None -> the rod's starting "
+                   "height plus a margin)"),
     )
 
     def camera(self, box):
@@ -755,14 +762,25 @@ class RodOnSheet(HexSheet):
         several times the size of what the camera is looking at (`view_span` well
         below 1), so fitting its corners would pull the camera back until the rod
         was a speck. The framed patch is the in-plane extent `view_span` asks for,
-        and the two z points keep the rod in shot at both ends of its leash.
+        and the two z points keep the rod in shot over its whole travel.
+
+        THE TRAVEL IS THE LEASH's, not the starting height's, and the two are not
+        the same thing on a playground that means to push the rod several rod
+        lengths into the membrane -- the rod starts a little above the surface and
+        ends up well below it. This used to frame `rod_height + 1.5` either way,
+        which silently put the bottom half of the drawn control net, and the rod
+        once it was driven down there, outside the picture. `view_z_half` is what a
+        playground says its leash reaches; the old expression is the default, for a
+        scenario whose leash is about the size of its clearance.
         """
         span = float(params["view_span"])
         hx = 0.5 * box.lengths[0] * span
         hy = 0.5 * box.lengths[1] * span
-        h = float(params["rod_height"])
+        declared = params["view_z_half"]
+        hz = (float(declared) if declared is not None
+              else float(params["rod_height"]) + 1.5)
         return np.array([(x, y, 0.0) for x in (-hx, hx) for y in (-hy, hy)]
-                        + [(0.0, 0.0, h + 1.5), (0.0, 0.0, -h - 1.5)])
+                        + [(0.0, 0.0, hz), (0.0, 0.0, -hz)])
 
     def verify_reach(self, control, rod_cutoff):
         """Complain if the leash cannot express the demo.

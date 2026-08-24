@@ -43,7 +43,7 @@ model whose parameters otherwise stay pretty abstract.
 | `mesomem_patch_torque` | the same seven, twisted instead of pulled: the stick turns the middle bead's director and the ring splays after it |
 | `mesomem_sheet` | ~900 beads, periodic, so a piece of an endless membrane. Watch a deformation spread |
 | `mesomem_assembly` | 1500 beads from a random start, assembling. Play / Pause / Reset |
-| `mesomem_rod` | 3600 beads at constant tension, seen in section. Steer a rod-shaped "bacterium" in and watch the membrane invaginate it |
+| `mesomem_rod` | 3600 beads at constant tension. Steer a rod-shaped "bacterium" in and watch the membrane engulf it -- sideways first, then a neck, then the rod standing up inside the pit. Cut it open with the thrust lever to read the profile |
 | `mesomem_remote` | same thing at 10,000 beads, running on a cluster A100 |
 | `mesomem_polymer` | a closed vesicle with 32,000 beads of ring polymer sealed inside, on the same A100. Slice it open with the thrust lever to see in |
 | `cu_deposition`, `lj_argon`, `nacl` | the atomistic classics: copper (EAM), argon melting, and a salt lattice where you can switch the ionic charge off and watch it fall apart |

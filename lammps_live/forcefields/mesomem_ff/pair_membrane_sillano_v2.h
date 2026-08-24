@@ -54,6 +54,16 @@ class PairMesoMem : public Pair {
   double **c0; // for spont curvature
   double **splay_symmetry; // 0..1: blend signed<->|ninj| in the splay term (see coeff/compute)
 
+  // DERIVED PER-TYPE-PAIR CONSTANTS. Every one of these was being re-derived
+  // inside the pair loop, per pair, from numbers that depend only on the two
+  // TYPES -- of which a membrane deck has one or two. Hoisting them into
+  // init_one() is what turns a divide, a sqrt and a libm pow() per pair into a
+  // table lookup; see compute() for the measured cost of each.
+  double **inv_span;       // 1 / (cut - sigma): the cosine branch's r -> g scale
+  double **inv_wr;         // 1 / weight_rcut
+  double **rga_sq;         // (weight_rcut / 2)^2, the weight function's width^2
+  int **zt_exp;            // 2*zeta - 1 when that is a whole number, else -1
+
 
 virtual void allocate();
 };

@@ -561,10 +561,18 @@ def test_the_barostat_keeps_running_and_dilates_only_the_membrane():
     assert scenario.cell_is_live is True
 
 
-def test_the_view_is_a_section_seen_edge_on():
-    """Two declarations that only make sense together: a camera almost in the
-    membrane's own plane, and a cut that removes everything between it and the
-    rod. Either alone gives a picture of a wall of beads."""
+def test_the_view_draws_every_bead_and_looks_over_the_near_rows():
+    """No fixed cut, and a camera raised far enough that there did not need to be
+    one.
+
+    These two are one decision. The scene used to remove the near half of the cell
+    (`section_min`) so an almost-edge-on camera could see the rod through an opaque
+    monolayer; the foreground beads are membrane and are now drawn, which is only
+    survivable because the camera looks DOWN at the wrap rather than along it. A
+    cut when one is wanted is the viewer's thrust lever (view_slice.py), not this
+    file's -- so if `section_min` ever comes back here, the elevation below has to
+    come back down with it.
+    """
     playground = registry.load("mesomem_rod")
     scenario = playground.scenario
     params = scenario.new_params()
@@ -573,18 +581,39 @@ def test_the_view_is_a_section_seen_edge_on():
     cam = scenario.camera(box)
     eye = np.array(cam["eye"], dtype=float)
     elevation = math.degrees(math.asin(eye[2] / np.linalg.norm(eye)))
-    assert 0.0 < elevation < 15.0, "edge-on means a few degrees, not a top-down"
+    # High enough to see over a monolayer, low enough that a depth still reads as
+    # a depth rather than foreshortening into the view axis.
+    assert 15.0 < elevation < 40.0
     # Standing outside the cell, or the near rows of membrane are behind the eye.
     assert abs(eye[1]) > 0.5 * box.lengths[1]
 
     style = playground.render_style
-    assert style.section_min is not None, "an edge-on view of a monolayer needs the cut"
-    assert tuple(style.section_axis) == (0.0, 1.0, 0.0)
-    # The cut plane is between the camera and the rod, which sits at y = 0.
-    assert eye[1] < style.section_min <= 0.0
+    assert style.section_min is None, "the near beads are the membrane -- draw them"
     # And the tiling is off: at this size the copies would be off-screen geometry,
     # each carrying another rod.
     assert tuple(style.periodic_images) == (0, 0, 0)
+
+
+def test_there_is_room_for_the_rod_to_stand_up_inside_the_wrap():
+    """The end of the sequence the playground is for -- engulfed sideways, a neck,
+    then the rod upright in the pit -- is a geometric claim about the leash and the
+    container, and it is cheap to state.
+
+    A rod driven to the bottom of its leash and then turned end-on sweeps half a
+    length past that depth. If the container floor is not below THAT, the demo
+    cannot show the last stage: the rod hits the wall instead of turning.
+    """
+    playground = registry.load("mesomem_rod")
+    control = playground.effective_control()
+    params = playground.scenario.new_params()
+    reach = control.leash[1] + 0.5 * playground.params["rod_length"]
+    assert params["z_half"] > reach, (
+        f"the leash reaches {control.leash[1]} down and the rod is "
+        f"{playground.params['rod_length']} long, so it sweeps to {reach}; the "
+        f"container floor is at {params['z_half']}")
+    # And the net has to be wider than it is deep, or a wrapped rod cannot be
+    # dragged sideways far enough to see what the invagination does with it.
+    assert control.leash[0] > control.leash[1]
 
 
 def test_the_cell_shrinks_as_the_wrap_grows_and_the_runtime_notices():
