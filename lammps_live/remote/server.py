@@ -141,6 +141,12 @@ class FrameServer:
         # The last thing that killed or nearly killed the simulation, waiting for
         # the next frame to carry it to the client.
         self._fault = None
+        # PARKED RUNS, by playground: the state of each simulation this server has
+        # been asked to put aside for another one (see switch_playground). A parked
+        # 50k run is under 5 MB of arrays, so the cap is a guard against a client
+        # cycling through playgrounds forever rather than a real budget -- and it
+        # evicts the oldest, which is the one least likely to be gone back to.
+        self._parked = {}
 
     # ---- lifecycle ----------------------------------------------------------
 
@@ -150,12 +156,25 @@ class FrameServer:
         if self.verbose:
             print("[server]", *bits, flush=True)
 
+    MAX_PARKED = 4
+
     def build(self):
-        """Construct the simulation. Deferred to the first connection so a
-        misconfigured deck fails where someone is watching, and so the allocation
-        is not spent integrating before anyone has connected."""
+        """Construct the simulation, and put a parked run back into it if this
+        playground has one.
+
+        Deferred to the first connection so a misconfigured deck fails where someone
+        is watching, and so the allocation is not spent integrating before anyone has
+        connected.
+
+        THE RESUME IS WHAT MAKES SWITCHING FREE. Building is now a second or so even
+        at 50,000 beads (it used to be three quarters of a minute, almost all of it
+        the random fill -- see RandomFill.build), so the cost of a switch was never
+        really the CPU: it was that the run you walked away from was gone, and four
+        minutes of coarsening with it. A parked state goes straight back into the
+        fresh instance and the demo carries on from where it was, with its own
+        parameters (see PlaygroundSystem.restore_state).
+        """
         from ..playground import registry
-        from ..playground.system import PlaygroundSystem
 
         playground = registry.load(self.playground_ref)
         if (playground.mode or "sim") != "sim":
@@ -169,15 +188,60 @@ class FrameServer:
         self.log(f"building {self.playground_ref} on profile {profile.name}"
                  + (f", pair_coeff truncated to {self.coeff_values} values"
                     if self.coeff_values else ""))
+        # A run waiting to be resumed makes the scenario's own relaxation pointless
+        # work -- it would relax a configuration that is about to be overwritten --
+        # so the deck is built with every fix in place and no steps taken. Measured
+        # on the vesicle+polymer playground: 7.2 s to build, 0.4 s to build and
+        # resume. See PlaygroundSystem._settle_commands.
+        parked = self._parked.pop(self.playground_ref, None)
+        self._construct(playground, profile, settle=parked is None)
+        if parked is not None and not self.system.restore_state(parked):
+            self.log(f"the parked {self.playground_ref} run no longer fits this "
+                     f"build ({parked['natoms']} particles against "
+                     f"{self.system.natoms}) -- starting fresh")
+            # And it must be a REAL fresh start: the build above skipped the settle
+            # on the strength of a resume that did not happen, so the state it is
+            # holding is the scenario's made-up starting geometry rather than a
+            # relaxed one. Cheaper to build again than to serve that.
+            self.system.close()
+            self._construct(playground, profile, settle=True)
+        elif parked is not None:
+            self.log(f"resumed the parked {self.playground_ref} run at "
+                     f"t = {parked['sim_time']:.1f} tau")
+        return self.system
+
+    def _construct(self, playground, profile, settle):
+        """One PlaygroundSystem, with the timing line the log is read for."""
+        from ..playground.system import PlaygroundSystem
         t0 = time.perf_counter()
         self.system = PlaygroundSystem(playground, mode_name="sim",
-                                       host_profile=profile, analysis=False)
+                                       host_profile=profile, analysis=False,
+                                       settle=settle)
         self.steps_per_frame = self._stride_for(self.fps)
         self.log(f"built {self.system.natoms} particles in "
-                 f"{time.perf_counter() - t0:.1f}s, "
+                 f"{time.perf_counter() - t0:.1f}s"
+                 + ("" if settle else " (settle skipped, resuming)") + ", "
                  f"{self.steps_per_frame} steps/frame, "
                  f"box {self.system.box.lengths[0]:.2f} sigma")
-        return self.system
+
+    def _park_current(self):
+        """Set the loaded run aside so switching back can resume it."""
+        if self.system is None:
+            return
+        try:
+            snapshot = self.system.snapshot_state()
+        except Exception as exc:                      # noqa: BLE001 -- best effort
+            # Parking is a convenience and the switch is not: a snapshot that cannot
+            # be taken must cost the state being parked, not the switch itself.
+            self.log(f"could not park {self.playground_ref}: {exc}")
+            return
+        if snapshot is None:
+            return
+        while len(self._parked) >= self.MAX_PARKED:
+            self._parked.pop(next(iter(self._parked)))
+        self._parked[self.playground_ref] = snapshot
+        self.log(f"parked {self.playground_ref} at t = "
+                 f"{snapshot['sim_time']:.1f} tau ({snapshot['natoms']} particles)")
 
     # The frame rate a scenario's `sim_time_per_frame` is quoted against. It is
     # the app's own refresh rate, because that is what the local playgrounds run
@@ -312,8 +376,15 @@ class FrameServer:
         closed -- which frees its LAMMPS instance, and with it the GPU memory it was
         holding -- and the named one built in its place, on the same node, through
         the same tunnel, with the same job id. Switching back later is the same move
-        in reverse; what is NOT preserved is the state of the run being left, which
-        is the honest cost of the trade (see ui/remote_panel.py, which is what asks).
+        in reverse (see ui/remote_panel.py, which is what asks).
+
+        AND THE RUN IS PRESERVED, which it did not use to be. The comment here used
+        to call losing it "the honest cost of the trade"; it was only honest while
+        rebuilding cost a minute. Now the state is put aside before the instance is
+        closed and goes straight back in if this playground is asked for again (see
+        `_park_current`, and the resume in `build`), so a talk can cycle between
+        two demos without either of them starting over. What a switch costs now is a
+        second of build and the frames in flight.
 
         Closing here is safe for the one reason that matters: the server serves one
         client at a time, and this runs during a handshake, so the serve loop has
@@ -328,6 +399,7 @@ class FrameServer:
             return False
         self.log(f"client asked for {ref}, holding {self.playground_ref} -- "
                  f"switching")
+        self._park_current()
         self.close()
         self.playground_ref = ref
         # The new run starts stopped and from sequence zero, which is how the client
@@ -348,15 +420,18 @@ class FrameServer:
         # names the playground that is actually about to be built.
         self.switch_playground(header.get("playground"))
         if self.system is None:
-            # SAY SO FIRST. Building 10k beads is `plugin load`, a rejection-sampled
-            # random fill and LAMMPS' own setup -- tens of seconds, all of it before
-            # the welcome can be sent, and for all of it the client is sitting in a
-            # blocking read with a handshake timeout on it. It used to give up at 15
-            # seconds, drop the socket, and retry -- which made the server throw the
-            # half-built simulation away and start again, so the retry could not
-            # succeed either. This message is what turns that wait into a wait: the
-            # client stops counting against the handshake timeout and says what is
-            # happening (see FrameLink.connect).
+            # SAY SO FIRST. A build is `plugin load`, the placement and LAMMPS' own
+            # setup, plus whatever relaxation the scenario asks for -- and all of it
+            # lands before the welcome can be sent, with the client sitting in a
+            # blocking read with a handshake timeout on it. It used to be tens of
+            # seconds and is now around one on the assembly decks (see
+            # RandomFill.build) and several on a bonded one that settles, which is
+            # still long enough to matter: the client used to give up at 15 seconds,
+            # drop the socket, and retry -- which made the server throw the half-built
+            # simulation away and start again, so the retry could not succeed either.
+            # This message is what turns that wait into a wait: the client stops
+            # counting against the handshake timeout and says what is happening (see
+            # FrameLink.connect).
             sock.sendall(protocol.pack(
                 {"t": "building",
                  "msg": f"building {self.playground_ref} -- this takes a moment"}))

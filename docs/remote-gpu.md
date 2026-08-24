@@ -452,9 +452,12 @@ substitutions:
 | `reset()` rebuilds LAMMPS here | sends `{"t":"reset"}`; the server rebuilds there |
 
 Reset is the one of those with a wait in the middle of it: the rebuild happens on
-the far side and takes as long as LAMMPS' setup plus a rejection-sampled random fill
-take, during which no frames come back at all. Two things follow, and both were
-found the hard way. The client latches `_resetting` and the HUD says *rebuilding
+the far side, during which no frames come back at all. It used to be 44 seconds for
+50,000 beads — essentially all of it `create_atoms random ... overlap`, LAMMPS
+placing particles on the host and rejecting the ones that land too close — and it is
+half a second now that the placement is a bulk numpy pass (`RandomFill.build`). A
+scenario with a relaxation in it still pays for the relaxation. Two things follow
+from there being a wait at all, and both were found the hard way. The client latches `_resetting` and the HUD says *rebuilding
 from a fresh state* until a frame from the new run arrives (the server restarts its
 sequence at 0, which is how that is recognised) -- otherwise the picture sits on the
 last frame of the old run, which is exactly what a Reset that did nothing looks
@@ -825,9 +828,35 @@ Which gives three behaviours, and the third is the only one that costs anything:
   holding a different one closes it -- freeing the LAMMPS instance and the GPU memory
   with it -- and builds the named one in its place
   (`FrameServer.switch_playground`). Same node, same port, same job id, no queue, no
-  second code. What is **not** preserved is the state of the run being left, which is
-  the honest price and the reason this is a button press rather than something `Tab`
-  does behind your back.
+  second code.
+
+**The run you leave is parked, not thrown away.** This used to be the honest price
+of one GPU serving two demos, and the reason moving it was a button press rather
+than something `Tab` did behind your back: the coarsened box you had been watching
+for four minutes was gone. It stopped being a price worth paying once building an
+instance became cheap. `FrameServer._park_current` takes a snapshot -- positions,
+velocities, directors, angular velocities, the cell, the simulated time and the
+parameters, in stable **atom-id** order, because LAMMPS' local ordering is
+emphatically not the same on the other side of a rebuild -- and `_resume_parked`
+scatters it into the freshly built instance
+(`PlaygroundSystem.snapshot_state` / `restore_state`). A parked 50k run is under
+5 MB of arrays; four are kept, oldest evicted.
+
+Two consequences of it being cheap:
+
+- **The build that is about to be overwritten does not relax.** Passing
+  `settle=False` builds the deck exactly as usual -- every fix installed, every
+  command validated, `run 0` where the scenario asked for a relaxation -- and skips
+  only the integration, because relaxing a configuration that is about to be
+  scattered over is the most expensive pointless thing in the flow. Measured on
+  `mesomem_polymer`: 7.2 s to build, 0.4 s to build and resume. The `run` commands
+  are what is dropped and nothing else, because a settle list also *installs* fixes
+  and on some scenarios one of them outlives the settle (the rod's barostat).
+- **A snapshot that no longer fits is refused, and then the build is redone
+  properly.** Different bead count means someone edited the playground between
+  switches; scattering it in anyway would produce a scene that is neither run, and
+  serving the no-settle build would mean serving the scenario's made-up starting
+  geometry.
 
 Three details worth knowing:
 
@@ -1136,23 +1165,52 @@ At 10k the client is the bottleneck and the A100 is at a few percent of capacity
 The order below is by payoff per unit of work, and the first two items are what
 actually stand between here and 100k.
 
-### 1. Move the analysis off the frame path entirely (biggest win, ~half a day)
+### 1. Move the analysis off the frame path entirely -- **DONE**
 
-Right now the analysis runs inside `step()`, so the frame waits for it -- and at
-100k a full update is ~300 ms, which no amount of scheduling hides.
+This was the biggest win and it is in: `remote/client.py`'s `FrameAnalysis` takes
+whatever the newest frame is, measures it on a thread and a clock of its own, and
+publishes finished results for the drawing thread to read. Nothing on the frame
+path waits for any of it. What stays on the frame path is the decode and the
+rattle's amplitude, ~4 ms at 50k.
 
-**Give it its own thread and its own clock.** It takes whatever the newest frame is,
-updates the panels when it finishes, and never blocks a frame. The panels then
-refresh at whatever rate they can manage (say 8 Hz at 10k, 3 Hz at 100k) while the
-picture stays at 60 fps. Nothing in the panels needs to be frame-synchronous --
-they are already cached, throttled quantities.
+**What forced it.** At 50,000 beads, on a *coarsened* configuration rather than the
+opening gas:
 
-Watch for: the GIL. Python threads only genuinely overlap where the work releases
-it, which numpy and scipy mostly do. The measurement to take first is the one that
-already exists -- the `--debug` breakdown -- with the GL renderer, where the main
-thread is mostly waiting on the GPU and has room to spare. (With the *CPU* renderer
-the contention is severe: the same analysis measured 6.8 ms standalone and 30 ms
-inside a frame that spent 520 ms in software rendering.)
+| | measured at 50k | ran |
+|---|---|---|
+| decode + rattle | 4 ms | every frame -- stayed |
+| RDF sample | 5 ms | every frame |
+| `Analysis.update` (sampled pair list) | 16 ms | one frame in 4 |
+| **cluster labelling** | **185 ms** | one frame in 33 |
+
+The labelling is the one that showed: 185 ms is eleven frames the window did not
+draw, arriving every 33rd frame of a 20 fps wire, i.e. **a visible hitch every 1.6
+seconds** -- which is exactly what it looked like in the demo. It had already been
+moved from the readout to the stepper thread, and that could not fix it: `App._tick`
+joins the stepper before it draws, so the stepper is the frame path with one frame
+of slack, not an escape from it.
+
+Measured after, driving the client at 60 Hz against a 20 fps synthetic wire at 50k
+with the cluster colouring on:
+
+| per-tick cost | before | after |
+|---|---|---|
+| median | 1.9 ms | 1.9 ms |
+| p99 | 30.7 ms | 10.2 ms |
+| worst | 40+ ms, every 1.25 s | 21.8 ms, warm-up only |
+| what the frame waited for (`wait` p99) | 30.3 ms | 0.1 ms |
+
+The GIL warning below turned out to be the right thing to watch and a survivable
+one: the labelling is vectorised numpy, which releases it in the inner loops, so
+what is left of a 185 ms pass on the drawing thread is a couple of frames at ~20 ms
+instead of eleven frames of nothing. The `--debug` breakdown reads this correctly
+with no change: `analysis` is charged only what a frame waited for -- zero, now --
+and the wall figure after the sum still says what the pass cost.
+
+Watch for, if this is revisited: the GIL. Python threads only genuinely overlap
+where the work releases it, which numpy and scipy mostly do. (With the *CPU*
+renderer the contention is severe: the same analysis measured 6.8 ms standalone and
+30 ms inside a frame that spent 520 ms in software rendering.)
 
 ### 2. Stop building a pair list on this machine at all (the real 100k answer)
 

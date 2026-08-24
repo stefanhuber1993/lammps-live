@@ -7,6 +7,7 @@ simulation. That is deliberate: the whole point of splitting the force field's
 energy expression out of the system class is to be able to evaluate it on a
 handmade configuration and compare it against what LAMMPS computed.
 """
+import itertools
 import math
 from dataclasses import dataclass
 from functools import lru_cache
@@ -240,6 +241,115 @@ def principal_normal(points):
     _evals, evecs = np.linalg.eigh(q.T @ q)   # ascending
     n = evecs[:, 0]
     return -n if n[2] < 0.0 else n
+
+
+class PlacementFailed(RuntimeError):
+    """`random_points_min_separation` could not separate the points it was asked
+    for. Its message names the way out (fewer particles, a bigger cell, or a
+    smaller separation), because every one of those is a number in a playground
+    file."""
+
+
+def random_points_min_separation(n, box, min_sep, rng, rounds=80):
+    """`n` uniformly random points in a periodic `box`, no two closer than
+    `min_sep`. Returns (positions, rounds_used).
+
+    WHY THIS EXISTS AND IS NOT `create_atoms random ... overlap`. LAMMPS will do
+    exactly this, and its cost is the reason the remote demos were unpleasant to
+    stand in front of: measured on this repo's 50,000-bead cell, `create_atoms
+    random 50000 <seed> box overlap 0.9 maxtry 200` takes 47 SECONDS, against
+    0.00 s for the same command with the overlap check left off. That one command
+    was essentially the whole of a remote build -- and of a remote Reset, which is
+    the same work again (44 s measured; see remote/client.py). Nothing about it is
+    the GPU's fault or the network's: the insertion runs on the host and rejects
+    candidates one at a time.
+
+    THE METHOD is dart-throwing done in bulk. Sample all `n` at once, find every
+    pair closer than `min_sep`, resample one member of each, repeat. At the
+    densities these scenarios run (the 50k cell's exclusion spheres occupy about
+    1.5% of it) roughly a tenth of the points conflict on the first pass and the
+    rest converge in a handful more, so the whole thing is a few passes of numpy
+    over the array. The distribution is the same one LAMMPS produces -- uniform,
+    conditioned on the separation -- which is what makes this a speed change and
+    not a physics one.
+
+    The pair search is a cell hash at exactly `min_sep`, so a point's only possible
+    conflicts are in its own cell and the 26 around it. Distances are
+    minimum-imaged: the cell is periodic, and two points either side of a face are
+    as close as they look.
+    """
+    lo = np.asarray(box.lo, dtype=float)
+    lengths = np.asarray(box.lengths, dtype=float)
+    pos = rng.random((int(n), 3)) * lengths
+    if min_sep <= 0.0 or len(pos) < 2:
+        return pos + lo, 0
+    for used in range(1, int(rounds) + 1):
+        crowded = _crowded_indices(pos, lengths, float(min_sep))
+        if not len(crowded):
+            return pos + lo, used
+        pos[crowded] = rng.random((len(crowded), 3)) * lengths
+    raise PlacementFailed(
+        f"could not place {n} points at least {min_sep} apart in a "
+        f"{lengths[0]:.1f} x {lengths[1]:.1f} x {lengths[2]:.1f} cell within "
+        f"{rounds} rounds ({len(crowded)} still crowded). The cell is too full for "
+        f"this separation: use fewer particles, a bigger cell (a lower volume "
+        f"fraction), or a smaller overlap distance.")
+
+
+def _crowded_indices(pos, lengths, min_sep):
+    """Indices to resample: one member of every pair closer than `min_sep`.
+
+    ONE member, the higher-indexed one, rather than both -- resampling both would
+    throw away a point that has nothing wrong with it except its neighbour, which
+    on a first pass with a tenth of the points in conflict roughly doubles the work
+    per round for no gain in convergence.
+
+    The cell grid is sized so a cell is at least `min_sep` across, which is what
+    makes "own cell plus the 26 neighbours" a complete search. Cells are addressed
+    by a single integer key and the points sorted by it, so each cell's members are
+    a contiguous run; `members` is that run table, padded with -1, and the loop
+    below walks the 27 offsets against it.
+    """
+    n = len(pos)
+    ncell = np.maximum(np.floor(lengths / min_sep).astype(np.int64), 1)
+    cell = np.floor(pos / lengths * ncell).astype(np.int64)
+    # A point exactly on the upper face would index one cell past the end.
+    np.clip(cell, 0, ncell - 1, out=cell)
+    key = (cell[:, 0] * ncell[1] + cell[:, 1]) * ncell[2] + cell[:, 2]
+    order = np.argsort(key, kind="stable")
+    ucell, start, counts = np.unique(key[order], return_index=True,
+                                     return_counts=True)
+    width = int(counts.max())
+    members = np.full((len(ucell), width), -1, dtype=np.int64)
+    rank = np.arange(len(order), dtype=np.int64) - np.repeat(start, counts)
+    members[np.repeat(np.arange(len(ucell), dtype=np.int64), counts), rank] = order
+
+    idx = np.arange(n, dtype=np.int64)
+    cut_sq = min_sep * min_sep
+    crowded = []
+    for offset in itertools.product((-1, 0, 1), repeat=3):
+        nkey_cell = (cell + np.asarray(offset, dtype=np.int64)) % ncell
+        nkey = ((nkey_cell[:, 0] * ncell[1] + nkey_cell[:, 1]) * ncell[2]
+                + nkey_cell[:, 2])
+        slot = np.minimum(np.searchsorted(ucell, nkey), len(ucell) - 1)
+        # A neighbour cell that holds nothing is not in `ucell` at all, and
+        # searchsorted lands it on some other cell -- so the key has to be checked
+        # rather than trusted.
+        occupied = ucell[slot] == nkey
+        for k in range(width):
+            j = np.where(occupied, members[slot, k], -1)
+            live = j >= 0
+            if not live.any():
+                continue
+            i, jj = idx[live], j[live]
+            d = pos[jj] - pos[i]
+            d -= lengths * np.round(d / lengths)
+            close = (np.einsum("ij,ij->i", d, d) < cut_sq) & (i != jj)
+            if close.any():
+                crowded.append(np.maximum(i[close], jj[close]))
+    if not crowded:
+        return np.empty(0, dtype=np.int64)
+    return np.unique(np.concatenate(crowded))
 
 
 def hex_lattice_2d(n_cols, n_rows, a):

@@ -30,7 +30,8 @@ import numpy as np
 
 from .params import ParamSet, structural
 from .state import (Box, hex_lattice_2d, hex_ring_2d, icosphere_faces,
-                    icosphere_spacing, lattice_ring, principal_normal)
+                    icosphere_spacing, lattice_ring, principal_normal,
+                    random_points_min_separation)
 
 # The polymer's two-stop ramp, in display-space bytes (see
 # VesiclePolymer.render_tints). Deliberately nothing like the membrane's own
@@ -195,6 +196,27 @@ class Scenario(ABC):
         one will not do -- a frozen floor plus a mobile crystal, say. Empty ->
         the force field's global integrator is used."""
         return []
+
+    def outline(self, params):
+        """(build, natoms) -- the cell and the composition, for a caller that does
+        NOT need the positions.
+
+        The caller is the client of a remote playground (see remote/client.py): it
+        has no LAMMPS to ask, so it reads the box to frame its camera with, the count
+        to size its buffers to, and the species to colour each bead by, off the
+        scenario -- and it does that every time the app switches to that playground,
+        which is every Tab through the list. Placing 50,000 particles to answer three
+        questions about them is half a second of an interface not responding, for
+        arrays that are then thrown away.
+
+        The default answer IS a build, because for most scenarios the geometry is the
+        cheap part and two constructions would be two things to keep in step. A
+        scenario whose PLACEMENT is the expensive part overrides this; RandomFill
+        does. An override may return an empty `positions`, so the count comes from
+        the second element and never from `len(build.positions)`.
+        """
+        build = self.build(params, np.random.default_rng(0))
+        return build, len(build.positions)
 
     def extra_setup_commands(self, params):
         """Anything else the deck needs: LAMMPS variables read per frame,
@@ -1096,17 +1118,40 @@ class RandomFill(Scenario):
         return w
 
     def build(self, params, rng):
-        """Positions are placed by LAMMPS (`create_atoms random` does the overlap
-        rejection), so the positions array is empty and the box is what
-        matters."""
-        return ScenarioBuild(positions=np.zeros((0, 3)), directors=None,
-                             box=Box.cube(params["box"], (True, True, True)))
+        """Positions placed HERE, in numpy, not by LAMMPS.
 
-    def atom_creation_commands(self, params, seed):
-        return [
-            f"create_atoms 1 random {int(params['n'])} {seed} box "
-            f"overlap {params['overlap']} maxtry {int(params['maxtry'])} units box"
-        ]
+        This used to hand the job to `create_atoms 1 random N seed box overlap ...`
+        and return an empty array, which is the obvious thing and was the single
+        most expensive line in the whole remote demo: 47 seconds for the 50,000-bead
+        cell, against 0.00 s for the same command with the overlap check removed. It
+        is the entire cost of a remote build, and of a remote Reset, which is the
+        same work over again. See state.random_points_min_separation for what
+        replaces it (half a second for the same 50,000, drawing from the same
+        distribution) and why the two are interchangeable.
+
+        `maxtry` survives as the round budget rather than as a per-particle attempt
+        count -- both are "how hard to try before admitting the cell is too full" --
+        and unlike LAMMPS' version, failing here says so instead of quietly creating
+        fewer atoms than asked for.
+        """
+        box = Box.cube(params["box"], (True, True, True))
+        pos, _rounds = random_points_min_separation(
+            int(params["n"]), box, float(params["overlap"]), rng,
+            rounds=max(8, int(params["maxtry"]) // 4))
+        return ScenarioBuild(positions=pos, directors=None, box=box)
+
+    def outline(self, params):
+        """The cell and the count, with nothing placed.
+
+        This is the whole reason `Scenario.outline` exists. The composition here is
+        one species and the count is a declared parameter, so both are known without
+        touching a coordinate -- and the coordinates are the expensive part (half a
+        second for 50,000, and it is the remote playgrounds that are that big and
+        that are switched to and away from mid-talk).
+        """
+        box = Box.cube(params["box"], (True, True, True))
+        return (ScenarioBuild(positions=np.zeros((0, 3)), directors=None, box=box),
+                int(params["n"]))
 
     def create_commands(self, params, build, seed):
         # Random initial director orientations -- the disordered orientational

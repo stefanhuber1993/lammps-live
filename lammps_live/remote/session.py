@@ -580,8 +580,9 @@ class RemoteSession:
         repeated. The login, the deployed package, the job, the server process and
         the tunnel all stay exactly as they are; the far side closes the simulation
         it was holding and builds this one instead, on the same node (see
-        server.FrameServer.switch_playground). What that costs is the state of the
-        run being left behind, and nothing else.
+        server.FrameServer.switch_playground). What that costs is about a second of
+        rebuild: the run being left is parked over there and comes back where it was
+        when this playground is asked for again.
 
         Returns True if a switch was started. It runs on a worker thread, because
         the far side's rebuild is LAMMPS' own setup on tens of thousands of beads --
@@ -1172,9 +1173,10 @@ class RemoteSession:
                     listening.set()
 
         threading.Thread(target=watch, name="server-log", daemon=True).start()
-        # Ten minutes is generous on purpose: it covers LAMMPS starting, Kokkos
-        # initialising the GPU and `create_atoms random` placing 10,000 particles
-        # with overlap rejection. But the srun is watched while we wait, because the
+        # Ten minutes is generous on purpose: it covers LAMMPS starting and Kokkos
+        # initialising the GPU, which is the part that does not get faster (the
+        # placement, which used to dominate this wait, now does not -- see
+        # RandomFill.build). But the srun is watched while we wait, because the
         # common failures here (a step that cannot be created, a module that is not
         # loaded, a syntax error in env.sh) exit in seconds and there is no reason to
         # sit out the full timeout for them.

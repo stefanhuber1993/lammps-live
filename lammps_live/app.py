@@ -1310,14 +1310,19 @@ class App:
         to zero whenever the simulation fits entirely under the render, which is
         the point -- what it measures is the part that did not fit.
 
-        'analysis' FOLLOWS THAT SAME RULE, and it did not used to. It is measured
-        on the stepper thread, where it runs under the drawing exactly as the step
-        does, so charging the frame its whole wall time claimed 150 ms of cost on
-        a frame that took 37 -- the breakdown added up to more than the frame and
-        pointed at the wrong thing. What lands on the frame is only the part the
-        drawing did not cover, which is the part inside the wait; the full wall
-        time is worth knowing too, so it is printed after the sum rather than
-        inside it."""
+        'analysis' FOLLOWS THAT SAME RULE, and it did not used to. On a local
+        playground it is measured on the stepper thread, where it runs under the
+        drawing exactly as the step does, so charging the frame its whole wall time
+        claimed 150 ms of cost on a frame that took 37 -- the breakdown added up to
+        more than the frame and pointed at the wrong thing. What lands on the frame
+        is only the part the drawing did not cover, which is the part inside the
+        wait; the full wall time is worth knowing too, so it is printed after the
+        sum rather than inside it.
+
+        On a REMOTE playground the charge is zero and that is the answer, not a
+        gap: the measuring has a thread and a clock of its own there (see
+        remote/client.py, FrameAnalysis), so no frame waits for it and the only
+        figure worth reading is the wall one."""
         # Both are measured INSIDE step(), on the stepper thread, so what reaches
         # this frame is bounded by what the frame waited for.
         analysis_charged = min(analysis_seconds, sim_seconds)

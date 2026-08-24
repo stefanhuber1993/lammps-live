@@ -373,6 +373,116 @@ def test_every_playground_runs_in_every_mode(key, mode):
         system.close()
 
 
+# ---- parking a run and putting it back ---------------------------------------
+
+def test_a_parked_run_comes_back_exactly_where_it_was():
+    """One GPU serving two playgrounds used to mean throwing the run you left away,
+    and the coarsening with it. Parking it is a few megabytes of arrays and a scatter
+    into a freshly built instance; this pins that the scatter really is exact, and
+    that what comes back is a working simulation rather than restored arrays.
+
+    Positions, velocities, directors and angular velocities all matter: leave the
+    velocities behind and a resumed membrane is at zero temperature, leave the
+    directors behind and it is a different membrane.
+    """
+    from lammps_live.playground.system import PlaygroundSystem
+    playground = registry.load("mesomem_assembly")
+    a = PlaygroundSystem(playground, mode_name="sim", analysis=False)
+    try:
+        for _ in range(10):
+            a.step(20)
+        parked = a.snapshot_state()
+        was = a.frame_state()
+        when = a.get_sim_time()
+    finally:
+        a.close()
+    assert parked["natoms"] == len(was.positions)
+    assert when > 0.0
+
+    b = PlaygroundSystem(playground, mode_name="sim", analysis=False, settle=False)
+    try:
+        assert b.restore_state(parked) is True
+        now = b.frame_state()
+        assert np.allclose(now.positions, was.positions)
+        assert np.allclose(now.directors, was.directors)
+        assert b.get_sim_time() == pytest.approx(when)
+        # A working simulation: it steps, and it does not blow up on the first
+        # chunk (which is what a half-restored state looks like).
+        b.step(20)
+        assert b.unstable is None
+        assert b.get_sim_time() > when
+    finally:
+        b.close()
+
+
+def test_a_snapshot_of_the_wrong_size_is_refused():
+    """The one check worth making: a snapshot of another playground, or of the same
+    one at a different `n`, would otherwise scatter into whatever is there and
+    produce a scene that is neither run."""
+    from lammps_live.playground.system import PlaygroundSystem
+    system = PlaygroundSystem(registry.load("mesomem_assembly"), mode_name="sim",
+                              analysis=False)
+    try:
+        snapshot = system.snapshot_state()
+        snapshot["natoms"] = int(snapshot["natoms"]) + 1
+        assert system.restore_state(snapshot) is False
+        assert system.restore_state(None) is False
+    finally:
+        system.close()
+
+
+def test_a_parked_run_carries_its_parameters_with_it():
+    """A state is only meaningful under the coefficients that produced it: restoring
+    a half-assembled box under a `k_tilt` that would never have formed it is a
+    picture of nothing."""
+    from lammps_live.playground.system import PlaygroundSystem
+    playground = registry.load("mesomem_assembly")
+    a = PlaygroundSystem(playground, mode_name="sim", analysis=False)
+    try:
+        a.set_extra_param("k_tilt", 4.0)
+        a.step(20)
+        parked = a.snapshot_state()
+    finally:
+        a.close()
+
+    b = PlaygroundSystem(playground, mode_name="sim", analysis=False, settle=False)
+    try:
+        declared = float(b.params["k_tilt"])
+        assert declared != pytest.approx(4.0)
+        assert b.restore_state(parked)
+        assert float(b.params["k_tilt"]) == pytest.approx(4.0)
+        # And the coefficients LAMMPS is running were re-issued, not just the
+        # Python-side value: the step below would otherwise integrate the declared
+        # ones under a slider reading 4.
+        b.step(20)
+        assert b.unstable is None
+    finally:
+        b.close()
+
+
+def test_skipping_the_settle_builds_the_same_deck_without_integrating_it():
+    """`settle=False` exists for a build that is about to be overwritten by a parked
+    run. It must drop the RUNS and nothing else: a settle list also installs fixes,
+    and on some scenarios one of them outlives the settle."""
+    from lammps_live.playground.scenario import RodOnSheet
+    scenario = RodOnSheet(hold_steps=200)
+    params = scenario.new_params()
+    from lammps_live.playground.system import PlaygroundSystem
+    system = PlaygroundSystem(registry.load("mesomem_assembly"), mode_name="sim",
+                              analysis=False, settle=False)
+    try:
+        commands = scenario.post_control_settle(params)
+        translated = system._settle_commands(commands)
+        # The barostat survives -- it is not part of the relaxation, it is the
+        # physics of a wrap (see RodOnSheet.post_control_settle).
+        assert any("press/berendsen" in c for c in translated)
+        # And every run is zeroed rather than removed, so the build still sets up.
+        assert [c for c in translated if c.startswith("run")] == ["run 0"]
+        assert len(translated) == len(commands)
+    finally:
+        system.close()
+
+
 def test_energy_panel_survives_mismatched_analysis_cadences():
     """The energy terms are cached on a slower cadence than the pair list, so the
     panel must mask with the pair list its terms were computed WITH, not the live

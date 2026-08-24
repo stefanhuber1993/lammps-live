@@ -495,13 +495,16 @@ timeout must come **off**, because the same socket is read by the control thread
 which is idle for minutes between slider movements, and a timeout there would read
 as a dead client.
 
-**`{"t":"building"}` is sent *before* the build starts, not after.** Building 10k
-beads is `plugin load`, a rejection-sampled random fill and LAMMPS' own setup —
-tens of seconds, all of it before a welcome could be sent, and all of it with the
-client sitting in a blocking read. It used to give up at 15 s, drop the socket and
-retry — which made the server throw the half-built simulation away and start over,
-so the retry could not succeed either. That one message is what turns a hang into
-a wait.
+**`{"t":"building"}` is sent *before* the build starts, not after.** A build is
+`plugin load`, the placement, LAMMPS' own setup, and whatever relaxation the
+scenario asks for — all of it before a welcome could be sent, and all of it with
+the client sitting in a blocking read. It used to be tens of seconds (almost
+entirely LAMMPS' overlap-rejecting random fill, which is now a bulk numpy pass —
+see `state.random_points_min_separation`) and is now about a second on the
+assembly decks and several on a bonded one that settles. Still long enough to
+matter: the client used to give up at 15 s, drop the socket and retry — which made
+the server throw the half-built simulation away and start over, so the retry could
+not succeed either. That one message is what turns a hang into a wait.
 
 **`hmac.compare_digest`, not `==`.** String comparison short-circuits at the first
 differing byte, so its *timing* leaks how many leading bytes you got right — a

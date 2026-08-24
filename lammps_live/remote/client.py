@@ -7,13 +7,20 @@ instead of issuing LAMMPS commands. Everything else is genuinely the same code:
 the analysis, the observables, the energy panels, the RDF and the trajectory
 smoothing all run here, on the received frames, out of `lammps_live.playground`.
 
-WHERE THE WORK LANDS, AND WHY IT FITS. `step()` is called on the stepper's worker
-thread (see stepper.py), so the network wait AND the analysis that follows it
-overlap the drawing of the previous frame. That is not a detail -- the analysis is
-the expensive half of this end (measured 1.5 us/bead/chunk, so ~10 ms at 10k
-beads), and overlapped it costs max(analysis, render) per frame rather than the
-sum. It is the same trick that lets the local demo run 1500 beads at 60 fps, used
-for a different expensive thing.
+WHERE THE WORK LANDS, AND WHY IT FITS. Three clocks, not one, and which one a
+piece of work is on is the difference between 60 fps and a stutter:
+
+  * THE WINDOW, 60 Hz. The drawn state -- the rattle, the smoothing, the readouts
+    the renderer asks for. See `_render_state`.
+  * THE WIRE, 20 Hz, on the stepper's worker thread (see stepper.py), so the
+    network wait overlaps the drawing of the previous frame. `step()` and the
+    decode that follows it, and nothing else: `App._tick` joins this before it
+    draws, so whatever sits here is a frame the window did not get.
+  * THE MEASURING, whenever it finishes. The observables, the energy panel, the
+    g(r) and the cluster labelling, on a thread of their own -- because at the
+    50,000 beads this playground exists to show, one labelling is 185 ms and no
+    amount of overlapping hides eleven frames. See FrameAnalysis, which is also
+    where the numbers are.
 
 FRAMES ARE DROPPED, NEVER QUEUED. The reader thread keeps only the newest frame.
 If this machine falls behind -- a hitch, a slow analysis frame, a window resize --
@@ -244,6 +251,209 @@ class FrameLink:
             pass
 
 
+class FrameAnalysis:
+    """Everything this end measures off a received frame, on a thread of its own.
+
+    THE FRAME PATH MUST NOT WAIT FOR ANY OF THIS. Measured at the demo's 50,000
+    beads, on a coarsened configuration rather than the opening gas:
+
+        decode + rattle              4 ms   every frame   <- stays on the frame path
+        RDF sample                   5 ms   every frame
+        Analysis.update             16 ms   one frame in 4
+        cluster labelling          185 ms   one frame in 33
+
+    The bottom three used to run inside `_ingest` as well, i.e. inside `step()`,
+    i.e. inside the stepper's join at the top of `App._tick` -- so the labelling's 185 ms was
+    eleven frames the window did not draw, arriving every 33rd frame of a 20 fps
+    wire. THAT WAS THE HITCH EVERY SECOND AND A HALF. Putting the labelling on the
+    stepper thread (which is where it was before this class) did not fix it and
+    could not: the drawing only hides work up to a frame's worth, and the frame
+    waits for the rest.
+
+    Threading it does not make it cheaper; it makes it nobody's frame. And nothing
+    here is frame-synchronous to begin with -- a g(r) averaged over 40 samples,
+    observables on a 4-frame cadence, an energy panel on an 8-frame one, a
+    labelling held by half a second of hysteresis. What they lose by landing a
+    frame or two later is not something there is to see.
+
+    HOW IT STAYS SAFE, which is the whole of the design:
+
+      * The worker OWNS the Analysis, the RDF and the ClusterTracker. Nothing else
+        touches them once this object exists, so there is no shared mutable state
+        to lock around -- the failure mode that would otherwise be waiting here is
+        `energy_panel` reading `_energy` from one frame and `_energy_pairs` from
+        the next, which is an IndexError with a plausible-looking traceback.
+      * It takes ONE frame at a time, the newest, and drops whatever it could not
+        keep up with -- the same rule the link itself follows (see FrameLink), and
+        for the same reason: falling behind must cost freshness, never latency.
+      * Results are PUBLISHED, never mutated: each pass replaces the whole of what
+        the drawing thread reads, so a reader gets the previous answer entire or
+        the new one entire and never a half of each.
+      * A reconnect or a Reset bumps a generation. Results computed for an older
+        one are dropped, and the worker rebuilds its own objects rather than
+        having them replaced under it mid-pass.
+
+    The one thing it reads from outside is the parameter set, which the app writes
+    a slider into every frame. That needs no lock: the values are floats in a dict
+    and the analysis only ever reads them, so the worst a race can do is measure
+    one frame with the value from the frame before -- which is what a 20 fps wire
+    does to the sliders anyway.
+    """
+
+    # The energy panel's heading, which is a property of what is being shown
+    # rather than of any one frame.
+    PANEL_TITLE = "Whole-system energy -- additive (reduced units)"
+
+    # How long to sit in the wait before looking again. Only `stop()` and a
+    # `restart()` with no frame behind it need this to be finite at all, so it is
+    # sized for a prompt shutdown rather than for latency: a frame wakes the thread
+    # the moment it is submitted.
+    POLL = 0.05
+
+    def __init__(self, system):
+        self._system = system
+        self._lock = threading.Lock()
+        self._new = threading.Event()
+        self._idle = threading.Event()
+        self._stop = threading.Event()
+        self._pending = None          # (state, frame, want_clusters, generation)
+        self._generation = 0
+        self._rebuild = False
+        # What the drawing thread reads. Replaced wholesale, never edited.
+        self.hud_lines = ()
+        self.energy_panel = None
+        self.rdf_curve = None
+        self.cluster_slots = None
+        # What the last pass cost, for the --debug breakdown's wall figure.
+        self.seconds = 0.0
+        self._build()
+        self._idle.set()
+        self._thread = threading.Thread(target=self._loop, name="frame-analysis",
+                                        daemon=True)
+        self._thread.start()
+
+    # ---- what the rest of this end says to it -------------------------------
+
+    def submit(self, state, frame, want_clusters):
+        """Hand over a received frame. Returns immediately, always: this is called
+        from `_ingest`, which is the frame path."""
+        with self._lock:
+            self._pending = (state, frame, want_clusters, self._generation)
+            self._idle.clear()
+        self._new.set()
+
+    def restart(self):
+        """Forget the run that has just gone away -- a reconnect, a Reset, a
+        playground switch on the far side.
+
+        Everything measured off the old run's frames goes, and so does anything
+        the worker is part-way through: its generation is stale from here on. The
+        objects themselves are rebuilt on the worker's own thread (the box may have
+        changed, and with it the RDF's binning), which is why this only sets a flag
+        rather than replacing them here."""
+        with self._lock:
+            self._generation += 1
+            self._pending = None
+            self._rebuild = True
+            self.hud_lines = ()
+            self.energy_panel = None
+            self.rdf_curve = None
+            self.cluster_slots = None
+
+    def wait_idle(self, timeout=5.0):
+        """Block until everything submitted so far has been measured.
+
+        NOT USED BY THE APP, and it must not be -- the point of this class is that
+        no frame ever waits. It is for a caller that needs the measurement of a
+        particular frame to have happened before it looks: the loopback tests, and
+        anything headless that steps a fixed number of frames and then reads the
+        observables."""
+        return self._idle.wait(timeout)
+
+    def stop(self):
+        self._stop.set()
+        self._new.set()
+
+    # ---- the thread ---------------------------------------------------------
+
+    def _build(self):
+        """The three things the worker owns, for the run it is now looking at."""
+        system = self._system
+        self.analysis = Analysis(
+            system.force_field, system.playground.observables,
+            energy_every=system.playground.analysis_energy_every)
+        self._rdf = system._make_rdf()
+        self._clusters = ClusterTracker(contact_cutoff(system.spec.atom_radius_A))
+
+    def _loop(self):
+        while not self._stop.is_set():
+            self._new.wait(self.POLL)
+            with self._lock:
+                # Cleared while the job is taken, so a frame submitted in between
+                # costs one spare turn of this loop rather than being missed.
+                self._new.clear()
+                job, self._pending = self._pending, None
+                rebuild, self._rebuild = self._rebuild, False
+            t0 = time.perf_counter()
+            try:
+                if rebuild:
+                    self._build()
+                if job is not None:
+                    state, frame, want_clusters, generation = job
+                    results = self._measure(state, frame, want_clusters)
+                    self.seconds = time.perf_counter() - t0
+                    self._publish(generation, results)
+            except Exception as exc:      # noqa: BLE001 -- reported, not raised
+                # NOTHING HERE MAY KILL THE THREAD. The picture does not depend on
+                # any of it, so the cost of a bad frame is a stale panel; the cost
+                # of a dead worker is every panel frozen for the rest of the
+                # session, with nothing on screen to say why.
+                self.seconds = time.perf_counter() - t0
+                print(f"[lammps-live] frame analysis failed: "
+                      f"{type(exc).__name__}: {exc}")
+            self._mark_idle()
+
+    def _measure(self, state, frame, want_clusters):
+        """One pass over one frame. Everything expensive on this end is here."""
+        if all(state.box.periodic):
+            self._rdf.add(state.positions)
+        else:
+            self._rdf.add(state.positions[:, :2])
+        self.analysis.update(state, self._system.params)
+        # The labelling, only while the colouring is actually painting it -- the
+        # same asked-recently rule the per-bead energies use, decided by the caller
+        # (see RemoteSystem._ingest) because it is the frame counter that knows.
+        # On the received positions rather than the drawn ones, which differ by a
+        # fraction of a bead radius of synthetic rattle and by nothing at all in
+        # which beads are in contact.
+        slots = (self._clusters.slots(state.positions, state.box, frame)
+                 if want_clusters else None)
+        n = max(1, len(state.positions))
+        scale = self._system.force_field.energy_scale_per_particle * n
+        return (tuple(self.analysis.hud_lines() or ()),
+                self.analysis.energy_panel(self.PANEL_TITLE, scale),
+                self._rdf.get(), slots)
+
+    def _publish(self, generation, results):
+        hud, panel, curve, slots = results
+        with self._lock:
+            if generation != self._generation:
+                return                     # measured for a run that has gone
+            self.hud_lines = hud
+            self.energy_panel = panel
+            self.rdf_curve = curve
+            # Held rather than cleared when the colouring is off, so switching it
+            # back on paints the last labelling while the next one is computed.
+            if slots is not None:
+                self.cluster_slots = slots
+
+    def _mark_idle(self):
+        """Say so if there is nothing left to measure -- see `wait_idle`."""
+        with self._lock:
+            if self._pending is None:
+                self._idle.set()
+
+
 class RemoteSystem(MDSystem3D):
     """A playground running elsewhere, drawn here."""
 
@@ -269,7 +479,12 @@ class RemoteSystem(MDSystem3D):
         # what lets the camera frame the scene, and the box outline be drawn, before
         # a single frame has arrived. The server's own box replaces it on connect
         # (authoritative: a scenario that lets a barostat settle would differ).
-        build = self.scenario.build(self.scenario_params, np.random.default_rng(0))
+        # `outline`, not `build`: this end wants the cell, the composition and the
+        # count, and on the 50,000-bead scenarios placing the particles to find them
+        # out is half a second of a frozen window every time the app switches to
+        # this playground -- for arrays nothing here ever reads. See
+        # Scenario.outline.
+        build, natoms = self.scenario.outline(self.scenario_params)
         self.box = build.box
         # THE COMPOSITION IS KNOWN HERE, and it has to be, because none of it
         # travels: the wire carries positions, directors and (on request) energies,
@@ -279,20 +494,24 @@ class RemoteSystem(MDSystem3D):
         # analysis at this end gets the type-aware answers it would otherwise
         # silently skip (a two-species force field with no types reports the whole
         # system as one species; see MesoMemPolymer.energy_terms).
+        # A scenario that skipped the placement has no per-particle types to hand
+        # over either -- but it only skips it when its composition is uniform, which
+        # is the same condition under which `_types` is None anyway. A multi-species
+        # scenario's outline carries the real array.
         self._types = (np.asarray(build.types, dtype=int)
-                       if self.force_field.n_types > 1 else None)
+                       if self.force_field.n_types > 1 and len(build.types) else None)
         self._tints = self.scenario.render_tints(self.scenario_params)
-        self.natoms = len(build.positions) or int(
-            self.scenario_params["n"] if self.scenario_params.has("n") else 0)
+        self.natoms = int(natoms)
         self.all_ids = np.arange(1, self.natoms + 1)
         self.bonds = []
         self.brightness = None
         self.controlled_index = None
         self.controlled_id = None
 
-        self.analysis = Analysis(self.force_field, playground.observables,
-                                 energy_every=playground.analysis_energy_every)
-        self._rdf = self._make_rdf()
+        # The measuring half of this end -- the observables, the energy panel, the
+        # g(r) and the cluster labelling -- on a thread of its own, because at this
+        # size none of it fits in a frame. See FrameAnalysis.
+        self._frame_analysis = FrameAnalysis(self)
         self._smoother = TrajectorySmoother()
         self._smoothing_tau = 0.0
         # The other half of the drawn-state filtering, and the one that only a
@@ -316,15 +535,12 @@ class RemoteSystem(MDSystem3D):
         self._frame_wall = 0.0
         self._energy_cache = None
         self._energy_render_frame = -1
-        # The cluster colouring, computed at THIS end from the positions off the
+        # The cluster colouring is computed at THIS end from the positions off the
         # wire. Nothing about it has to travel: it is a fact about the geometry
-        # already in hand, and the far end has enough to do. See clustering.py --
-        # and note it is the one readout whose cost grows with the bead count the
-        # remote playground exists to show off.
-        self._clusters = ClusterTracker(contact_cutoff(self.spec.atom_radius_A))
-        # The labelling itself, computed when a frame lands rather than when the
-        # renderer asks -- see _ingest. None until one has been.
-        self._cluster_slots = None
+        # already in hand, and the far end has enough to do. It is also the most
+        # expensive thing this end does -- 185 ms at 50,000 beads -- which is why
+        # it lives on the analysis thread with the rest of the measuring, and why
+        # it runs only while the colouring is on (see clustering.py, FrameAnalysis).
         self._clusters_asked_frame = -999
         self._frame = 0
         self._state = None
@@ -334,7 +550,6 @@ class RemoteSystem(MDSystem3D):
         self._last_step_dt = 0.0
         self._unstable = None
         self._seq = 0
-        self.analysis_seconds = 0.0
         self.wait_seconds = 0.0
 
         self.link = None
@@ -342,6 +557,15 @@ class RemoteSystem(MDSystem3D):
         self._playing = False
         self._target_temp = self.spec.temperature.default
         self._sent_params = {}
+        # THE VALUES RESET GOES BACK TO. Taken here, before anything has touched a
+        # slider, and after the preset has been folded in (`resolved_params` above)
+        # -- so Reset returns to the preset when one was asked for, exactly as it
+        # does locally. Kept as raw values rather than clamped ones for the same
+        # reason PlaygroundSystem._snapshot_params does: a clamp is re-applied on
+        # read, so storing the clamped number would make the restore lossy the
+        # moment its dependency moved.
+        self._initial_params = dict(self.params.values)
+        self._initial_temp = self._target_temp
         self._fault = None             # the far side's last simulation-killing event
         # Which received frame last had `get_bead_energies` called against it. The
         # request is derived from that with a couple of frames of hysteresis rather
@@ -376,7 +600,6 @@ class RemoteSystem(MDSystem3D):
         if box:
             self.box = Box(tuple(box["lo"]), tuple(box["hi"]),
                            tuple(bool(p) for p in box["periodic"]))
-            self._rdf = self._make_rdf()
         n = int(welcome.get("natoms") or self.natoms)
         if n != self.natoms:
             self.natoms = n
@@ -387,8 +610,11 @@ class RemoteSystem(MDSystem3D):
         self._energies = None
         self._energy_cache = None
         self._energy_render_frame = -1
-        self._clusters.reset()
-        self._cluster_slots = None
+        # Nothing measured off the last connection's frames belongs to this one:
+        # the box may be a different size, and the labelling's colours are a fact
+        # about a configuration that has gone. The worker rebuilds around the new
+        # box on its own thread -- see FrameAnalysis.restart.
+        self._frame_analysis.restart()
         self._smoother.reset()
         # A fresh connection is a fresh scene: nothing measured off the previous
         # one's frames (the rattle's amplitude, the wire's period) carries over.
@@ -515,33 +741,65 @@ class RemoteSystem(MDSystem3D):
         return {p.name: float(self.params[p.name])
                 for p in self.params.live_params()}
 
-    def reset(self):
-        """Re-randomize the box on the far side, keeping the current parameters.
+    def _restore_declared_params(self):
+        """Back to the values this playground declares, here and over the wire.
 
-        The rebuild happens THERE and takes as long as it takes: LAMMPS' setup plus
-        a rejection-sampled random fill, and no frames come back for any of it.
-        TENS OF SECONDS, not the "moment" it sounds like -- 44s measured for this
-        playground's 50,000 beads, against 43s for the initial build, which is the
-        same work. The GPU does not help: `create_atoms random ... overlap` places
-        particles on the host and rejects the ones that land too close, so the cost
-        follows the bead count wherever the integration runs.
+        `set_extra_param` is the one door: it clamps, it keeps `_sent_params`
+        honest, and it skips the send when the far side already has the value --
+        all of which a hand-rolled loop here would have to repeat. The temperature
+        goes back through its own setter for the same reason.
+        """
+        for name, value in self._initial_params.items():
+            if self.params.has(name):
+                self.set_extra_param(name, value)
+        self.set_target_temp(self._initial_temp)
 
-        So this latches `_resetting` and the HUD says the far side is rebuilding,
-        with the seconds on it, until a frame from the new run arrives (see
-        `_is_new_run`). Without that the picture simply sits on the last frame of
-        the OLD run, which is indistinguishable from a Reset that did nothing --
-        and with only a static notice, indistinguishable from one that hung.
+    def reset(self, restore_params=True):
+        """Put the far side back how it started: the declared parameters, and a
+        fresh state.
+
+        The rebuild happens THERE, and it used to be the slowest thing in this app
+        by two orders of magnitude: 44 seconds measured for this playground's 50,000
+        beads, against 43 for the initial build, which is the same work -- and
+        essentially all of it was `create_atoms random ... overlap`, LAMMPS placing
+        particles on the host one at a time and rejecting the ones that land too
+        close. That is gone; the placement is a bulk numpy pass now (see
+        state.random_points_min_separation) and the same rebuild measures HALF A
+        SECOND. A scenario with a relaxation in it still pays for the relaxation.
+
+        This still latches `_resetting`, and the HUD still says the far side is
+        rebuilding with the seconds on it, until a frame from the new run arrives
+        (see `_is_new_run`) -- because half a second is not zero over a tunnel from
+        Amsterdam, and because the alternative is the picture sitting on the last
+        frame of the OLD run, which is indistinguishable from a Reset that did
+        nothing and, with only a static notice, from one that hung.
 
         Called only with the simulation thread idle (App._reset_simulation waits
-        first): it replaces the analysis and clears the smoother, both of which the
-        stepper thread reads mid-frame.
+        first): it clears the drawn-state filters, which the stepper thread reads
+        mid-frame. The analysis is no longer among them -- it owns its own state and
+        is told to start over rather than having it swapped underneath (see
+        FrameAnalysis.restart).
+
+        THE PARAMETERS GO BACK TOO, matching PlaygroundSystem.reset -- see there for
+        why. On this end that means two things rather than one: the local `params`
+        (which the energy panels are computed from) and the values the far side is
+        running, which have to be re-sent because the server keeps whatever it was
+        last told. They are sent BEFORE the reset message, so the rebuild over there
+        happens with the values that are going back on the sliders rather than with
+        the ones being abandoned -- and so that a value the far side's Kokkos build
+        rejects is gone before the rebuild that would trip over it.
+
+        `restore_params=False` keeps whatever the sliders hold, which is what the
+        app's automatic recovery after a blow-up wants -- see PlaygroundSystem.reset
+        for why. On that path nothing is re-sent either: the server's own rebuild
+        ladder decides, and reports what it had to put back.
         """
+        if restore_params:
+            self._restore_declared_params()
         self._unstable = None
         self._energies = None          # the old run's colours are not the new box's
         self._energy_cache = None
         self._energy_render_frame = -1
-        self._clusters.reset()
-        self._cluster_slots = None
         self._smoother.reset()
         # Both filters, and for the same reason: the new run's coordinates have
         # nothing to do with the old run's, so a carried-over wobble or average
@@ -550,9 +808,10 @@ class RemoteSystem(MDSystem3D):
         self._wire_period = 0.0
         self._frame_wall = 0.0
         self._render_wall = 0.0
-        self._rdf.reset()
-        self.analysis = Analysis(self.force_field, self.playground.observables,
-                                 energy_every=self.playground.analysis_energy_every)
+        # The measuring side goes with them: a rolling g(r), an observable average
+        # and a set of cluster colours are all statements about the run that is
+        # being thrown away.
+        self._frame_analysis.restart()
         self._playing = False
         # LATCHED ONLY IF THE ASK ACTUALLY WENT OUT. `send` answers False on a dead
         # socket rather than raising (a slider must not end the app), so latching
@@ -651,7 +910,15 @@ class RemoteSystem(MDSystem3D):
             self.link.send({"t": "config", "energies": wanted})
 
     def _ingest(self, frame):
-        """Decode one frame and run this end's analysis on it."""
+        """Take in one frame: decode it, and hand it to the analysis thread.
+
+        WHAT IS AND IS NOT ALLOWED IN HERE is the thing to keep. This runs on the
+        frame path -- inside `step()`, which `App._tick` joins before it draws --
+        so it holds only the work the picture itself needs: the decode, and the
+        rattle's amplitude. Everything that MEASURES goes to FrameAnalysis, which
+        has its own thread and its own clock, because at 50,000 beads a single
+        labelling is eleven frames long and no scheduling hides that.
+        """
         header, payload = frame
         codec = header.get("codec", protocol.DEFAULT_CODEC)
         arrays = protocol.decode_frame(
@@ -664,9 +931,6 @@ class RemoteSystem(MDSystem3D):
         if n != len(self.all_ids):
             self.all_ids = np.arange(1, n + 1)
             self.natoms = n
-            # Labelled beads that no longer exist: dropped rather than handed to
-            # the renderer alongside a different number of positions.
-            self._cluster_slots = None
         self._state = FrameState(positions=positions,
                                  directors=arrays.get("directors"),
                                  types=self._frame_types(n), ids=self.all_ids,
@@ -698,34 +962,13 @@ class RemoteSystem(MDSystem3D):
         # this is where it learns how much motion the wire is dropping. Fed the
         # raw received state, before any of the drawn-state filtering.
         self._rattle.observe(self._state)
-        # One RDF sample per received frame -- see get_rdf for why it is here and
-        # _make_rdf for why that needs no throttle of its own.
-        if all(self.box.periodic):
-            self._rdf.add(self._state.positions)
-        else:
-            self._rdf.add(self._state.positions[:, :2])
-        t0 = time.perf_counter()
-        self.analysis.update(self._state, self.params)
-        # THE CLUSTER LABELLING BELONGS HERE, not in the readout it used to run
-        # in. It is an O(N) pass costing tens of milliseconds at this size, and
-        # `get_bead_clusters` is called from the app's own thread -- so every
-        # labelling was time the window spent not drawing, arriving as a hitch
-        # about every second and a half (clustering.py's own docstring predicted
-        # it and named this as the fix). Run from here it lands on the stepper
-        # thread beside the analysis, under the previous frame's drawing, where
-        # the tracker's pacing already keeps it inside a frame's worth of work.
-        #
-        # Only while the colouring is actually painting them, on the same
-        # asked-recently rule the per-bead energies use -- and on the received
-        # positions rather than the drawn ones, which is a difference of a
-        # fraction of a bead radius of synthetic rattle and no difference at all
-        # to which beads are in contact.
-        if (self._frame - self._clusters_asked_frame) < self.ENERGY_REQUEST_HOLD:
-            self._cluster_slots = self._clusters.slots(self._state.positions,
-                                                       self.box, self._frame)
-        # Both passes together: the app subtracts this from the step's wall time
-        # to show them apart from the wire wait in the --debug breakdown.
-        self.analysis_seconds = time.perf_counter() - t0
+        # And off to the measuring thread: the RDF sample, the observables, the
+        # energy panel and -- only while the colouring is painting it, on the same
+        # asked-recently rule the per-bead energies use -- the cluster labelling.
+        # This call does not wait for any of it.
+        self._frame_analysis.submit(
+            self._state, self._frame,
+            (self._frame - self._clusters_asked_frame) < self.ENERGY_REQUEST_HOLD)
 
     def _ensure_current(self):
         """While the run is paused, keep the picture up to date from the readouts.
@@ -883,12 +1126,23 @@ class RemoteSystem(MDSystem3D):
         request to make and no lag on the toggle beyond the frame it takes for
         the ask to reach the labelling.
 
-        ASKING IS ALL THIS DOES. The labelling runs where the frame arrives (see
-        _ingest), so what the renderer gets here is the last one computed, and
-        what it costs the drawing thread is a dictionary lookup.
+        ASKING IS ALL THIS DOES -- and the ask is the whole of how the labelling
+        gets scheduled, since it is the most expensive thing this end computes and
+        nothing else in the frame wants it. What comes back is the last labelling
+        the analysis thread finished (see FrameAnalysis), so the drawing thread
+        pays an attribute read.
+
+        Guarded on the length, not trusted: the slots were computed off a frame
+        that may be a run older than the one being drawn, and a run switch changes
+        the bead count. A mismatch means "no colours yet", which the renderer
+        already handles by keeping the director banding, rather than a labelling
+        applied to the wrong beads.
         """
         self._clusters_asked_frame = self._frame
-        return self._cluster_slots
+        slots = self._frame_analysis.cluster_slots
+        if slots is None or self._state is None:
+            return None
+        return slots if len(slots) == len(self._state.positions) else None
 
     def _frame_types(self, n):
         """The species of each bead in a frame of `n` of them, or None.
@@ -935,24 +1189,25 @@ class RemoteSystem(MDSystem3D):
         return self._sim_time
 
     def get_rdf(self):
-        """The rolling g(r). A pure read: the sampling happens in _ingest.
+        """The rolling g(r). A pure read: the sampling happens on the analysis
+        thread, and so does the averaging (see FrameAnalysis).
 
-        It used to sample here, which put an O(max_atoms^2) pair pass -- 5.9 ms at
+        It used to sample here, which put an O(max_atoms^2) pair pass -- 5 ms at
         this scale -- on the drawing thread once every `sample_every` DRAWN frames.
-        On a 60 Hz window in front of a vsync'd flip that is 5.9 ms the frame does
+        On a 60 Hz window in front of a vsync'd flip that is 5 ms the frame does
         not have, for a plot that is a rolling average over dozens of frames and
         cannot tell which thread fed it.
         """
-        return self._rdf.get()
+        return self._frame_analysis.rdf_curve
 
     def get_potential_terms(self):
         return None                     # no controlled particle in sim mode
 
     def get_total_potential_terms(self):
-        n = max(1, len(self.all_ids))
-        scale = self.force_field.energy_scale_per_particle * n
-        return self.analysis.energy_panel(
-            "Whole-system energy -- additive (reduced units)", scale)
+        # Built on the analysis thread, from the pair list its own energy terms
+        # were computed with -- which is what keeps the panel's masking honest
+        # across the two cadences (see Analysis.energy_panel).
+        return self._frame_analysis.energy_panel
 
     def get_hud_lines(self):
         """What the scene overlay says. The link's own state belongs here: when
@@ -967,18 +1222,20 @@ class RemoteSystem(MDSystem3D):
         lines = []
         if self._resetting:
             # WITH THE CLOCK ON IT. A rebuild there is a whole LAMMPS setup -- the
-            # plugin, a rejection-sampled random fill, the neighbour lists -- and at
-            # this size that is tens of seconds during which nothing comes back and
-            # the picture does not move. Without a number the only two explanations
-            # available to whoever is watching are "slow" and "hung", and they look
-            # identical; with one, a count that is still going up is an answer.
+            # plugin, the placement, the neighbour lists, and any relaxation the
+            # scenario asks for -- during which nothing comes back and the picture
+            # does not move. It is well under a second on the assembly playgrounds
+            # now (it was 44 s; see `reset`), and still seconds on one with a settle
+            # in it. Without a number the only two explanations available to whoever
+            # is watching are "slow" and "hung", and they look identical; with one, a
+            # count that is still going up is an answer.
             waited = time.perf_counter() - self._reset_started
             lines.append(f"REMOTE: rebuilding from a fresh state... {waited:.0f}s")
         if self._unstable:
             lines += ["SIMULATION UNSTABLE on the remote node -- these parameters "
                       "destroyed it.", str(self._unstable),
                       "Dial the sliders back, then press R to rebuild it there."]
-        lines += list(self.analysis.hud_lines() or [])
+        lines += list(self._frame_analysis.hud_lines)
         fps, mbs = self.link.rates()
         rtt = f"{self.link.rtt_ms:.0f} ms" if self.link.rtt_ms else "-"
         # One short line: the HUD stack is already three observables tall here, and
@@ -1034,7 +1291,46 @@ class RemoteSystem(MDSystem3D):
         return None
 
     def close(self):
+        """Done with this system for good -- the app has switched playgrounds.
+
+        The analysis thread goes too: it is one per RemoteSystem, and the app
+        builds a fresh system every time a playground is selected, so leaving them
+        running would accumulate a thread per switch, each waking up to look for
+        frames that will never come."""
         self.detach()
+        self._frame_analysis.stop()
+
+    # ---- what the measuring thread has produced -----------------------------
+
+    @property
+    def analysis(self):
+        """The Analysis object itself, for a caller that wants more than the
+        panels: the observable values and the pair list behind them.
+
+        READ-ONLY, AND IT BELONGS TO ANOTHER THREAD. Reading a finished value out
+        of it is safe (a float, an array reference); driving it -- calling
+        `update`, replacing it -- is not, which is why the frame path no longer
+        does either. Anything that needs the numbers for a PARTICULAR frame should
+        say so first: see `wait_for_analysis`."""
+        return self._frame_analysis.analysis
+
+    @property
+    def analysis_seconds(self):
+        """What the last analysis pass cost, for the --debug breakdown.
+
+        It is not charged to the frame any more and should not be: it runs on the
+        analysis thread, on its own clock, and the app already knows to charge a
+        frame only what the frame actually waited for (see App._update_debug, which
+        prints this as the wall figure after the sum)."""
+        return self._frame_analysis.seconds
+
+    def wait_for_analysis(self, timeout=5.0):
+        """Block until the frames taken in so far have been measured.
+
+        For a caller that steps a fixed number of frames and then reads the
+        observables -- the loopback tests, a headless run. The app never calls it:
+        the whole point of the analysis thread is that no frame waits for it."""
+        return self._frame_analysis.wait_idle(timeout)
 
     # ---- construction helpers -----------------------------------------------
 
@@ -1042,10 +1338,13 @@ class RemoteSystem(MDSystem3D):
         """The same choice PlaygroundSystem makes, minus the scenario override --
         which takes a live LAMMPS instance to build, and there isn't one here.
 
+        Called on the analysis thread, which owns the object it returns (see
+        FrameAnalysis._build) -- so it is called again on a reconnect, when the far
+        side's box may be a different size, rather than rebinned in place.
+
         `sample_every=1` throughout, unlike the local systems': the throttle
         exists to keep an O(max_atoms^2) pass off every frame, and here the caller
-        IS the wire (see _ingest), which is already three times slower than the
-        window. Left at the default the average would cover three times as much
+        is the wire, which is already three times slower than the window. Left at the default the average would cover three times as much
         wall time as it does locally, which is a different plot rather than a
         cheaper one.
         """

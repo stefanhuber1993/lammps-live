@@ -67,10 +67,17 @@ another scene.
 **One GPU, both of them.** The two remote scenes share the allocation: you ask
 for a GPU once, at the start, and after that `Tab` between them costs nothing --
 the run you leave keeps running, and going back to it is one socket. Pressing
-Connect on the other one *moves* the GPU: the far side drops the simulation it
-was holding and builds the other one on the same node, through the same tunnel,
-with no queue and no second one-time code. So an hour's allocation is an hour of
-switching between demos, not one demo.
+Connect on the other one *moves* the GPU: the far side sets aside the simulation
+it was holding and builds the other one on the same node, through the same
+tunnel, with no queue and no second one-time code. So an hour's allocation is an
+hour of switching between demos, not one demo.
+
+**And it comes back where you left it.** Moving the GPU used to throw the run
+away, which meant four minutes of coarsening gone every time you switched. The
+far side now parks the state and puts it back, so going between two demos costs
+about a second and neither of them starts over. Reset is about as quick, for the
+same reason: placing 50,000 beads with a minimum separation used to be 47 seconds
+of LAMMPS rejecting candidates one at a time, and is now half a second of numpy.
 
 How it works: [docs/remote-gpu.md](docs/remote-gpu.md).
 How to run it: [docs/snellius/README.md](docs/snellius/README.md).

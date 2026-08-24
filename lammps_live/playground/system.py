@@ -178,8 +178,21 @@ class PlaygroundSystem(MDSystem3D):
     """A playground, running."""
 
     def __init__(self, playground, mode_name=None, preset=None, host_profile=None,
-                 analysis=True):
+                 analysis=True, settle=True):
         self.playground = playground
+        # WHETHER TO ACTUALLY INTEGRATE THE SETTLE. False builds the deck exactly as
+        # usual -- every fix installed, every command validated -- but takes zero
+        # steps where the scenario asked for a relaxation. It exists for one caller:
+        # a build whose whole purpose is to have a parked run scattered into it a
+        # moment later (see remote/server.py), where relaxing a configuration that is
+        # about to be overwritten is the most expensive pointless thing in the flow --
+        # measured on the vesicle+polymer playground, 4 of its 8 seconds.
+        #
+        # Not a general speed switch: a scenario's settle is what makes its initial
+        # state a physical one (the sheet's barostat finds the tension-free lattice
+        # spacing), so skipping it and then NOT restoring anything leaves the run
+        # starting from the made-up geometry the scenario guessed.
+        self._settle = bool(settle)
         self.preset = preset
         self.force_field = ff_registry.get(playground.force_field)(
             **playground.force_field_options)
@@ -421,7 +434,7 @@ class PlaygroundSystem(MDSystem3D):
 
         settle = scenario.pre_control_settle(sparams, seed)
         if settle:
-            for cmd in settle:
+            for cmd in self._settle_commands(settle):
                 c(cmd)
             for cmd in scenario.settle_cleanup_commands():
                 c(cmd)
@@ -449,7 +462,7 @@ class PlaygroundSystem(MDSystem3D):
         c("compute pe_atom all pe/atom")
 
         post = scenario.post_control_settle(sparams)
-        for cmd in (post or ["run 0"]):
+        for cmd in self._settle_commands(post or ["run 0"]):
             c(cmd)
 
         # The cell may have been rescaled by a barostat during settling, so read
@@ -476,6 +489,143 @@ class PlaygroundSystem(MDSystem3D):
         # Populate the panels for the paused first frame (sim mode shows its fresh
         # state before Play is pressed, and would otherwise show empty bars).
         self._refresh_analysis(force=True)
+
+    # ---- parking a run, so switching away does not throw it out --------------
+
+    def snapshot_state(self):
+        """Everything a run IS, in stable id order: where the particles are, how
+        fast, which way they point, how fast they are turning, the cell, and how far
+        the run had got. None if there is no instance to read.
+
+        WHAT THIS IS FOR. One GPU serves several remote playgrounds by rebuilding
+        (see remote/server.py), and rebuilding used to mean the coarsened box you had
+        been watching for four minutes was gone -- "the honest cost of the trade", as
+        the old comment put it. It does not have to be: the state is a few megabytes
+        of arrays, and putting them back into a freshly built instance costs nothing
+        now that building one is a second rather than a minute (see
+        RandomFill.build). So a switch parks this and a switch back restores it.
+
+        ID ORDER, not local order, and that is the whole subtlety: LAMMPS sorts its
+        local arrays spatially as it runs, and it is emphatically not the same
+        ordering on the other side of a rebuild. Ids are, so they are what the
+        snapshot is keyed on -- and `restore_state` reads them back the same way.
+
+        The parameters travel with it, because a state is only meaningful under the
+        coefficients it was produced with: restoring a half-assembled box under a
+        `k_tilt` that would never have formed it is a picture of nothing. Note what
+        that is and is not -- over a network link the CLIENT pushes its own slider
+        values on attach, and those win, because they are the ones the person is
+        looking at. What the parked parameters buy is that the restored state is
+        validated and integrated under its own coefficients until then, rather than
+        under whatever the fresh build happened to declare.
+        """
+        if self.lmp is None:
+            return None
+        order = self._order()
+        n = self.natoms
+        take = lambda name, cols: np.array(       # noqa: E731 -- five identical reads
+            self.lmp.numpy.extract_atom(name)[:n], dtype=float)[order][:, :cols]
+        state = {
+            "natoms": int(n),
+            "x": take("x", 3),
+            "v": take("v", 3),
+            "box_lo": tuple(self.box.lo),
+            "box_hi": tuple(self.box.hi),
+            "sim_time": float(self._sim_time),
+            "params": self._snapshot_params(),
+        }
+        if self.has_directors:
+            # FOUR columns of `mu`, not three. LAMMPS keeps the dipole's MAGNITUDE
+            # in the fourth, and the pair style divides by it to get the unit
+            # director -- so writing three new components over a magnitude that
+            # belongs to the old ones would silently rescale every director on the
+            # restore. It is 1.0 for a membrane bead and 0 for a polymer bead that
+            # has no director at all, and both of those have to survive.
+            state["mu"] = take("mu", 4)
+            state["omega"] = take("omega", 3)
+        return state
+
+    def restore_state(self, state):
+        """Put a `snapshot_state` back onto the current instance. True if it took.
+
+        REFUSED RATHER THAN FORCED when the particle count does not match, which is
+        the only check worth making: a snapshot of a different playground, or of the
+        same one at a different `n`, would otherwise scatter into whatever happens to
+        be there and produce a scene that is neither. Everything else about the two
+        instances is the same by construction -- same scenario, same force field,
+        same commands -- because the caller rebuilt from the same playground.
+
+        The cell is restored too, and it has to be for any scenario with a barostat:
+        a parked run's cell has shrunk to whatever its wrap or its pressure asked
+        for, and dropping the particles from it into the freshly built (larger) one
+        would leave the whole system at the wrong density.
+        """
+        if self.lmp is None or not state:
+            return False
+        if int(state.get("natoms", -1)) != int(self.natoms):
+            return False
+        # The box first: `change_box` moves the boundaries, and the coordinates
+        # written after it are then written into the cell they came from.
+        lo, hi = state["box_lo"], state["box_hi"]
+        if (tuple(lo), tuple(hi)) != (tuple(self.box.lo), tuple(self.box.hi)):
+            self.command(f"change_box all x final {lo[0]} {hi[0]} "
+                         f"y final {lo[1]} {hi[1]} z final {lo[2]} {hi[2]} units box")
+            self._refresh_box_from_lammps()
+        order = self._order()
+        put = lambda name, values: self._scatter(name, order, values)  # noqa: E731
+        put("x", state["x"])
+        put("v", state["v"])
+        if self.has_directors and "mu" in state:
+            put("mu", state["mu"])
+            put("omega", state["omega"])
+        self._restore_params(state.get("params") or self._snapshot_params())
+        for cmd in self.force_field.pair_commands(self.params):
+            self.command(cmd)
+        self._sim_time = float(state.get("sim_time", 0.0))
+        # A restored run is a different set of coordinates from the one the filters
+        # and the cluster labelling were following, exactly as a rebuild is.
+        self._smoother.reset()
+        self._clusters.reset()
+        self._invalidate_frame_caches()
+        # `change_box` and the re-issued coefficients both invalidate `pre no`, and
+        # `command` has already said so; this makes the panels describe the restored
+        # state rather than the built-and-thrown-away one.
+        self._refresh_analysis(force=True)
+        return True
+
+    def _scatter(self, name, order, values):
+        """Write an id-ordered array back into LAMMPS' local array, through the
+        id-order permutation.
+
+        The column count comes from the snapshot rather than from the target, so an
+        array LAMMPS keeps wider than the physics needs is written exactly as far as
+        it was read -- see `snapshot_state` on `mu`'s fourth column.
+        """
+        target = self.lmp.numpy.extract_atom(name)
+        if target is None:
+            return
+        cols = values.shape[1]
+        target[order[:len(values)], :cols] = values
+
+    def _settle_commands(self, commands):
+        """A settle command list, with its `run N` turned into `run 0` when this
+        instance was built with `settle=False`.
+
+        The RUNS are what is dropped, and nothing else. A settle list is not only
+        integration: it installs the fixes that do the relaxing, and on some
+        scenarios one of those OUTLIVES it -- the rod's barostat is issued in
+        `post_control_settle` and is never unfixed, because a wrap needs it running
+        (see RodOnSheet). Dropping whole commands would drop that too. `run 0` also
+        keeps the one thing every build needs from this step: a full setup, which is
+        what validates the coefficients and populates the forces.
+        """
+        if self._settle:
+            return list(commands)
+        out = []
+        for cmd in commands:
+            bits = cmd.split()
+            out.append("run 0" if bits and bits[0] == "run" else cmd)
+        return out
 
     def _pick_controlled(self, build):
         """Choose the controlled particle from the INITIAL configuration, and

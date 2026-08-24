@@ -21,6 +21,7 @@ import time
 import numpy as np
 import pytest
 
+from lammps_live.forcefields.mesomem import ISO
 from lammps_live.playground import jitter
 from lammps_live.playground.system import JITTER_KEY
 from lammps_live.remote import RemoteTarget, protocol
@@ -111,7 +112,12 @@ def _advance(system, frames=6, timeout=30.0, draw=False):
 
     `draw=True` also reads the scene once per frame, which is what the app does and
     what the trajectory-smoothing filter needs -- it advances once per call to the
-    render readout, not once per received frame."""
+    render readout, not once per received frame.
+
+    Waits for the measuring thread on the way out. The app never does that -- the
+    analysis runs on its own clock precisely so no frame waits for it (see
+    FrameAnalysis) -- but a test that reads an observable it just caused has to
+    know the pass it is asking about has happened."""
     seen = 0
     deadline = time.monotonic() + timeout
     while seen < frames and time.monotonic() < deadline:
@@ -122,6 +128,7 @@ def _advance(system, frames=6, timeout=30.0, draw=False):
             if draw:
                 system.get_positions_3d()
     assert seen >= frames, f"only {seen} of {frames} frames arrived"
+    assert system.wait_for_analysis(timeout=10.0), "the analysis never caught up"
 
 
 # --- the pipe -----------------------------------------------------------------
@@ -259,7 +266,9 @@ def test_the_client_does_the_measuring(system):
     assert panel is not None
     title, terms, scale = panel
     assert len(terms) == 3
-    assert dict(terms)["isotropic  (repel + attract)"] < 0.0
+    # By the constant, not by the string: the label is display text and has been
+    # reworded once already (it is "van der Waals ..." now), which broke this line.
+    assert dict(terms)[ISO] < 0.0
     hud = " ".join(system.get_hud_lines())
     assert "nematic order" in hud and "MB/s" in hud
 
@@ -556,9 +565,9 @@ def test_a_client_can_move_the_server_to_another_playground(server, tmp_path):
 
     A client whose hello names a playground other than the one loaded gets that one
     built in its place, on the same server, through the same port: no second
-    allocation, and no second queue wait. Switching back builds the first again. What
-    is NOT preserved is either run's state, which is the honest cost and the reason
-    the panel makes it a button press (see server.FrameServer.switch_playground).
+    allocation, and no second queue wait. Switching back builds the first again --
+    and, since parking a run is now cheaper than losing it, resumes where it left
+    off (see test_a_switch_parks_the_run_it_leaves for that half).
     """
     srv, port = server
     from lammps_live.playground import registry
@@ -584,7 +593,7 @@ def test_a_client_can_move_the_server_to_another_playground(server, tmp_path):
         assert srv.playground_ref == str(other)
         assert moved.natoms == 420
         assert moved.link.welcome["playground"] == str(other)
-        assert moved.get_sim_time() == 0.0, "a rebuilt run starts from zero"
+        assert moved.get_sim_time() == 0.0, "a run built for the first time is at zero"
         moved.set_playing(True)
         _advance(moved, frames=3)
     finally:
@@ -600,6 +609,124 @@ def test_a_client_can_move_the_server_to_another_playground(server, tmp_path):
         back.close()
 
 
+def test_a_switch_parks_the_run_it_leaves_and_resumes_it_on_the_way_back(server,
+                                                                        tmp_path):
+    """Cycling between two demos does not cost either of them.
+
+    This used to be the honest price of one GPU serving two playgrounds: the run you
+    switched away from was thrown out, and four minutes of coarsening with it. It is
+    not a price worth paying any more -- the state is a few megabytes of arrays and
+    building a fresh instance to scatter them into is about a second (see
+    RandomFill.build) -- so the server parks it and puts it back.
+
+    The thing that proves it is the SIMULATED TIME. A resumed run carries its own
+    clock; a rebuilt one starts at zero. And the coordinates have to come back too,
+    or "resumed" means only that a number was copied.
+    """
+    srv, port = server
+    from lammps_live.playground import registry
+
+    other = tmp_path / "parking_other.py"
+    other.write_text(PLAYGROUND_SOURCE.replace("n=900", "n=360")
+                                      .replace("loopback assembly", "parking other"))
+    first_ref = srv.playground_ref
+
+    def client(ref):
+        sys_ = registry.build(str(ref),
+                              remote_override=RemoteTarget(host="127.0.0.1",
+                                                           local_port=port,
+                                                           profile="local"))
+        sys_.attach(FrameLink.connect("127.0.0.1", port, TOKEN, timeout=60.0,
+                                      playground=str(ref)))
+        return sys_
+
+    # Run the first one for a while, then note exactly where it got to.
+    here = client(first_ref)
+    try:
+        here.set_playing(True)
+        _advance(here, frames=8)
+        parked_time = srv.system.get_sim_time()
+        parked_x = srv.system.frame_state().positions.copy()
+        assert parked_time > 0.0
+    finally:
+        here.close()
+
+    # Away, which is what parks it.
+    away = client(other)
+    try:
+        assert srv.playground_ref == str(other)
+        assert away.natoms == 360
+        assert first_ref in srv._parked, "the run we left was not put aside"
+        away.set_playing(True)
+        _advance(away, frames=3)
+    finally:
+        away.close()
+
+    # And back. Same clock, same coordinates, and the snapshot consumed.
+    back = client(first_ref)
+    try:
+        assert srv.playground_ref == first_ref
+        assert srv.system.get_sim_time() == pytest.approx(parked_time)
+        assert np.allclose(srv.system.frame_state().positions, parked_x)
+        assert first_ref not in srv._parked, "a resumed snapshot should be consumed"
+        # And it is a working simulation, not just restored arrays.
+        back.set_playing(True)
+        _advance(back, frames=3)
+        assert srv.system.get_sim_time() > parked_time
+    finally:
+        back.close()
+
+
+def test_a_parked_run_that_no_longer_fits_is_dropped_not_forced(server, tmp_path):
+    """A snapshot of a different bead count must be refused.
+
+    It can happen for one honest reason -- the playground file was edited between
+    switches -- and scattering it in anyway would produce a scene that is neither
+    run. The build that was skipping its settle on the strength of the resume then
+    has to be done again properly, or the state served is the scenario's made-up
+    starting geometry (see FrameServer.build).
+    """
+    srv, port = server
+    from lammps_live.playground import registry
+
+    other = tmp_path / "misfit_other.py"
+    other.write_text(PLAYGROUND_SOURCE.replace("n=900", "n=300")
+                                      .replace("loopback assembly", "misfit"))
+    ref = srv.playground_ref
+
+    def client(target_ref):
+        sys_ = registry.build(str(target_ref),
+                              remote_override=RemoteTarget(host="127.0.0.1",
+                                                           local_port=port,
+                                                           profile="local"))
+        sys_.attach(FrameLink.connect("127.0.0.1", port, TOKEN, timeout=60.0,
+                                      playground=str(target_ref)))
+        return sys_
+
+    here = client(ref)
+    try:
+        here.set_playing(True)
+        _advance(here, frames=3)
+    finally:
+        here.close()
+    away = client(other)
+    away.close()
+    assert ref in srv._parked
+    # Forge a mismatch, which is what an edited playground would produce.
+    srv._parked[ref]["natoms"] = 12
+
+    back = client(ref)
+    try:
+        assert srv.playground_ref == ref
+        assert srv.system.natoms == 900
+        assert srv.system.get_sim_time() == 0.0, "a refused resume is a fresh run"
+        back.set_playing(True)
+        _advance(back, frames=3)
+        assert srv.system.get_sim_time() > 0.0
+    finally:
+        back.close()
+
+
 def test_a_client_that_names_nothing_leaves_the_server_alone(server, system):
     """The CLI path sends no playground, and a server started with --playground must
     not be second-guessed by it -- that is the difference between "connect to what is
@@ -610,18 +737,21 @@ def test_a_client_that_names_nothing_leaves_the_server_alone(server, system):
     assert srv.playground_ref == loaded
 
 
-def test_a_bad_parameter_does_not_take_the_server_down(system, server):
-    """The failure that cost an A100: one slider value, and the whole session.
+def test_reset_disarms_a_dangerous_value_before_the_rebuild_can_meet_it(system, server):
+    """The failure that cost an A100, and the fix that makes it unreachable.
 
     A `zeta` below 1 is legal to the CPU pair style and rejected by the Kokkos one,
     and neither notices until a rebuild validates the coefficients -- so the value
     streamed fine and then killed the server on Reset, which cancelled its own
-    allocation on the way out. Here that rejection is injected into the far side's
-    force field, because the local build does not have the check.
+    allocation on the way out. The recovery for that was a fallback ladder inside
+    the rebuild (see PlaygroundSystem._rebuild), and it still exists.
 
-    What must be true afterwards: the link is still up, the far side is still
-    integrating, and this end knows what happened AND what the value was put back
-    to -- otherwise the slider pushes the killer straight back in next frame.
+    But Reset now puts every parameter back to what the playground declares BEFORE
+    it rebuilds, which is a better answer than recovering: the rebuild never sees
+    the value that would have killed it. This pins both halves -- the bad value
+    really does reach the far side and really is gone by the time anything is
+    rebuilt with it -- by injecting the Kokkos rejection into the far side's force
+    field (the local build has no such check) and watching whether it ever fires.
     """
     srv, _port = server
     system.set_playing(True)
@@ -630,15 +760,70 @@ def test_a_bad_parameter_does_not_take_the_server_down(system, server):
     far = srv.system
     good = float(far.params["zeta"])
     real = far.force_field.pair_commands
-    far.force_field.pair_commands = (
-        lambda params: (real(params) + ["pair_coeff 1 1 nonsense"]
-                        if float(params["zeta"]) < 1.0 else real(params)))
+    saw_bad = []
+
+    def sabotaged(params):
+        if float(params["zeta"]) < 1.0:
+            saw_bad.append(float(params["zeta"]))
+            return real(params) + ["pair_coeff 1 1 nonsense"]
+        return real(params)
+
+    far.force_field.pair_commands = sabotaged
     try:
         system.set_extra_param("zeta", 0.4)
         _advance(system, frames=3)
         assert far.params["zeta"] == pytest.approx(0.4), "the bad value did travel"
+        # Not through `pair_commands` yet: `zeta` is not a HOT_RESTYLE parameter, so
+        # a live change re-issues the coefficients and never the pair style. That is
+        # exactly why the old bug was invisible until something rebuilt.
+        assert not saw_bad
 
         system.reset()                       # the Reset button, over the wire
+        _advance(system, frames=6)
+    finally:
+        far.force_field.pair_commands = real
+
+    # Nothing was rebuilt with the killer: it was put back first.
+    assert not saw_bad, f"the rebuild issued zeta={saw_bad} after Reset"
+    # The session survived: socket, server thread and simulation all still there.
+    assert system.connected
+    assert srv.system is not None and srv.system.lmp is not None
+    # And both ends are back at the declared value, so the app's slider and the far
+    # side agree without anyone having to be told about a fault.
+    assert float(srv.system.params["zeta"]) == pytest.approx(good)
+    assert float(system.params["zeta"]) == pytest.approx(good)
+
+
+def test_a_rebuild_that_fails_is_reported_and_the_server_survives(system, server):
+    """The fallback ladder, end to end, for the cases Reset's parameter restore
+    cannot pre-empt: a build that fails for a reason the current values do not
+    explain.
+
+    Injected as a ONE-SHOT failure -- the first `pair_commands` of the rebuild is
+    poisoned and the next is not -- because that is the shape of what the ladder
+    can actually recover from, and because with the declared values already restored
+    a value-dependent failure would fail every rung and be correctly fatal.
+
+    What must be true afterwards: the link is still up, the far side is still
+    integrating, and this end has been TOLD -- otherwise the picture quietly
+    describes a different run from the one it is showing.
+    """
+    srv, _port = server
+    system.set_playing(True)
+    _advance(system, frames=2)
+
+    far = srv.system
+    real = far.force_field.pair_commands
+    remaining = [1]
+
+    def poison_once(params):
+        if remaining and remaining.pop():
+            return real(params) + ["pair_coeff 1 1 nonsense"]
+        return real(params)
+
+    far.force_field.pair_commands = poison_once
+    try:
+        system.reset()
         fault = None
         deadline = time.monotonic() + 30.0
         while fault is None and time.monotonic() < deadline:
@@ -648,19 +833,15 @@ def test_a_bad_parameter_does_not_take_the_server_down(system, server):
     finally:
         far.force_field.pair_commands = real
 
-    # The session survived: socket, server thread and simulation all still there.
     assert system.connected
     assert srv.system is not None and srv.system.lmp is not None
     assert not fault.fatal
-    assert "not valid for this build" in fault.summary
     assert "nonsense" in fault.detail
-
-    # And both ends agree on the value that is actually running, so the app's
-    # slider can follow it.
-    assert fault.reverted == {"zeta": pytest.approx(good)}
-    assert system.params["zeta"] == pytest.approx(good)
-    assert system.live_param_values()["zeta"] == pytest.approx(good)
-    assert srv.system.params["zeta"] == pytest.approx(good)
+    # Whatever the ladder had to put back, both ends agree on it -- otherwise the
+    # panel describes coefficients nobody is running.
+    for name, value in fault.reverted.items():
+        assert float(system.params[name]) == pytest.approx(value)
+        assert float(srv.system.params[name]) == pytest.approx(value)
 
     # Still integrating.
     system.set_playing(True)

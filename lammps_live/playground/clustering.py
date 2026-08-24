@@ -571,10 +571,18 @@ class ClusterTracker:
     # components at all). So a fixed cadence would be free on the small scenes and
     # ruinous on the large one. Pacing it by size instead spends a bounded ~2-3 ms
     # per frame everywhere: every 5 frames up to 7500 beads, every 33 at 50k. What
-    # it buys back is the one frame in 33 that carries the whole 90 ms, which on
-    # the big remote scene is a visible hitch about every second and a half. That
-    # is the trade this makes; the fix if it ever matters is to run the labelling
-    # on the stepper thread, not to run it less often still.
+    # a fixed cadence would buy back is the one frame in 33 that carries the whole
+    # labelling -- 90 ms on the remote box as measured here, and 185 ms once it has
+    # coarsened into clumps -- which was a visible hitch about every second and a
+    # half.
+    #
+    # THAT IS NO LONGER A FRAME'S PROBLEM, which is what the pacing above is now
+    # for rather than the whole answer. On the remote playground the labelling runs
+    # on a thread of its own (remote/client.py, FrameAnalysis), so what the pacing
+    # buys there is a bounded share of a core -- 185 ms every 1.6 s -- instead of a
+    # bounded share of a frame. The stepper thread, which this comment used to name
+    # as the fix, is NOT one: the app joins it before it draws, so work parked there
+    # is a frame the window does not get.
     RECLUSTER_EVERY = 5
     BEADS_PER_LABELLING = 1500
 

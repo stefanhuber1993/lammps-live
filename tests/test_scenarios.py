@@ -11,11 +11,13 @@ import pytest
 
 from lammps_live.playground.params import Param, ParamSet, Tier, structural
 from lammps_live.playground.scenario import (
-    HexPatch, HexSheet, RandomFill, align_normal_rate, compose, hex_patch,
+    BeadAndPartner, HexPatch, HexSheet, RandomFill, align_normal_rate, compose,
+    hex_patch,
 )
 from lammps_live.playground.smoothing import TrajectorySmoother
 from lammps_live.playground.state import (
-    Box, FrameState, build_pairs, hex_lattice_2d, hex_ring_2d, principal_normal,
+    Box, FrameState, PlacementFailed, build_pairs, hex_lattice_2d, hex_ring_2d,
+    principal_normal, random_points_min_separation,
 )
 
 
@@ -104,14 +106,118 @@ def test_sheet_tracer_marks_one_cluster_of_seven():
     assert b.max() == pytest.approx(2.1)
 
 
-def test_random_fill_defers_placement_to_lammps():
-    s = RandomFill(n=50, box=10.0)
+def test_random_fill_places_the_particles_itself_and_keeps_them_apart():
+    """Placement moved out of LAMMPS, and the reason is the clock: `create_atoms
+    random ... overlap` is 47 s for the 50,000-bead remote cell and was the whole
+    cost of a remote build and of a remote Reset. What must not change is the
+    guarantee -- no two particles inside `overlap`, or the first step blows up on a
+    pair dropped inside its own hard core.
+    """
+    s = RandomFill(n=400, box=20.0, overlap=0.9)
     params = s.new_params()
     build = s.build(params, np.random.default_rng(0))
-    assert len(build.positions) == 0            # LAMMPS places them
+    assert len(build.positions) == 400
     assert build.box.periodic == (True, True, True)
-    cmds = s.atom_creation_commands(params, seed=1234)
-    assert any("create_atoms" in c and "random 50 1234" in c for c in cmds)
+    assert s.atom_creation_commands(params, seed=1234) is None, \
+        "the runtime uploads these positions; LAMMPS must not place its own too"
+    lo, hi = np.asarray(build.box.lo), np.asarray(build.box.hi)
+    assert np.all(build.positions >= lo) and np.all(build.positions <= hi)
+    # Minimum-imaged, because the cell is periodic and two points either side of a
+    # face are as close as they look.
+    d = build.positions[:, None, :] - build.positions[None, :, :]
+    lengths = np.asarray(build.box.lengths)
+    d -= lengths * np.round(d / lengths)
+    r = np.linalg.norm(d, axis=-1)
+    r[np.diag_indices(len(r))] = np.inf
+    assert r.min() >= 0.9 - 1e-9, f"closest pair is {r.min():.4f} apart"
+
+
+def test_random_fill_is_reproducible_from_the_seed():
+    """Same generator, same box -- a playground with a declared seed has to come up
+    the same way twice, and that is now this method's promise rather than LAMMPS'."""
+    s = RandomFill(n=200, box=15.0)
+    params = s.new_params()
+    a = s.build(params, np.random.default_rng(4)).positions
+    b = s.build(params, np.random.default_rng(4)).positions
+    c = s.build(params, np.random.default_rng(5)).positions
+    assert np.array_equal(a, b)
+    assert not np.array_equal(a, c)
+
+
+def test_random_fill_outline_answers_without_placing_anything():
+    """The remote client asks for the cell and the count on every switch to a
+    remote playground, and does not want the coordinates -- see Scenario.outline."""
+    s = RandomFill(n=50_000, box=86.8)
+    params = s.new_params()
+    build, natoms = s.outline(params)
+    assert natoms == 50_000
+    assert len(build.positions) == 0
+    assert build.box.lengths[0] == pytest.approx(86.8)
+
+
+def test_random_fill_says_so_when_the_cell_is_too_full():
+    """LAMMPS' own version gives up quietly and creates fewer atoms than asked for.
+    A cell that cannot hold what a playground declares is a mistake in the
+    playground, and it should read as one."""
+    s = RandomFill(n=4000, box=6.0, overlap=1.0)
+    with pytest.raises(PlacementFailed) as excinfo:
+        s.build(s.new_params(), np.random.default_rng(0))
+    assert "too full" in str(excinfo.value)
+
+
+# --- the two-bead tutorial ----------------------------------------------------
+
+def test_bead_and_partner_puts_the_fixed_one_last():
+    """`Control(atom="first")` names the DRIVEN bead, so the partner has to be last
+    -- get it the wrong way round and the hand is holding the thing that is supposed
+    to be nailed down."""
+    s = BeadAndPartner(n_rings=0, a=1.0, partner_x=3.0, partner_z=0.0)
+    params = s.new_params()
+    build = s.build(params, np.random.default_rng(0))
+    assert len(build.positions) == 2
+    assert np.allclose(build.positions[0], (0.0, 0.0, 0.0))
+    assert np.allclose(build.positions[-1], (3.0, 0.0, 0.0))
+    # On the control plane (y = 0), or the leash flattens it there on the first
+    # frame and the declared position is a lie.
+    assert build.positions[-1][1] == 0.0
+    assert s.n_particles(params) == len(build.positions)
+
+
+def test_the_partner_is_outside_no_integrator_which_is_how_it_is_fixed():
+    """Position AND rotation. A `fix setforce` would hold the first and leave the
+    director spinning, which is half the point missed: the tilt term is about the
+    angle between a director and the bond, so the partner's must stay put."""
+    s = BeadAndPartner(n_rings=0, a=1.0)
+    params = s.new_params()
+    groups = s.group_commands(params, controlled_id=1)
+    assert groups == ["group anchor id 2", "group mobile subtract all anchor"]
+    integrators = s.integrator_commands(params)
+    assert integrators == ["fix integrate mobile nve/sphere update dipole"]
+    # It must install one, or the force field's global `all` integrator takes over
+    # and the partner moves after all (see PlaygroundSystem._issue_setup).
+    assert integrators, "no scenario integrator means the global one integrates all"
+    # And the bath must not reach past `mobile` either.
+    assert s.thermostat_group() == "mobile"
+
+
+def test_the_partners_director_is_written_after_the_others():
+    """Both commands touch the partner; the second has to win."""
+    s = BeadAndPartner(n_rings=0, a=1.0, partner_director=(1.0, 0.0, 0.0))
+    params = s.new_params()
+    build = s.build(params, np.random.default_rng(0))
+    cmds = s.create_commands(params, build, seed=7)
+    assert cmds[0] == "set group all dipole 0.0 0.0 1.0"
+    assert cmds[1].startswith("set atom 2 dipole 1.0 0.0 0.0")
+    assert np.allclose(build.directors[-1], (1.0, 0.0, 0.0))
+
+
+def test_bead_and_partner_has_no_housekeeping_to_apply():
+    """The patch's corrections act on everything but the driven particle, which here
+    is the fixed partner -- a force on something that cannot move."""
+    s = BeadAndPartner(n_rings=0, a=1.0)
+    params = s.new_params()
+    pts = s.build(params, np.random.default_rng(0)).positions
+    assert s.housekeeping(pts, params, controlled=0) is None
 
 
 def test_housekeeping_excludes_the_controlled_particle():
