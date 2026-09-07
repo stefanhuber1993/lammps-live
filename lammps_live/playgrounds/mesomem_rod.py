@@ -43,17 +43,52 @@ couple of per cent once the rod is in. `baro_press` is the dial for putting the
 membrane under tension instead, which suppresses wrapping.
 
 BUT THE BAROSTAT IS NOT WHAT MAKES THE MEMBRANE FEEL STIFF, and it is worth
-saying so because it is the natural suspect. Three other things resist a wrap, and
-two of them were resisting it much harder than the physics wanted:
+saying so because it is the natural suspect -- twice over, since the barostat's own
+relaxation time was for a while set here in the belief that it was. Three things
+resist a wrap; one of them is the physics, one was an artefact worth an order of
+magnitude, and one turned out not to resist at all:
 
   `k_plane`  the sheet's plane-centring spring, pulling every bead back toward
     z = 0. It is bookkeeping on a flat sheet and a SUBSTRATE on this one -- an
     invagination is a piece of membrane leaving the plane. Turned down by two
     orders of magnitude below (see the scenario), which is where most of the
     "it will not deform" went.
-  `baro_damp_run`  how fast the cell may give up area. At 20 tau the barostat
-    needed ten seconds of wall time to answer a push, so the membrane WAS stiff,
-    just not permanently. Now 5.
+  `baro_damp_run`  how fast the cell may give up area. This was set here for a
+    while, an order of magnitude slower than the sheet's, on the argument that
+    giving area away slowly is what makes a membrane feel stiff to push into.
+    MEASURED, IT IS NOT -- and the same measurement found what the slow cell was
+    really costing, so both halves are worth writing down.
+
+    Driving the rod straight down at full stick for 32 tau (400 frames), from the
+    height it starts at:
+
+        baro_damp_run     5.0     1.0     0.2
+        rod centre       2.58    2.52    2.46      (started at 6.04)
+        |F| in the hand    32      37      46
+        cell area        99.4%   98.3%   97.8%
+
+    The depth differs by a tenth of a sigma in three and a half, and the hand feels
+    MORE from the quick one rather than less (a deeper rod is a rod with more beads
+    on it). A wrap is limited by bending and adhesion -- which is what the section
+    above says -- not by how fast the box may shrink, and the 2.2% of area the
+    quick one gives up is where the `reference` preset says a settled wrap leaves
+    it, against 0.6% for the slow one.
+
+    What the slow cell DID do was quietly stop the membrane being tension-free
+    whenever the temperature slider moved. The tension-free cell at T = 0.2 is 11%
+    wider than the built one; ramping there and standing still for 66 tau, the
+    barostat at 5 tau reached 1.8% of that with the lateral pressure stuck between
+    +0.08 and +0.02, and the pressure plot never came back down. That is a
+    laterally COMPRESSED membrane, which is exactly the state HexSheet's docstring
+    works through: gamma < 0, long undulation modes with negative stiffness, a
+    standing ripple instead of thermal fluctuation. At the sheet's 0.2 the same
+    ramp settles at the tension-free cell (1.112) with the pressure back to +0.001
+    inside ~500 frames.
+
+    So it is the sheet's number now, and this file does not override it. Above
+    `melt_temp` the cell then inflates without bound instead of holding still --
+    honest rather than a fault, and the same thing the sheet does, for the reason
+    HexSheet gives: a melted membrane has no cohesion left to hold at zero tension.
   `k_tilt`  the membrane's own bending modulus, and the one that should resist:
     it is the real physics of the wrapping transition, it is on the everyday
     slider, and turning it down is how you find where the transition sits.
@@ -208,14 +243,11 @@ PLAYGROUND = Playground(
         # this. Kept, but an order of magnitude weaker, which is still enough to
         # stop the sheet wandering out of the frame over thousands of tau.
         k_plane=0.01,
-        # And the barostat's own relaxation time. `baro_damp_run` is how long the
-        # cell takes to give up the area a growing wrap is asking for: at 20 tau,
-        # and 0.08 tau of simulated time per drawn frame, the cell needs ~250
-        # frames -- ten seconds of standing there -- to respond to a push. The
-        # membrane genuinely is stiff for all of that, which is what "it feels like
-        # it resists being deformed" is. 5 tau follows the hand at roughly the rate
-        # the hand moves, without the cell visibly breathing under it.
-        baro_damp_run=5.0,
+        # `baro_damp_run` USED TO BE SET HERE, at 5 tau against the sheet's 0.2, and
+        # it is deliberately not any more: the slow cell was measured to do nothing
+        # for the wrap and to break the temperature dial. The numbers are in the
+        # module docstring above; the value now comes from HexSheet, like the rest
+        # of the barostat.
         # DEEP ENOUGH FOR THE WHOLE STORY AND NO DEEPER, and the second half of
         # that is not tidiness -- it is measured.
         #

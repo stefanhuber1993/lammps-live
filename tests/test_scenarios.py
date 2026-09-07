@@ -279,9 +279,9 @@ def test_the_sheets_barostat_outlives_the_setup_and_spares_the_driven_bead():
     assert "x 0.0 0.0" in fix and "y 0.0 0.0" in fix
     # Quick, because this one tracks a LIVE temperature dial and should have
     # finished before the user notices: measured, 0.2 reaches zero pressure in
-    # ~150 frames with no overshoot. (A deliberately slow one is a playground's
-    # choice, not this default's -- mesomem_rod.py sets 5.0, because there the
-    # barostat's lag IS how stiff the membrane feels under the hand.)
+    # ~150 frames with no overshoot. Every playground inherits it now -- the rod
+    # deck used to override it with a deliberately slow one, and see
+    # test_rod_wrapping.py for why it does not any more.
     params = s.new_params()
     assert params["baro_damp_run"] <= 0.5
     # And the settle's is quick too, because it has a job to finish rather than a

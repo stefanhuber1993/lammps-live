@@ -650,6 +650,31 @@ def test_there_is_room_for_the_rod_to_stand_up_inside_the_wrap():
     assert control.leash[0] > control.leash[1]
 
 
+def test_the_rod_keeps_the_sheets_quick_barostat():
+    """It must not go back to a slow one, and the reason is the temperature dial.
+
+    This deck used to set `baro_damp_run` an order of magnitude above the sheet's,
+    on the argument that how fast the cell gives up area is how stiff the membrane
+    feels to push into. Measured (see mesomem_rod.py's docstring for the tables) it
+    is not: a wrap reaches the same depth against the same force either way, since
+    it is limited by bending and adhesion. What the slow cell did do was leave the
+    membrane laterally COMPRESSED for as long as anyone watched after the
+    temperature slider moved -- the tension-free cell at T = 0.2 is 11% wider than
+    the built one, and at 5 tau the barostat covered a fifth of that in 66 tau
+    while the lateral pressure sat at +0.02 and never came back down. That is the
+    state HexSheet's docstring works through: gamma < 0, and long undulation modes
+    that grow instead of fluctuating.
+    """
+    playground = registry.load("mesomem_rod")
+    params = playground.scenario.new_params()
+    assert params["baro_damp_run"] <= 0.5, (
+        "the rod deck is back on a slow running barostat, so its membrane is no "
+        "longer tension-free at any temperature but the one it was built at")
+    assert "baro_damp_run" not in playground.scenario.defaults, (
+        "the value belongs to HexSheet now -- overriding it here, even at the same "
+        "number, is what drifted last time")
+
+
 def test_the_cell_shrinks_as_the_wrap_grows_and_the_runtime_notices():
     """The area the membrane gives up to a wrap, end to end: the barostat lets the
     cell shrink, and the runtime re-reads it so everything downstream (the pair
@@ -676,16 +701,20 @@ def test_the_cell_shrinks_as_the_wrap_grows_and_the_runtime_notices():
 
         # IT KEEPS GIVING UP AREA AS THE WRAP GROWS, which is the claim -- and it
         # is the claim because a fixed offset would also satisfy "the cell got
-        # smaller". Measured: 0.0004 at the first mark and 0.0012 at the second.
+        # smaller". Measured: 0.0037 at the first mark and 0.0058 at the second,
+        # reproducible to the third digit across builds.
         #
-        # The absolute numbers are an order of magnitude smaller than they used to
-        # be, and that is the point of the change that shrank them: this deck used
-        # to start on a lattice 26% too large in area, so the cell was contracting
-        # under its own unrelaxed tension the whole time and most of what this test
-        # measured had nothing to do with the rod. Idle, with the rod left hanging
-        # out of contact, the same number of steps now moves the cell by 0.0002.
-        assert late > 2.0 * early, f"the cell stopped following the wrap: {early} -> {late}"
-        assert 0.0008 < late < 0.10, "a couple of per cent, not a collapse"
+        # Both marks are an order of magnitude above what they were, and the RATIO
+        # between them is smaller (1.58, where this asserted a doubling), because
+        # the barostat is no longer the bottleneck: this deck used to run a
+        # deliberately slow one, so at the first mark the cell was still nowhere
+        # near the area the wrap had already asked for and nearly all of the
+        # measured change arrived later. It now follows within its own 0.2-tau
+        # relaxation, and what is left between the marks is the wrap genuinely
+        # still deepening -- which is the thing worth asserting, so the threshold
+        # is a clear margin over 1 rather than a number tuned to a lag.
+        assert late > 1.35 * early, f"the cell stopped following the wrap: {early} -> {late}"
+        assert 0.002 < late < 0.10, "a couple of per cent, not a collapse"
         # The frame state carries the live cell, not the one that was asked for.
         assert system.current_state().box.lengths[0] == pytest.approx(
             system.box.lengths[0])

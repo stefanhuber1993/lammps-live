@@ -919,23 +919,28 @@ class RodOnSheet(HexSheet):
     a barostat that KEEPS RUNNING; and a camera in the membrane's own plane,
     because a wrap is a profile rather than a surface.
 
-    THE BAROSTAT IS THE SHEET's NOW, and what is left here is its TIMESCALE.
-    Covering a rod costs membrane area, and in a frozen periodic cell the only
-    place that area can come from is stretching the lattice, so the membrane
-    cannot invaginate the rod -- it just dents. Holding the lateral pressure at
-    its target instead lets the projected area shrink as the wrap grows, which is
-    the same thing the collaborator's reference deck does (`fix nph/sphere x .. y
-    .. couple xy` running through all three of its rod phases, with the target
-    ramped to set the tension). Zero pressure is the tension-free ensemble;
-    `baro_press` is the dial for putting the membrane under tension instead, which
-    is what suppresses wrapping.
+    THE BAROSTAT IS THE SHEET's, TIMESCALE INCLUDED. Covering a rod costs membrane
+    area, and in a frozen periodic cell the only place that area can come from is
+    stretching the lattice, so the membrane cannot invaginate the rod -- it just
+    dents. Holding the lateral pressure at its target instead lets the projected
+    area shrink as the wrap grows, which is the same thing the collaborator's
+    reference deck does (`fix nph/sphere x .. y .. couple xy` running through all
+    three of its rod phases, with the target ramped to set the tension). Zero
+    pressure is the tension-free ensemble; `baro_press` is the dial for putting the
+    membrane under tension instead, which is what suppresses wrapping.
 
-    What this scenario does still choose for itself is `baro_damp_run`: the sheet
-    wants a quick one, because there the barostat is tracking a temperature dial
-    and should have finished before the user notices. Here it is tracking a wrap
-    the user is actively pushing into the membrane, and how fast it gives up area
-    IS how stiff the membrane feels under the hand (see mesomem_rod.py, which sets
-    it). Same fix, an order of magnitude slower.
+    This scenario used to choose its own `baro_damp_run`, an order of magnitude
+    slower than the sheet's, on the argument that a barostat tracking a wrap the
+    hand is actively pushing is a different job from one tracking a temperature
+    dial -- and that how fast the cell gives up area IS how stiff the membrane
+    feels. Measured on the 3600-bead deck, it is not (see mesomem_rod.py for the
+    numbers): a wrap is limited by bending and adhesion, and it reaches the same
+    depth against the same force whether the cell may relax in 0.2 tau or 5. What
+    the slow one did instead was fail at the OTHER job -- the tension-free area at
+    T = 0.2 is 11% wider than the built cell, and at 5 tau the barostat got a fifth
+    of the way there while the lateral pressure sat at +0.02 and stayed, which is
+    the compressed membrane HexSheet above was fixed for. So both scenarios run the
+    same timescale now, and this one adds nothing to the sheet but its geometry.
 
     It is a Berendsen barostat rather than the deck's Nose-Hoover one for the same
     reason the settle uses one: `press/berendsen` rides on top of whatever
