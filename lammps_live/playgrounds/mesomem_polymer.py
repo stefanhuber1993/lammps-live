@@ -58,7 +58,7 @@ cluster, run the server on this machine:
            --profile local --token dev --port 5723
     lammps-live --playground mesomem_polymer --remote 127.0.0.1:5723 --token dev
 """
-from ..playground import Playground, vesicle_polymer
+from ..playground import Lesson, Playground, Thesis, vesicle_polymer
 from ..remote import RemoteTarget
 from ..render_style import DEFAULT_STYLE, CameraOrbit
 
@@ -137,6 +137,19 @@ PLAYGROUND = Playground(
     mode="sim",
     observables=["vesicle_radius", "polymer_gyration", "polymer_contact"],
     param_ranges={"k_splay": (0.0, 5.0)},
+    # THE LAST SLIDE, AND IT CLOSES THE FIRST ONE. The two-bead scene opens the
+    # talk by saying that all we kept of a hundred lipids was one arrow; this is
+    # where that arrow turns out to have been enough to close a membrane around
+    # something. Same sentence, eight scenes apart, and the callback is the whole
+    # reason the opening line is phrased the way it is.
+    #
+    # No hook: there is nothing after this one.
+    lesson=Lesson(
+        title="A vesicle",
+        claim="One arrow per bead was enough to close a membrane around a polymer.",
+        instruction="Slice the vesicle open with the lever to see inside it.",
+        thesis=Thesis(),
+    ),
     presets={
         # The collaborator's deck: k_bend 2, the paper's membrane moduli.
         "reference": {},

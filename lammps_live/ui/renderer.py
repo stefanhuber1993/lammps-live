@@ -25,14 +25,22 @@ from .theme import (
     BOX_OUTLINE, CLUSTER_COLORS, CLUSTER_FADE_SECONDS,
     CRYSTAL_COLOR,
     CRYSTAL_RADIUS, DIM_TEXT_COLOR, DIRECTOR_ARROW_COLOR, EDGE_VIGNETTE_STRENGTH,
-    FOCUS_COLOR, FOCUS_WIDTH,
+    FOCUS_COLOR, FOCUS_WIDTH, HOOK_COLOR,
     HAZE_STRENGTH, HBOND_COLOR, HBOND_DASH,
     HBOND_WIDTH, HEADER_TEXT_COLOR, HUD_BG, HUD_TEXT_COLOR, INPUT_VEC_COLOR,
     ION_LABEL_COLOR, MELT_MARK_COLOR, MEMBRANE_BEAD_COLOR,
+    LESSON_BLOCK_GAP, LESSON_CLAIM_GAP, LESSON_CLAIM_SIZE, LESSON_TITLE_GAP,
+    LESSON_TITLE_SIZE,
     PAIR_CALLOUT_BG_DARK, PAIR_CALLOUT_BG_LIGHT, PAIR_CALLOUT_GAP_PX,
     PAIR_CALLOUT_WIDTH, PAIR_GLYPH_HEAD_PX, PAIR_GLYPH_MAX_PX, PAIR_INK_DARKEN,
     PAIR_LINE_WIDTH, PAIR_SHELL_ALPHA, PAIR_SHELL_LABEL_ALPHA, PAIR_SHELL_SAMPLES,
     PANEL_BG, PANEL_DIVIDER, PANEL_PAD, PANEL_WIDTH, PLOT_COLORS,
+    RAIL_ACT_GAP, RAIL_CURRENT_H, RAIL_LABEL_GAP, RAIL_MARK_GAP, RAIL_MARK_H,
+    RAIL_MARK_W,
+    THESIS_CAPTION_BG, THESIS_CAPTION_COLOR, THESIS_CAPTION_GAP,
+    THESIS_BORDER,
+    THESIS_ENGAGED_BG, THESIS_ENGAGED_BORDER, THESIS_ENGAGED_TEXT, THESIS_GAP,
+    THESIS_H, THESIS_W,
     POTENTIAL_COLORS, POTENTIAL_PANEL_BG, POTENTIAL_TOTAL_COLOR, POTENTIAL_TRACK_COLOR,
     PULLER_BOND_COLOR, PULLER_LABEL_BG, PULLER_LABEL_COLOR, PULLER_RADIUS_BOOST,
     PULLER_RING_COLOR, PULLER_RING_FREE_COLOR, PULLER_RING_WIDTH,
@@ -78,7 +86,7 @@ def _lerp_color(a, b, t):
 
 KEY_HINTS = (
     "1-9: system   Tab/shift-Tab: next, previous   WASD/mouse: move   Q/E or L/R click: rotate   "
-    "Space: play/pause   R: reset   B: grab bead   "
+    "Space: play/pause   R: reset   B: grab bead   O: remove/restore orientation   "
     "Up/Down or wheel: temperature   F11/green button: fullscreen   Esc: exit fullscreen / quit"
 )
 # Appended for systems with a turntable camera (SystemSpec.camera_orbit).
@@ -137,6 +145,11 @@ class Renderer:
         self.font = UI.font(18)
         self.small_font = UI.font(15)
         self.header_font = UI.font(22, bold=True)
+        # The lesson card's two large sizes (see theme.LESSON_*): the title is set
+        # to survive a projector at the back of a room, the claim to be read
+        # without competing with it.
+        self.lesson_font = UI.font(LESSON_TITLE_SIZE, bold=True)
+        self.claim_font = UI.font(LESSON_CLAIM_SIZE)
 
         # Collapsible "Advanced" slider group: the app owns the open/closed state
         # (self.show_advanced, set before each draw) and reads back the clickable
@@ -150,6 +163,13 @@ class Renderer:
         # reads them back via playback_hit to route clicks. Empty-rect until first
         # drawn, and hit-testing is gated on `_playback_visible`, so a click
         # cannot land on a stale rect before the first frame or behind a modal.
+        # The thesis button (Renderer.draw_thesis_button): one Button, relabelled
+        # each frame from the Thesis that owns it, positioned just above the
+        # playback row and hit-tested the same way (thesis_hit). Rect stays empty
+        # and `_thesis_visible` False on a playground that declares no thesis, so a
+        # click can never land on a stale rect from one that did.
+        self.thesis_button = Button("thesis", "")
+        self._thesis_visible = False
         self.playback_buttons = [Button("play", "Play"),
                                  Button("pause", "Pause"),
                                  Button("reset", "Reset")]
@@ -1316,12 +1336,31 @@ class Renderer:
 
         knee = spec.force_feedback.ff_knee
         ry = y + head_h + UI(18)
-        items = [(t.label, t.energy, t.radial_force, t.twist, self._term_color(k))
-                 for k, t in enumerate(ann.terms)]
-        items.append(("net", ann.total_energy, ann.total_radial_force,
+        items = [(t.label, t.argument, t.energy, t.radial_force, t.twist,
+                  self._term_color(k)) for k, t in enumerate(ann.terms)]
+        items.append(("net", "", ann.total_energy, ann.total_radial_force,
                       ann.total_twist, self._pair_ink(POTENTIAL_TOTAL_COLOR)))
-        for k, (label, energy, force, twist, col) in enumerate(items):
+        for k, (label, argument, energy, force, twist, col) in enumerate(items):
             is_net = (k == len(items) - 1)
+            # A TERM THAT IS DOING NOTHING IS DRAWN AS DOING NOTHING, and this is
+            # the single most useful thing the callout does. Drive the pair
+            # straight in and the two orientational rows sit at zero while the van
+            # der Waals row moves; twist instead and those two wake up while the
+            # van der Waals torque stays at exactly zero because its only argument
+            # is r. Both facts are already in the numbers -- but three rows of
+            # "+0.00" in the same ink as a live reading make the reader compare
+            # digits, and faded ones make the awake term the only thing on the
+            # plate with any contrast. The lesson arrives before the reading does.
+            #
+            # ASLEEP MEANS "EVERY NUMBER IN THIS ROW READS ZERO", by the display's
+            # own rounding (see _pair_number) rather than by a threshold of its
+            # own. So the fade turns over at exactly the moment the last digit
+            # does, and a row can never be dimmed while showing a number -- which
+            # would be the display disagreeing with itself.
+            asleep = (not is_net) and all(
+                self._pair_number(v) == "+0.00" for v in (energy, force, twist))
+            if asleep:
+                col = self._pair_fade(col, 95)
             if is_net:
                 pygame.draw.line(self.screen, self._pair_fade(dim_col, 160),
                                  (x + pad, ry - UI(3)), (x + w - pad, ry - UI(3)),
@@ -1331,9 +1370,24 @@ class Renderer:
                                                     UI(9), UI(9)))
             # The short name: every label here reads "name  (what it does)", and
             # the parenthetical is for a panel with room for it.
+            name_col = col if is_net else (self._pair_fade(text_col, 95) if asleep
+                                           else text_col)
             name = self.small_font.render(label.split("(")[0].strip(), True,
-                                          col if is_net else text_col)
-            self.screen.blit(name, (x + pad if is_net else x_label, ry))
+                                          name_col)
+            nx = x + pad if is_net else x_label
+            self.screen.blit(name, (nx, ry))
+            # ...and WHAT IT IS A FUNCTION OF, beside it, from the force field's
+            # own declaration (see ForceField.energy_terms_arguments). This is the
+            # equation, distributed one term per row instead of written out again
+            # as a line of its own: the rows already are an additive decomposition
+            # with a total under them, and a horizontal copy of the same three
+            # terms would be the same content twice. It is what makes the van der
+            # Waals row's permanent zero in the torque column self-explanatory --
+            # the argument list next to it does not contain a director.
+            if argument and not is_net:
+                arg = self.small_font.render(
+                    argument, True, self._pair_fade(dim_col, 95 if asleep else 190))
+                self.screen.blit(arg, (nx + name.get_width() + UI(6), ry))
             mid_y = ry + name.get_height() / 2.0
             ev = self.small_font.render(self._pair_number(energy), True, col)
             self.screen.blit(ev, (x_energy - ev.get_width(), ry))
@@ -1389,7 +1443,7 @@ class Renderer:
                 pygame.draw.line(self.screen, color, tip,
                                  (tip[0] - sign * head, tip[1] + dy), UI.w(2))
 
-    def _draw_potential_panel(self, decomposition, x=12):
+    def _draw_potential_panel(self, decomposition, x=12, y0=None):
         """A compact live breakdown of an interaction energy into the force
         field's additive terms (see MDSystem.get_potential_terms): each term as a
         signed horizontal bar from a shared zero line, plus their sum, so the
@@ -1406,7 +1460,10 @@ class Renderer:
         x = UI(x)
         w, pad = UI(312), UI(10)
         row_h, title_h = UI(30), UI(20)
-        y0 = UI(48)
+        # Below whatever the caller has already stacked in this corner (the lesson
+        # card and the two diagnostic lines), or the bare two-line header's worth
+        # for a scene with no card.
+        y0 = UI(48) if y0 is None else int(y0)
         h = title_h + len(rows) * row_h + pad
         bg = pygame.Surface((w, h), pygame.SRCALPHA)
         bg.fill(POTENTIAL_PANEL_BG)
@@ -1701,7 +1758,8 @@ class Renderer:
                     brightness=None, total_potential_terms=None, box_bounds=None,
                     puller_attached=True, bead_energies=None,
                     bead_clusters=None, box_periodic=None, glyph_spheres=None,
-                    bead_tints=None, view_slice=None, pair_annotation=None):
+                    bead_tints=None, view_slice=None, pair_annotation=None,
+                    lesson_position=None, acts=(), current_key=None):
         pts = np.asarray(positions3d, dtype=float)
         screen, depth, scale = camera.project(pts)
         # Depth cueing anchored to the scene's own near->far extent, not to an
@@ -1800,7 +1858,9 @@ class Renderer:
                                total_steps, steps_per_frame, potential_terms,
                                torque_signals, torque_vectors, hud_lines,
                                debug_line, total_potential_terms,
-                               shown=shown, pair_annotation=pair_annotation)
+                               shown=shown, pair_annotation=pair_annotation,
+                               lesson_position=lesson_position, acts=acts,
+                               current_key=current_key)
 
     # ---- GPU scene: hand the beads + occluded lines to the GL pipeline ------
 
@@ -2443,7 +2503,8 @@ class Renderer:
                           total_steps, steps_per_frame, potential_terms,
                           torque_signals, torque_vectors, hud_lines,
                           debug_line, total_potential_terms=None,
-                          shown=None, pair_annotation=None):
+                          shown=None, pair_annotation=None,
+                          lesson_position=None, acts=(), current_key=None):
         # Force arrows at the puller (map control-plane (x,z) -> world x,z).
         # Everything anchored ON a particle is skipped for a scene that has none --
         # which is a real state, not a degenerate one: a remote playground holds an
@@ -2550,13 +2611,30 @@ class Renderer:
                 f"input force: ({ix:4.1f}, {iy:4.1f})"
                 f"{units.force_unit(spec.reduced_units)}   "
                 f"membrane force: ({rx:5.1f}, {ry:5.1f})   {torque_str}")
-        label = self.font.render(
-            f"{spec.name}  |  sim time: {sim_time_str}   steps: {total_steps:,} ({steps_per_frame}/frame)   "
-            f"{drive_str}fps: {fps:4.0f}",
+        # THE TOP-LEFT STACK, in the order the eye needs it: the lesson (what this
+        # scene is about, large), then the instruments (what it is doing, small).
+        #
+        # Both text lines below are DEMOTED from where they were -- body font down
+        # to the small one, and the playground's name dropped out of the first
+        # entirely, since the card above now says which scene this is in the words
+        # the talk uses and the panel still carries the full technical name. They
+        # were the only thing in this corner and could afford to be the loudest;
+        # over a card written for a room they are what they always were, which is
+        # diagnostics.
+        top = self._draw_lesson_card(spec, lesson_position)
+        self._draw_chapter_rail(spec, lesson_position, acts, current_key)
+        font = self.small_font if spec.lesson is not None else self.font
+        label = font.render(
+            (f"sim time: {sim_time_str}   steps: {total_steps:,} ({steps_per_frame}/frame)   "
+             f"{drive_str}fps: {fps:4.0f}")
+            if spec.lesson is not None else
+            (f"{spec.name}  |  sim time: {sim_time_str}   steps: {total_steps:,} ({steps_per_frame}/frame)   "
+             f"{drive_str}fps: {fps:4.0f}"),
             True, spec.render_style.text_color,
         )
-        self.screen.blit(label, (UI(10), UI(10)))
-        legend = self.font.render(
+        self.screen.blit(label, (UI(10), top))
+        top += label.get_height() + UI(2)
+        legend = font.render(
             "green = your twist, red = membrane reaction   |   the stick tips the "
             "center bead's director (WASD/mouse); each ring is that torque's "
             "rotation, drawn in the plane it turns in"
@@ -2564,12 +2642,16 @@ class Renderer:
             "green = your pull/twist, red = membrane reaction   |   drag the center bead (WASD/mouse); twist / Q-E / L-R click rotates its director",
             True, spec.render_style.dim_text_color,
         )
-        self.screen.blit(legend, (UI(10), UI(30)))
+        self.screen.blit(legend, (UI(10), top))
+        top += legend.get_height() + UI(6)
         # Puller-bead breakdown on the left; the whole-system total (if the system
-        # supplies one) as a second panel just to its right.
-        self._draw_potential_panel(potential_terms, x=12)
+        # supplies one) as a second panel just to its right. Both start below
+        # whatever the stack above them came to, rather than at a fixed height:
+        # with a lesson card up there the old constant put them through the middle
+        # of the instruction line.
+        self._draw_potential_panel(potential_terms, x=12, y0=top)
         if total_potential_terms is not None:
-            self._draw_potential_panel(total_potential_terms, x=336)
+            self._draw_potential_panel(total_potential_terms, x=336, y0=top)
         self._draw_hud(hud_lines)
         self._draw_debug_line(debug_line)
 
@@ -2744,6 +2826,176 @@ class Renderer:
                            self.sim_width - pad, self.window_size[1] - pad)
         pygame.draw.rect(self.screen, FOCUS_COLOR, rect, width=pad)
 
+    # ---- the taught sequence: card, rail, thesis --------------------------
+
+    def _draw_lesson_card(self, spec, position):
+        """The three lines the audience reads, top-left of the sim view. Returns
+        the y to carry the rest of the top-left stack on from.
+
+        A FIXED TEMPLATE IN A FIXED PLACE, on every playground, so the room learns
+        where to look exactly once (see playground/spec.py's Lesson for what the
+        three lines are and why they are worded the way they are):
+
+            2 . Push                     the stage number and the LESSON's name
+            Pull one bead out and ...    one sentence of physics
+            Drag the centre bead ...     what to do with your hands
+
+        The stage number is part of the title line rather than a separate
+        indicator, because it is the one number that wants to be large and reading
+        it as "two, Push" is how a presenter refers to it out loud. Where that sits
+        in the whole sequence is the rail's job, top-right.
+
+        DRAWN ON THE 3D PATH ONLY, which is where every taught scene lives -- the
+        one 2D layout left belongs to the shelved atomistic classics, and they
+        declare no lesson. A 2D playground that grew one would want the same three
+        lines in `draw_sim`; nothing here stops that, it simply has no caller yet.
+
+        Colours come from the scene's own RenderStyle, like the header line under
+        it: every membrane scene is drawn on a light background, and this card is
+        drawn straight onto it with no plate. No plate because the top-left of all
+        eight scenes is empty by construction (the framing is chosen so the beads
+        sit centre-frame) -- and a translucent panel over an empty corner is a
+        panel the eye has to dismiss before it can read the words inside it.
+        """
+        lesson = spec.lesson
+        if lesson is None:
+            return UI(10)
+        text_col = spec.render_style.text_color
+        dim_col = spec.render_style.dim_text_color
+        x, y = UI(10), UI(10)
+
+        index = position[0] if position else 0
+        # "3. Twist" -- ordinal numbering, the way a slide is numbered, and how a
+        # presenter says it out loud. No separator character: this file's
+        # convention is ASCII throughout (the codebase writes "--" for a dash and
+        # spells out sigma), and a spaced middle dot in ASCII is a stray period.
+        head = f"{index}. {lesson.title}" if index else lesson.title
+        surf = self.lesson_font.render(head, True, text_col)
+        self.screen.blit(surf, (x, y))
+        y += surf.get_height() + UI(LESSON_TITLE_GAP)
+
+        claim = self.claim_font.render(lesson.claim, True, text_col)
+        self.screen.blit(claim, (x, y))
+        y += claim.get_height() + UI(LESSON_CLAIM_GAP)
+
+        instr = self.font.render(lesson.instruction, True, dim_col)
+        self.screen.blit(instr, (x, y))
+        return y + instr.get_height() + UI(LESSON_BLOCK_GAP)
+
+    def _draw_chapter_rail(self, spec, position, acts, current_key):
+        """Where this scene sits in the taught sequence, top-right of the sim view:
+        one mark per scene, grouped into acts, plus the act name and the count.
+
+        Right-aligned and drawn from the right edge inward, so the marks stay put
+        against the corner as the window resizes and it is always the LEFT (early)
+        end of the row that moves -- which is the end nobody is looking at.
+
+        Silent for a playground outside the sequence (`position[0]` of 0): a
+        shelved scene or a researcher's own file is legitimately not part of the
+        story, and an indicator that had to invent a position for it would be
+        making something up.
+        """
+        if not position or not position[0] or not acts:
+            return
+        index, total, act_name = position
+        text_col = spec.render_style.text_color
+        dim_col = spec.render_style.dim_text_color
+
+        label = (f"{act_name}   {index} of {total}" if act_name
+                 else f"{index} of {total}")
+        surf = self.small_font.render(label, True, dim_col)
+        right = self.sim_width - UI(16)
+        self.screen.blit(surf, (right - surf.get_width(), UI(12)))
+
+        # Total width of the marks, so the row can be laid out from the right edge
+        # without drawing it twice: every mark is the same width, and the act
+        # boundaries are the only variable.
+        mw, gap, act_gap = UI(RAIL_MARK_W), UI(RAIL_MARK_GAP), UI(RAIL_ACT_GAP)
+        n = sum(len(keys) for _, keys in acts)
+        width = n * mw + (n - len(acts)) * gap + (len(acts) - 1) * act_gap
+        mx = right - width
+        top = UI(12) + surf.get_height() + UI(RAIL_LABEL_GAP)
+        for a, (_, keys) in enumerate(acts):
+            if a:
+                mx += act_gap
+            for k, key in enumerate(keys):
+                if k:
+                    mx += gap
+                current = key == current_key
+                h = UI(RAIL_CURRENT_H) if current else UI(RAIL_MARK_H)
+                col = text_col if current else self._pair_fade(dim_col, 130)
+                # Every mark is drawn the same way, and only the current one is
+                # taller and brighter: an outline for "not reached yet" against a
+                # fill for "already seen" would be a claim about a route nobody
+                # has to take, since the number keys jump anywhere. This is a
+                # position, not a history.
+                pygame.draw.rect(self.screen, col,
+                                 pygame.Rect(int(mx), int(top), int(mw), int(h)),
+                                 border_radius=UI(2))
+                mx += mw
+
+    def draw_thesis_button(self, thesis, engaged):
+        """The one-click A/B on the force field's central claim, centred at the
+        bottom of the sim view just above the playback row.
+
+        IN THE SCENE, NOT IN THE PANEL, and that is the whole point of where it is:
+        in the panel it would be a tenth grey widget among the dials, and what it
+        does is not a dial -- it takes the physics away and gives it back, and it is
+        the thing a presenter reaches for while looking at the beads. Above the
+        playback row rather than in it because it is not a playback control, and
+        being adjacent to three of them is already as close as it should get to
+        looking like one.
+
+        Engaged it goes amber and says the way OUT (`Thesis.engaged_label`), with
+        the caption above it naming what is missing -- so a room that walked in
+        halfway through can still read what it is looking at.
+        """
+        if thesis is None:
+            self._thesis_visible = False
+            self.thesis_button.rect = pygame.Rect(0, 0, 0, 0)
+            return
+        w, h = UI(THESIS_W), UI(THESIS_H)
+        # Stacked on the playback row's own geometry, so the two move together if
+        # either is ever retuned.
+        play_h, play_gap = UI(34), UI(16)
+        y0 = self.window_size[1] - play_h - play_gap - UI(THESIS_GAP) - h
+        self.thesis_button.rect = pygame.Rect((self.sim_width - w) // 2, y0, w, h)
+        self.thesis_button.label = thesis.engaged_label if engaged else thesis.label
+
+        if engaged:
+            rect = self.thesis_button.rect
+            pygame.draw.rect(self.screen, THESIS_ENGAGED_BG, rect,
+                             border_radius=UI(6))
+            pygame.draw.rect(self.screen, THESIS_ENGAGED_BORDER, rect,
+                             width=UI.w(2), border_radius=UI(6))
+            surf = self.font.render(self.thesis_button.label, True,
+                                    THESIS_ENGAGED_TEXT)
+            self.screen.blit(surf, surf.get_rect(center=rect.center))
+            if thesis.caption:
+                cap = self.font.render(thesis.caption, True, THESIS_CAPTION_COLOR)
+                pad = UI(8)
+                cw, ch = cap.get_width() + 2 * pad, cap.get_height() + 2 * pad
+                cx = (self.sim_width - cw) // 2
+                cy = y0 - UI(THESIS_CAPTION_GAP) - ch
+                plate = pygame.Surface((cw, ch), pygame.SRCALPHA)
+                plate.fill(THESIS_CAPTION_BG)
+                self.screen.blit(plate, (cx, cy))
+                self.screen.blit(cap, (cx + pad, cy + pad))
+        else:
+            self.thesis_button.draw(self.screen, self.font)
+            # The accent hairline over the button's own grey one: same geometry,
+            # same radius, so it reads as this button's border rather than as a
+            # ring around it.
+            pygame.draw.rect(self.screen, THESIS_BORDER, self.thesis_button.rect,
+                             width=UI.w(1), border_radius=UI(6))
+        self._thesis_visible = True
+
+    def thesis_hit(self, pos):
+        """Whether `pos` is on the thesis button. False while it is not shown, so a
+        click cannot hit a stale rect from a playground that has one after
+        switching to a playground that does not."""
+        return self._thesis_visible and self.thesis_button.hit(pos)
+
     def draw_playback_controls(self, playing):
         """Play / Pause / Reset buttons centered along the bottom of the sim view.
         The button matching the current run state is highlighted: Play while
@@ -2903,12 +3155,21 @@ class Renderer:
         w = self.panel_width - 2 * UI(PANEL_PAD)
         y = UI(10)
 
-        # Compact picker: number + short key (the full name of the active
-        # system is shown in the header just below), so all systems fit on one
-        # line. The current one is bracketed and drawn brighter.
+        # Compact picker: number + the scene's LESSON TITLE where it has one, and
+        # the module key where it does not (the shelved playgrounds, and anyone's
+        # own file). The current one is bracketed and drawn brighter.
+        #
+        # The title rather than the key because this row's job is "which number is
+        # the scene I want", and mid-talk the answer is "the one where it wraps",
+        # not "mesomem_rod" -- the module name is a filename, and the full
+        # technical name of the active scene is already in the header directly
+        # below. It is also shorter, so the whole sequence fits in fewer rows.
         picker_bits = []
         for i, (key, sys_spec) in enumerate(systems, start=1):
-            picker_bits.append(f"[{i}>{key}]" if key == current_key else f"{i}:{key}")
+            label = (sys_spec.lesson.title if sys_spec.lesson is not None
+                     else key)
+            picker_bits.append(f"[{i}>{label}]" if key == current_key
+                               else f"{i}:{label}")
         # Wrapped, not one line: past about six playgrounds the row runs off the
         # panel and the last few become unfindable (which is what adding the remote
         # one did to `cu_deposition`).
@@ -2921,9 +3182,32 @@ class Renderer:
         self.screen.blit(name_surf, (x, y))
         y += name_surf.get_height() + UI(2)
 
-        desc_surf = self.small_font.render(spec.description, True, DIM_TEXT_COLOR)
-        self.screen.blit(desc_surf, (x, y))
-        y += UI(16)
+        # Wrapped, not one line: every description here is a sentence or two and
+        # the panel is 460 px, so a single surface loses its tail off the right
+        # edge -- the same thing that was already fixed for the picker row and the
+        # key hints below, and the same fix.
+        for row in _wrap_items(spec.description.split(" "), self.small_font, w, " "):
+            self.screen.blit(self.small_font.render(row, True, DIM_TEXT_COLOR),
+                             (x, y))
+            y += UI(15)
+        y += UI(1)
+
+        # THE HOOK: the question this scene leaves open, which the next one
+        # answers. It is what makes eight scenes an argument rather than a menu
+        # (see playground/spec.py's Lesson).
+        #
+        # IN THE PANEL, not over the scene, and the split is deliberate: the scene
+        # carries what the ROOM needs -- the title, the claim, the instruction --
+        # and the panel carries what the person DRIVING needs, which is where to go
+        # next and what to say on the way. The audience should hear the question,
+        # not read it.
+        if spec.lesson is not None and spec.lesson.hook:
+            for row in _wrap_items(("-> " + spec.lesson.hook).split(" "),
+                                    self.small_font, w, " "):
+                self.screen.blit(self.small_font.render(row, True, HOOK_COLOR),
+                                 (x, y))
+                y += UI(15)
+            y += UI(3)
 
         # The turntable keys are only listed for the systems that have one --
         # a hint for a key that does nothing is worse than no hint.
@@ -3043,6 +3327,16 @@ class Renderer:
         pygame.draw.line(self.screen, PANEL_DIVIDER, (x, y), (x + w, y), UI.w(1))
         y += UI(10)
 
+        # THE PLOTS ARE NOT DRAWN ON EVERY PLAYGROUND, and the reason is not
+        # clutter -- it is that on the early scenes they are not TRUE yet. A time
+        # series is a statement about an ensemble; on two beads or seven, the
+        # temperature trace is thermostat noise on a sample too small to have a
+        # temperature and g(r) is a single spike. They arrive with the sheet, which
+        # is the first scene big enough for a statistic to mean something, and that
+        # arrival is itself worth an audience noticing. See Lesson.plots.
+        if spec.lesson is not None and not spec.lesson.plots:
+            return
+
         # Four stacked plots share the space left below the readouts. Deriving the
         # per-plot height from what's actually left (rather than a fixed 140) keeps
         # all four on-screen whatever the slider count -- the MesoMem systems add
@@ -3136,7 +3430,8 @@ class Renderer:
               atom_trails=None, species=None, bond_pairs=None, hbond_pairs=None,
               hud_lines=None, scene_3d=None, total_steps=0, steps_per_frame=1,
               debug_line=None, playback_playing=None, puller_attached=True,
-              overlay=None, control_focus=None, remote_note=None):
+              overlay=None, control_focus=None, remote_note=None,
+              lesson_position=None, acts=(), thesis_engaged=False):
         # In GL mode the default framebuffer is cleared first; the 3D scene (if
         # any) is drawn straight into its sim viewport, and every 2D surface is
         # composited over it at the end. In CPU mode self.screen IS the display
@@ -3169,6 +3464,8 @@ class Renderer:
                 bead_tints=scene_3d.get("bead_tints"),
                 view_slice=scene_3d.get("view_slice"),
                 pair_annotation=scene_3d.get("pair_annotation"),
+                lesson_position=lesson_position, acts=acts,
+                current_key=current_key,
             )
         else:
             self.draw_sim(positions, is_puller, puller_pos, input_force, reaction_force,
@@ -3193,6 +3490,12 @@ class Renderer:
         self._playback_visible = False
         if playback_playing is not None:
             self.draw_playback_controls(playback_playing)
+        # And, just above them, the button that takes this scene's central claim
+        # away and puts it back -- on the playgrounds that declare one (see
+        # playground/spec.py's Thesis), which is every scene with a membrane in it
+        # to collapse.
+        self.draw_thesis_button(spec.lesson.thesis if spec.lesson else None,
+                                thesis_engaged)
         # A modal card over the sim view (the remote connect panel). Drawn here
         # rather than by the caller after draw() returns, because in GL mode every
         # 2D surface has to be on self.screen before it is composited -- and

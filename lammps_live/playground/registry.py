@@ -73,6 +73,56 @@ _ORDER = ("mesomem_bead", "mesomem_patch", "mesomem_patch_torque",
           "mesomem_sheet", "mesomem_assembly", "mesomem_rod",
           "mesomem_remote", "mesomem_polymer")
 
+# THE SAME SEQUENCE, GROUPED INTO THE THREE PARTS OF THE ARGUMENT. Eight scenes
+# is more than an audience can hold as a list, and a bare "4 of 8" says only how
+# much is left; what someone actually needs to know is which third of the case
+# they are standing in, because that is what tells them what KIND of thing is
+# coming next.
+#
+#   Rules     what one interaction is, and what a hand can do to it.
+#   Material  what a lot of them make, and that nobody had to arrange it.
+#   Life      what such a material is for, at the size the science is done at.
+#
+# The grouping is also where the demo can be CUT. Acts I and II carry the whole
+# thesis and need no network; Act III is where the cluster comes in, so a talk
+# that is short on time or on tunnel stops at the assembly box having said
+# everything the force field claims. That is a deliberate property of this
+# ordering rather than a discovery to make live.
+#
+# Every offered playground must appear in exactly one act -- tests/test_lessons.py
+# checks it, because a scene that is in the demo and in no act would draw an
+# indicator that cannot say where it is.
+_ACTS = (
+    ("Rules", ("mesomem_bead", "mesomem_patch", "mesomem_patch_torque")),
+    ("Material", ("mesomem_sheet", "mesomem_assembly")),
+    ("Life", ("mesomem_rod", "mesomem_remote", "mesomem_polymer")),
+)
+
+
+def acts():
+    """[(act name, (key, ...)), ...] -- the offered sequence, grouped. Only the
+    playgrounds actually present are listed, so a deleted file drops out of its
+    act instead of leaving a gap in the indicator."""
+    found = set(bundled_keys())
+    return tuple((name, tuple(k for k in keys if k in found))
+                 for name, keys in _ACTS if any(k in found for k in keys))
+
+
+def lesson_position(key):
+    """Where `key` stands in the taught sequence: (index, total, act name), with
+    `index` 1-based -- what the position indicator draws.
+
+    (0, total, "") for a playground that is off the sequence, which is a real
+    answer rather than an error: a shelved scene and a researcher's own file are
+    both legitimately outside the story, and the indicator simply says nothing
+    about them.
+    """
+    keys = bundled_keys()
+    if key not in keys:
+        return (0, len(keys), "")
+    act_name = next((name for name, members in _ACTS if key in members), "")
+    return (keys.index(key) + 1, len(keys), act_name)
+
 # In the package, but NOT in the demo: not in the picker, not on the number keys,
 # and not stepped through by Tab. The atomistic classics the app was built on
 # (real-units copper, argon and salt) are not what the MesoMem talk is about, and

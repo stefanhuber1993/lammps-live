@@ -66,7 +66,7 @@ flat on the screen cannot do.
 
 Units are the paper's LJ-reduced units (sigma = eps = m = 1).
 """
-from ..playground import Control, Playground, hex_patch
+from ..playground import Control, Lesson, Playground, hex_patch
 from .mesomem_patch import STYLE
 
 PLAYGROUND = Playground(
@@ -105,6 +105,19 @@ PLAYGROUND = Playground(
     ),
     observables=["mean_tilt_deg", "thickness", "coordination"],
     params={},
+    # DELIBERATELY THE SAME EXPOSURE AS mesomem_patch -- the same two dials, the
+    # same absent plots -- because the comparison IS the lesson here (see the
+    # module docstring: these are the same seven beads and the same force field,
+    # and Tab between them is the experiment). A panel that rearranged itself
+    # between the two would hide the one thing that changed.
+    lesson=Lesson(
+        title="Twist",
+        claim="Tilt resists a twist -- and past 45 degrees the director flips over.",
+        instruction="Twist the centre director until it snaps to the other side.",
+        hook="Seven beads hold together. Does a real membrane stay flat?",
+        everyday_params=("k_tilt", "k_splay"),
+        plots=False,
+    ),
     presets={
         # mesomem_patch's, verbatim: the same four settings mean the same four
         # things here, and "floppy" is if anything more legible under twist than

@@ -171,6 +171,12 @@ class SystemSpec:
     # cancels part of the measured reaction from what it applies -- which is a
     # force-domain correction with no counterpart here (see App._tick).
     control_drive: str = "force"
+    # WHAT THIS SYSTEM TEACHES: the playground's Lesson (see playground/spec.py),
+    # or None for a system that is not part of the taught sequence. It reaches the
+    # SystemSpec because the renderer is what draws it -- the card over the scene,
+    # the hook in the panel, and whether the panel's plots are drawn at all -- and
+    # the renderer is handed a spec rather than a playground.
+    lesson: object = None
 
 
 class MDSystem(ABC):

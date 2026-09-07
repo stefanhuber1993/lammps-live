@@ -122,7 +122,7 @@ Units are the paper's LJ-reduced units (sigma = eps = m = 1). The collaborator's
 original LAMMPS deck is kept beside the pair style, at
 `forcefields/mesomem_ff/planar_wrapping_rod.lmp`.
 """
-from ..playground import Control, Playground, rod_on_sheet
+from ..playground import Control, Lesson, Playground, Thesis, rod_on_sheet
 from ..render_style import DEFAULT_STYLE
 
 # The sheet's look, with the two depth effects pulled back. The subject here is a
@@ -403,6 +403,16 @@ PLAYGROUND = Playground(
         # rod that a stiff one merely holds.
         "k_tilt": (0.0, 30.0),
     },
+    # WHERE THE DEMO BECOMES BIOLOGY. Everything up to here has been a material;
+    # this is the material doing the thing it exists to do, and the claim says so
+    # in the audience's own words rather than in the model's.
+    lesson=Lesson(
+        title="It wraps",
+        claim="A membrane bends around what it sticks to -- that is how cells swallow.",
+        instruction="Steer the rod into the sheet, then cut it open with the lever.",
+        hook="Three thousand beads on a laptop. Does it hold at ten times that?",
+        thesis=Thesis(),
+    ),
     presets={
         # The reference deck's conditions: eps = 3, L = 5, D = 3, paper moduli.
         # Brought into contact and released, the membrane invaginates until the

@@ -19,7 +19,7 @@ assembled.
 
 Units are the paper's LJ-reduced units (sigma = eps = m = 1).
 """
-from ..playground import Playground, random_fill
+from ..playground import Lesson, Playground, Thesis, random_fill
 from ..render_style import DEFAULT_STYLE, CameraOrbit
 
 # A dense, roughly cubic cloud of beads seen from outside is the scene the look
@@ -79,6 +79,19 @@ PLAYGROUND = Playground(
     mode="sim",
     observables=["nematic_S", "coordination", "thickness"],
     param_ranges={"k_splay": (0.0, 5.0)},
+    # THE PANEL GETS SIMPLER HERE, not richer, and that is the point: this scene is
+    # watched rather than driven, so there is no puller, no leash and nothing to
+    # steer -- temperature, time and the turntable. Disclosure follows the lesson
+    # rather than accumulating down the sequence.
+    #
+    # The order parameter climbing while you watch is the story, so the plots stay.
+    lesson=Lesson(
+        title="It builds itself",
+        claim="Nobody arranged this. Random beads find the membrane on their own.",
+        instruction="Press Play and watch. Warm it up if it stalls.",
+        hook="So we have a material. What is a membrane FOR?",
+        thesis=Thesis(),
+    ),
     presets={
         "paper": {},
         # Below the k_tilt ~ 10 threshold: compact isotropic droplets instead of

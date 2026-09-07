@@ -44,12 +44,13 @@ from .scenario import (
 )
 from ..mdsystem import ForceFeedbackProfile
 from .deposition import Deposition2D, IonicSlab2D, deposition_2d, ionic_slab_2d
-from .spec import Control, Playground
+from .spec import Control, Lesson, Playground, Thesis
 from .state import Box, FrameState, PairData, build_pairs
 from .thermostat import CSVR, Langevin, Thermostat
 
 __all__ = [
-    "Playground", "Control", "ForceFeedbackProfile",
+    "Playground", "Control", "Lesson", "Thesis",
+    "ForceFeedbackProfile",
     "Deposition2D", "deposition_2d", "IonicSlab2D", "ionic_slab_2d",
     "Thermostat", "Langevin", "CSVR",
     "Scenario", "ScenarioBuild", "HexPatch", "HexSheet", "RandomFill",

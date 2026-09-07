@@ -45,7 +45,7 @@ the renderer while offline -- run the server on this machine:
 """
 import math
 
-from ..playground import Playground, random_fill
+from ..playground import Lesson, Playground, Thesis, random_fill
 from ..remote import RemoteTarget
 from .mesomem_assembly import STYLE
 from ..render_style import CameraOrbit
@@ -80,6 +80,17 @@ PLAYGROUND = Playground(
     mode="sim",
     observables=["nematic_S", "coordination", "thickness"],
     param_ranges={"k_splay": (0.0, 40.0)},
+    # THE CLUSTER IS PLUMBING, NOT THE LESSON, so neither line mentions a tunnel,
+    # an allocation or a queue: what the audience should hear is the bead count and
+    # the word "live". The connect panel already says everything about the
+    # machinery, to the person driving, at the moment it matters.
+    lesson=Lesson(
+        title="At scale",
+        claim="Ten thousand beads on a cluster GPU, assembling as you watch.",
+        instruction="Orbit with the mouse. None of this is pre-recorded.",
+        hook="Still an open sheet. What happens when it closes around something?",
+        thesis=Thesis(),
+    ),
     presets={
         "paper": {},
         "compact_droplets": {"k_tilt": 4.0},

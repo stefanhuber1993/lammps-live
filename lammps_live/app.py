@@ -85,6 +85,12 @@ class App:
         # [(key, SystemSpec), ...] in a stable order for the picker and the
         # number keys. Specs only -- no LAMMPS instance is built to list them.
         self.systems = registry.list_playgrounds()
+        # The offered sequence grouped into its three acts, for the position rail
+        # (see registry.acts). Read ONCE: it walks the playgrounds package on
+        # disk, which is a directory listing, and the rail asks for it every
+        # frame. The set of playgrounds cannot change while the app is running.
+        self.acts = registry.acts()
+        self.lesson_position = (0, len(self.systems), "")
 
         # Not pygame.init() -- that also brings up SDL's joystick subsystem,
         # which grabs the Sidewinder as a native SDL game controller. When
@@ -131,6 +137,15 @@ class App:
         # clicking its header (see _handle_events); pushed to the renderer each
         # frame so draw_panel knows whether to draw the advanced sliders.
         self.show_advanced = False
+        # THE THESIS TOGGLE (see playground/spec.py's Thesis): while engaged, the
+        # scene's orientational moduli are held at zero and the membrane is not a
+        # membrane. `_thesis_saved` is where the dials were before, so releasing it
+        # puts the physics back exactly rather than to the declared defaults --
+        # which matters, because the whole value of the button is that it is a
+        # round trip from wherever the demo happens to be. Cleared on every
+        # rebuild, since a new playground's sliders are new objects.
+        self.thesis_engaged = False
+        self._thesis_saved = {}
         self.history = None
         self.atom_trails = None
         self._trail_frame_counter = 0
@@ -386,6 +401,17 @@ class App:
         self._focus_released_puller = False
         # A different box, and a lever nobody has touched since: start whole again.
         self.view_slice.reset()
+        # The thesis goes back on with the new scene. It is a statement about the
+        # playground you are looking at ("THIS membrane needs its directors"), so
+        # carrying it across a switch would leave the next scene silently crippled
+        # with its button in whatever state the last one left -- and the saved
+        # values it would restore belong to sliders that no longer exist.
+        self.thesis_engaged = False
+        self._thesis_saved = {}
+        # Where this scene stands in the taught sequence, for the rail. Same
+        # argument as `self.acts`: it is a property of the order, it cannot change
+        # between switches, and the rail reads it 60 times a second.
+        self.lesson_position = registry.lesson_position(key)
 
         if self.history is None:
             self.history = RollingHistory(config.HISTORY_WINDOW_SECONDS, ["temp", "press", "ke", "pe", "etotal"])
@@ -454,6 +480,15 @@ class App:
         self.system.reset(restore_params=restore_params)
         if restore_params:
             self._reset_controls_to_defaults()
+            # AND THE THESIS COMES BACK ON, for the same reason the sliders go back
+            # to their declared values: R is the one button that means "the
+            # beginning", and a reset that left the orientation switched off would
+            # rebuild a fresh membrane straight back into a droplet with nothing on
+            # screen explaining why. The saved values go with it -- the sliders they
+            # belonged to have just been overwritten, so restoring them later would
+            # put back a state nobody was in.
+            self.thesis_engaged = False
+            self._thesis_saved = {}
         self.history.reset()
         self.atom_trails.reset()
         self._trail_frame_counter = 0
@@ -712,6 +747,12 @@ class App:
                     self.remote_panel.toggle()
                 elif event.key == pygame.K_b:
                     self._toggle_puller_attached()
+                elif event.key == pygame.K_o:
+                    # O for orientation -- the thesis toggle, so the demo's one
+                    # big claim can be made without finding a button with a mouse
+                    # while talking. Silently nothing on a playground with no
+                    # thesis, like every other key that does not apply.
+                    self._toggle_thesis()
                 elif pygame.K_1 <= event.key <= pygame.K_9:
                     idx = event.key - pygame.K_1
                     if idx < len(self.systems):
@@ -741,6 +782,9 @@ class App:
                     name = self.renderer.playback_hit(event.pos)
                     if name is not None:
                         self._playback_action(name)
+                        continue
+                    if self.renderer.thesis_hit(event.pos):
+                        self._toggle_thesis()
                         continue
                     if self.renderer.bead_color_hit(event.pos):
                         # Through the Choice, so clicking and pushing the stick are
@@ -787,6 +831,43 @@ class App:
         if keys[pygame.K_DOWN]:
             self.temp_slider.nudge(-rate * dt)
         return True
+
+    def _toggle_thesis(self):
+        """Take the force field's central claim away, or give it back.
+
+        THROUGH THE REAL SLIDERS, which is the whole design of it: the app already
+        pushes every slider into the system once a frame (see _tick), so driving
+        them to zero here is all that "remove the orientation" needs to be, and it
+        means the panel is never lying about what the physics is. An override held
+        somewhere else in the app would show k_tilt = 12 on a screen where the
+        membrane has visibly stopped being one, which is the exact thing this
+        button exists to make undeniable.
+
+        A dial the thesis does not name is left alone, and a dial it names that
+        this playground does not have is skipped rather than an error -- a Thesis
+        is a statement about a force field, and a playground is free to be running
+        a different one.
+        """
+        # From the spec, which is what the rest of this file reads and what the
+        # renderer is handed -- so the button's label and its action cannot end up
+        # sourced from two different places.
+        lesson = self.system.spec.lesson
+        thesis = lesson.thesis if lesson is not None else None
+        if thesis is None:
+            return
+        by_key = dict(zip(self.extra_slider_keys, self.extra_sliders))
+        if self.thesis_engaged:
+            for key, value in self._thesis_saved.items():
+                if key in by_key:
+                    by_key[key].value = value
+            self._thesis_saved = {}
+            self.thesis_engaged = False
+        else:
+            self._thesis_saved = {key: by_key[key].value
+                                  for key in thesis.params if key in by_key}
+            for key in self._thesis_saved:
+                by_key[key].value = 0.0
+            self.thesis_engaged = bool(self._thesis_saved)
 
     def _toggle_puller_attached(self):
         """Grab / release the puller (B, or moving the focus off the viewport --
@@ -1307,6 +1388,14 @@ class App:
             # "the GPU is still yours, on that other playground" -- None unless a
             # remote session is being held in the background.
             remote_note=self.remote_panel.standby_note(),
+            # WHERE THIS SCENE SITS IN THE TAUGHT SEQUENCE, for the rail top-right
+            # of the sim view, and whether the thesis button is lit. Both are the
+            # app's to know: the position is a property of the offered ORDER (see
+            # registry.acts) rather than of any one playground, and the engagement
+            # is app state because it is the sliders that carry it.
+            lesson_position=self.lesson_position,
+            acts=self.acts,
+            thesis_engaged=self.thesis_engaged,
             # Drawn last, inside the renderer, so it lands on top of the 3D scene
             # rather than under the composited frame.
             overlay=self._draw_overlays,

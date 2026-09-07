@@ -92,6 +92,12 @@ class PairTerm:
     # `twist` falls back to the magnitude where there is no plane to project onto.
     torque: tuple = (0.0, 0.0, 0.0)
     twist: float = 0.0
+    # What this term is a function of, as short symbolic text ("r", "ni.nj, r"),
+    # from the force field's `energy_terms_arguments`. Empty where the force field
+    # declares none. It rides along with the term rather than being looked up by
+    # the renderer because the renderer is handed an annotation, not a force
+    # field -- and because a term and its arguments are one fact.
+    argument: str = ""
 
 
 @dataclass(frozen=True)
@@ -217,8 +223,14 @@ def probe_pair(force_field, state, params, i=0, j=1, plane_normal=None,
         return (np.zeros(len(configs)) if arr is None
                 else np.asarray(arr, dtype=float))
 
+    # Zipped by POSITION against the labels, and short by design on a force field
+    # that declares none: `energy_terms_arguments` is optional, and a force field
+    # that extends another's terms (the rod's adhesion, the polymer's exclusion)
+    # may declare fewer than it has labels. A missing one is simply blank.
+    arguments = tuple(force_field.energy_terms_arguments)
+
     terms = []
-    for label in labels:
+    for t_index, label in enumerate(labels):
         u = column(label)
         force = 0.0 if n_radial < 3 else -(u[2] - u[1]) / (2.0 * FD_STEP)
         torque = np.zeros(3)
@@ -234,7 +246,9 @@ def probe_pair(force_field, state, params, i=0, j=1, plane_normal=None,
         terms.append(PairTerm(label=label, energy=float(u[0]),
                               radial_force=float(force),
                               torque=tuple(float(c) for c in torque),
-                              twist=twist))
+                              twist=twist,
+                              argument=(arguments[t_index]
+                                        if t_index < len(arguments) else "")))
     terms = tuple(terms)
 
     angle = float("nan")

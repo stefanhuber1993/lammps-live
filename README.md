@@ -36,6 +36,23 @@ model whose parameters otherwise stay pretty abstract.
 
 ## Scenes
 
+The eight of them are a sequence rather than a menu, in three acts, and the app
+says where you are: **Rules** (what one interaction is -- 1 to 3), **Material**
+(what a lot of them make, and that nobody had to arrange it -- 4 and 5), and
+**Life** (what such a material is for, at the size the science is done at -- 6 to
+8). Each scene puts three lines over the picture -- its title, one sentence of
+physics, and what to do with your hands -- and leaves the panel a note asking the
+question the next one answers. The dials and the plots arrive as they become worth
+looking at: the two-bead scene has none, the two patch scenes have exactly two,
+and the plots start at the sheet, which is the first scene big enough for a
+statistic to mean anything. Everything hidden is one click away under
+"Advanced".
+
+**`O` removes the orientation**, on every scene with a membrane in it: the two
+orientational moduli go to zero, the same beads keep the same attraction, and
+what was a membrane collapses. It is the whole claim of the model, proven by
+taking it away, and pressing `O` again puts it back exactly where it was.
+
 | | |
 |---|---|
 | `mesomem_bead` | two beads: one in your hand, one nailed down at the edge of the net. Drive them together and feel the pair potential switch on, term by term |

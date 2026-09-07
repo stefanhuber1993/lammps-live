@@ -14,7 +14,7 @@ opposite normal, because the tilt term is bistable (both +n and -n are minima).
 
 Units are the paper's LJ-reduced units (sigma = eps = m = 1).
 """
-from ..playground import Control, Playground, hex_patch
+from ..playground import Control, Lesson, Playground, hex_patch
 from ..render_style import DEFAULT_STYLE
 
 # Seven beads filling the frame is not the dense box the default look was tuned
@@ -86,6 +86,19 @@ PLAYGROUND = Playground(
     # The 7-bead patch is small, so the splay modulus is kept on a tighter range
     # here than on the big sheets -- past ~3 it simply locks the patch rigid.
     params={},
+    # THE TWO MODULI ARRIVE HERE, and only they: this is the first scene where
+    # turning one has something visible to do, because there are now neighbours to
+    # stiffen. zeta (the attraction's falloff) drops behind Advanced -- it is the
+    # isotropic term's shape, and the isotropic term was the last scene's subject.
+    # Still no plots: seven beads have no statistics either.
+    lesson=Lesson(
+        title="Push",
+        claim="Pull one bead out and its neighbours tilt to follow it.",
+        instruction="Drag the centre bead out of the plane, then let go.",
+        hook="You pushed it. What happens if you only twist it?",
+        everyday_params=("k_tilt", "k_splay"),
+        plots=False,
+    ),
     presets={
         # The paper's standard conditions (also the declared defaults).
         "paper": {},

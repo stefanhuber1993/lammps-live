@@ -186,6 +186,111 @@ class Control:
 
 
 @dataclass(frozen=True)
+class Thesis:
+    """A one-click A/B on the force field's own central claim.
+
+    THE CLAIM this whole demo makes is that a membrane's shape comes out of beads
+    that care which way they point -- and the fastest way to teach a claim is to
+    take it away. Zeroing the two orientational moduli leaves the SAME beads with
+    the SAME isotropic attraction, and what was a membrane collapses into a
+    droplet. One button, one second, and the thesis is proven rather than asserted.
+
+    It is a toggle rather than a preset because the point is the COMPARISON. A
+    preset (`isotropic_only`, which every membrane playground declares and which
+    this zeroes the same parameters as) is a way to start somewhere; this is a way
+    to go there and come back while the audience watches the same beads, which is
+    a different pedagogical act. Nothing is hidden while it is engaged: the app
+    drives the real sliders to zero and puts them back, so the panel always says
+    what the physics is (see App._toggle_thesis).
+
+    `params` are zeroed in order and restored to whatever they were. The default
+    set is MesoMem's two orientational moduli plus their cutoff -- exactly the
+    `isotropic_only` preset, because "what isotropic-only means" should have one
+    definition and not two.
+    """
+    # On the button, released and engaged. The engaged label is the way OUT, which
+    # is what a lit button should say.
+    label: str = "Remove orientation"
+    engaged_label: str = "Restore orientation"
+    # Live force-field parameters driven to zero while engaged.
+    params: tuple = ("k_tilt", "k_splay", "wc")
+    # One line, drawn under the button while it is engaged, saying what is now on
+    # screen. Without it the audience sees a collapse and has to be told what was
+    # taken away; with it the screen says so, which is the difference between a
+    # demo and a lesson.
+    caption: str = ("no orientation: the same beads, the same attraction, "
+                    "and no membrane")
+
+
+@dataclass(frozen=True)
+class Lesson:
+    """What a playground TEACHES -- as opposed to what it simulates.
+
+    Every field here is audience-facing text or a decision about how much of the
+    instrument to show, and it is declared next to the physics for the same reason
+    the render style is: a scene and the thing it is trying to say are one design,
+    and splitting them across two files is how they drift apart.
+
+    THE THREE LINES are a fixed template, drawn in the same place on every
+    playground so the audience learns where to look once (see
+    Renderer._draw_lesson_card):
+
+        title        the LESSON, not the geometry. "Twist", not "6+1 beads,
+                     torque-driven". The geometry is already in `Playground.name`,
+                     which the panel still shows; this is the word the talk uses.
+        claim        one sentence of physics, and the one thing to remember. Keep
+                     it under about twelve words: it is read from across a room,
+                     off a projector, in the two seconds before the presenter
+                     starts talking over it.
+        instruction  what to do with your hands, in the imperative. A scene nobody
+                     knows how to touch teaches nothing, and this is the only line
+                     that is about the app rather than the physics.
+
+    THE HOOK is the question this stage leaves open, and it is what turns eight
+    scenes into one argument: the sheet ends by asking whether every bead had to be
+    placed on a lattice, and the assembly box answers it. It is drawn in the PANEL
+    rather than in the scene, because it is a note to whoever is driving about
+    where to go next -- the audience gets it spoken, not written.
+
+    THE ACT is which third of the argument this belongs to (see registry._ACTS).
+    It is what makes the position indicator say "where am I in the story" rather
+    than only "how much is left".
+    """
+    title: str
+    claim: str
+    instruction: str
+    hook: str = ""
+    # WHICH LIVE PARAMETERS ARE EVERYDAY HERE, by name -- the rest drop behind the
+    # panel's collapsible "Advanced" group. None leaves every playground's dials
+    # exactly as the force field declared them.
+    #
+    # This is progressive disclosure, and the rule it follows is: a control appears
+    # at the stage where the thing it changes becomes VISIBLE, and not before. A
+    # k_splay slider on a two-bead scene is a dial whose effect cannot be seen,
+    # which teaches that the model is arbitrary. An empty tuple means no everyday
+    # dials at all -- the two-bead scene, where the subject is one interaction and
+    # every dial is a distraction from it.
+    #
+    # HIDDEN, NOT REMOVED, and that distinction is the whole reason this is the
+    # `advanced` flag rather than a filter: the presenter who wants k_tilt on the
+    # opening slide is one click from it, and nothing about the force field has
+    # been quietly redefined.
+    everyday_params: tuple = None
+    # Whether the panel's four stacked plots (temperature, pressure, energy, g(r))
+    # are drawn at all.
+    #
+    # OFF EARLY, and not to reduce clutter -- because they are not true yet. A
+    # time series is a statement about an ensemble, and on two beads or seven the
+    # plots show thermostat noise on a sample too small to have a temperature;
+    # g(r) of a single pair is one spike. They arrive at the sheet, which is the
+    # first scene big enough for a statistic to mean anything, and that arrival is
+    # itself worth noticing.
+    plots: bool = True
+    # The one-click A/B on this scene's central claim (a Thesis), or None.
+    thesis: object = None
+
+
+@dataclass(frozen=True)
 class Playground:
     """One explorable setup: a force field on a scenario, driven in a mode."""
 
@@ -211,6 +316,13 @@ class Playground:
     # "the setting I found interesting", and is what makes a demo reproducible.
     presets: dict = field(default_factory=dict)
     observables: tuple = ()
+    # WHAT THIS PLAYGROUND TEACHES: a Lesson (above) -- the title, claim and
+    # instruction drawn over the scene, the hook to the next stage, and how much of
+    # the instrument to expose here. None means a playground that is not part of
+    # the taught sequence: the shelved atomistic classics, and anyone's own file.
+    # Everything downstream treats it as optional, so a scene without one simply
+    # draws no card and shows every dial (see registry.lesson_position).
+    lesson: object = None
     # Draw the force field's additive terms as an annotated connector BETWEEN the
     # first two particles: the separation, the director angle, and each term's
     # energy and radial force as live numbers, with the force field's landmark
@@ -307,3 +419,19 @@ class Playground:
 
     def effective_control(self):
         return self.control or Control()
+
+    def is_everyday(self, name, declared_advanced):
+        """Whether a live parameter belongs on the panel's everyday list here.
+
+        The force field declares a default (`Param.advanced` -- rc and wc are
+        advanced everywhere, because they are cutoffs rather than physics dials),
+        and a lesson may narrow it further for a scene where a dial has nothing
+        visible to do yet. Narrow only: a lesson can move a dial into the Advanced
+        group, never drag one out of it, so `everyday_params` cannot accidentally
+        promote a cutoff onto the opening slide of a talk.
+        """
+        if declared_advanced:
+            return False
+        if self.lesson is None or self.lesson.everyday_params is None:
+            return True
+        return name in self.lesson.everyday_params

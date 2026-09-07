@@ -89,6 +89,12 @@ class MesoMem(ForceField):
     plugin = MESOMEM_PLUGIN
     has_directors = True
     energy_terms_labels = (ISO, TILT, SPLAY)
+    # The three terms' arguments, and the whole point of showing them: the first
+    # depends on the separation ALONE, which is why its torque is identically zero
+    # and why "orientational" means the other two. `rhat` is the unit vector along
+    # the bond and `ni`/`nj` are the two directors, written the way the docstring
+    # of `energy_terms` below writes them.
+    energy_terms_arguments = ("r", "ni.rhat, nj.rhat, r", "ni.nj, r")
     # The attraction term dominates and runs to O(1) per pair; a bead has ~6-12
     # neighbours, so a per-particle half-range of ~3 keeps the bars readable at
     # both 7 and 1500 beads.

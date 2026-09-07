@@ -26,7 +26,7 @@ inflates without bound; that is honest, not a fault.
 
 Units are the paper's LJ-reduced units (sigma = eps = m = 1).
 """
-from ..playground import Control, Playground, hex_sheet
+from ..playground import Control, Lesson, Playground, Thesis, hex_sheet
 from ..render_style import DEFAULT_STYLE
 
 # A flat lattice seen at a tilt is the opposite shape of problem from the
@@ -98,6 +98,24 @@ PLAYGROUND = Playground(
     # A large membrane buckles under high splay rather than merely stiffening, so
     # the dial is worth taking far past the patch's useful span of 3.
     param_ranges={"k_splay": (0.0, 40.0)},
+    # THE LAB BENCH: the first scene big enough for a statistic to be true, so the
+    # plots arrive, and the whole dial panel comes with them.
+    #
+    # AND THE FIRST SCENE WITH A MEMBRANE TO TAKE APART, which is why the thesis
+    # button is here and not earlier. Zeroing the two orientational moduli leaves
+    # 900 beads with the same isotropic attraction and no reason to be a sheet, and
+    # what is on screen collapses into a droplet -- the demo's whole claim, proven
+    # by removal, in one click and about a second. It is the same parameters as the
+    # `isotropic_only` preset below, and deliberately so: one definition of what
+    # "isotropic only" means, reachable either as a place to start or as a place to
+    # visit and come back from.
+    lesson=Lesson(
+        title="A membrane",
+        claim="Nine hundred beads, held at zero tension: flat, fluid, and it heals.",
+        instruction="Pull a bead out. Warm it up. Then remove the orientation.",
+        hook="We placed every bead on a lattice. Did we have to?",
+        thesis=Thesis(),
+    ),
     presets={
         "paper": {},
         # k_splay reaches much further on the sheet than on the 7-bead patch --

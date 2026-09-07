@@ -117,7 +117,7 @@ WHAT IS DELIBERATELY SMALL -- AND WHAT WAS TOO SMALL.
 Units are the paper's LJ-reduced units (sigma = eps = m = 1).
 """
 from ..mdsystem import ForceFeedbackProfile
-from ..playground import Control, Playground, bead_and_partner
+from ..playground import Control, Lesson, Playground, bead_and_partner
 from .mesomem_patch import STYLE as PATCH_STYLE
 
 # WHERE THE PARTNER IS, which is also the pair's starting separation and also half
@@ -339,6 +339,25 @@ PLAYGROUND = Playground(
     # left (see PlaygroundSystem.get_pair_annotation): on a scene of one pair they
     # and the connector are three copies of the same three numbers, and the copy
     # that is drawn between the beads it describes is the one worth keeping.
+    # THE OPENING SLIDE OF THE WHOLE TALK, so the claim is the coarse-graining
+    # rather than any one term: everything that follows is a consequence of having
+    # thrown the lipids away and kept one arrow, and it is worth saying once, at
+    # the start, next to the two objects it is true of. The last scene picks the
+    # same sentence back up (see mesomem_polymer).
+    #
+    # NOTHING IS EXPOSED HERE. No dials, because the subject is one interaction and
+    # a dial whose effect cannot be seen teaches that the model is arbitrary; no
+    # plots, because a time series of two beads is thermostat noise on a sample too
+    # small to have a temperature, and g(r) of a single pair is one spike. What IS
+    # on screen is the pair annotation, which is this scene's whole instrument.
+    lesson=Lesson(
+        title="One interaction",
+        claim="One bead is a hundred lipids. We kept only which way it points.",
+        instruction="Push right until the numbers wake up. Then twist.",
+        hook="Every term here is between two beads. What do six neighbours do?",
+        everyday_params=(),
+        plots=False,
+    ),
     presets={"paper": {}},
     temperature=(0.0, 0.5),
     # Cold, and the slider is inert -- which is worth knowing before someone reaches

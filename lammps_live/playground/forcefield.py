@@ -87,6 +87,19 @@ class ForceField(ABC):
     # Display labels for the additive energy terms, in the order energy_terms
     # returns them. Empty -> this force field offers no decomposition.
     energy_terms_labels = ()
+    # WHAT EACH OF THOSE TERMS IS A FUNCTION OF, as short symbolic text in the
+    # same order -- "r", "n.rhat", and so on. Drawn beside each term's name in the
+    # two-bead callout (see Renderer._draw_pair_callout), which is the one place
+    # the additive structure is the subject rather than the instrument.
+    #
+    # IT IS PHYSICS, NOT DECORATION, and that is why it is declared here next to
+    # the labels rather than typed into the renderer. The single most useful thing
+    # to know about this force field is that one of its terms depends on nothing
+    # but the separation while the others depend on the orientations -- which is
+    # exactly why the van der Waals torque column sits at zero while the tilt row
+    # swings, and a reader who can see "(r)" written next to that zero does not
+    # have to be told. Empty -> nothing is drawn, and the names stand alone.
+    energy_terms_arguments = ()
     # Whether particles carry an orientation (LAMMPS `mu`). Drives whether
     # FrameState.directors is populated and whether director-based observables
     # are offered.

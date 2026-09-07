@@ -379,3 +379,80 @@ PLOT_COLORS = {
     "etotal": (240, 220, 100),
     "rdf": (100, 210, 255),
 }
+
+
+# ---- the taught sequence: the lesson card, the position rail, the thesis button
+
+# THE LESSON CARD, top-left of the sim view (Renderer._draw_lesson_card): the
+# stage number and title, the one-line claim, and the one-line instruction. Its
+# COLOURS come from the scene's own RenderStyle (text_color / dim_text_color, like
+# the header line above it), because every membrane scene is drawn on a light
+# background and a fixed dark-theme grey would be unreadable on it. Only the sizes
+# and the spacing are here.
+#
+# The title is set at 30 against the header font's 22 for one reason: this is read
+# off a projector from the back of a room, in the two seconds before the presenter
+# starts talking over it, and it is the only line that has to survive that. The
+# claim follows at 20 -- large enough to be read, small enough that the title still
+# wins -- and the instruction sits at the body size, dim, because it is for the
+# person with their hands on the controls rather than for the room.
+LESSON_TITLE_SIZE = 30
+LESSON_CLAIM_SIZE = 20
+# Baseline gaps down the card, in px at UI scale 1.
+LESSON_TITLE_GAP = 6
+LESSON_CLAIM_GAP = 4
+LESSON_BLOCK_GAP = 8
+
+# THE POSITION RAIL, top-right (Renderer._draw_chapter_rail): one mark per scene
+# in the offered sequence, grouped into the three acts with a wider gap between
+# groups.
+#
+# NOT A PROGRESS BAR, deliberately. A bar implies a task being completed, which
+# frames every scene before the last as overhead on the way to the point -- the
+# opposite of true here, where the middle IS the physics. A row of marks says the
+# two things that are actually useful (where am I, and how much is left) and the
+# grouping adds the one a bare "4 of 8" cannot: which third of the argument this
+# is, and therefore what kind of thing is coming next.
+#
+# Small and dim, because the number itself is already large in the lesson card and
+# an indicator that competes with the scene has misunderstood its job.
+RAIL_MARK_W = 13
+RAIL_MARK_H = 5
+RAIL_MARK_GAP = 4
+RAIL_ACT_GAP = 13
+# The current scene's mark: taller (it grows downward from the same top edge, so
+# the row's top stays a straight line) and drawn in the scene's own text colour
+# against the others' dim one.
+RAIL_CURRENT_H = 9
+RAIL_LABEL_GAP = 7
+
+# THE THESIS BUTTON, centred at the bottom of the sim view just above the playback
+# row (Renderer.draw_thesis_button). It takes the force field's central claim away
+# and puts it back, so its engaged state has to be unmistakable from across a room
+# -- amber, which is the one alarm colour the rest of this UI reserves for a live
+# cluster allocation, and which nothing in a membrane scene is.
+THESIS_W = 232
+THESIS_H = 34
+THESIS_GAP = 12                 # above the playback row
+# RELEASED, it is a button in the same family as Play / Pause / Reset -- it is a
+# button, and being next to them is honest -- but with an amber hairline instead
+# of their grey one, because it is not a playback control and a click on it does
+# something none of them do. The one visual promise: whatever this border is, the
+# engaged state is the same hue turned all the way up.
+THESIS_BORDER = (168, 122, 52)
+THESIS_ENGAGED_BG = (208, 138, 30)
+THESIS_ENGAGED_TEXT = (16, 12, 4)
+THESIS_ENGAGED_BORDER = (245, 190, 90)
+# The caption drawn above the button while it is engaged, saying what is missing
+# from the scene. Amber too, and on a plate, because it has to be legible over
+# whatever the collapsing membrane is doing behind it.
+THESIS_CAPTION_COLOR = (250, 205, 110)
+THESIS_CAPTION_BG = (28, 20, 6, 216)
+THESIS_CAPTION_GAP = 10
+
+# THE HOOK LINE in the panel -- the question this scene leaves open. Its own
+# colour, and deliberately NOT the focus cyan: cyan already means "this is what
+# the joystick is driving" everywhere else in this UI, and a line of prose in it
+# would read as a control. A soft blue instead: clearly a note, clearly not a
+# widget, and legible against the dark panel without competing with the header.
+HOOK_COLOR = (140, 185, 235)

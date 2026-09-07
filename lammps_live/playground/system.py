@@ -10,6 +10,7 @@ here is the LAMMPS deck assembly (in one place instead of three near-identical
 copies), the id-to-local-index bookkeeping LAMMPS forces on us, and the plumbing
 of readouts into the shapes the renderer wants.
 """
+import dataclasses
 import random
 
 import numpy as np
@@ -96,8 +97,33 @@ def make_spec(playground, mode_name=None, preset=None):
         # declaration. The old code wrote each of these out twice: as a
         # SliderSpec here and again as a string key in a hand-maintained
         # set_extra_param dispatch dict, in each of three system modules.
-        extra_sliders=(params.slider_specs(playground.param_ranges)
-                       + smoothing_slider_specs(playground, scenario)),
+        extra_sliders=_disclose(playground,
+                                params.slider_specs(playground.param_ranges)
+                                + smoothing_slider_specs(playground, scenario)),
+        lesson=playground.lesson,
+    )
+
+
+def _disclose(playground, slider_specs):
+    """Apply the lesson's progressive disclosure to the generated sliders.
+
+    A dial the lesson does not call everyday is moved into the panel's collapsible
+    "Advanced" group -- hidden, not removed, so the presenter who wants k_tilt on
+    the opening slide is one click away from it and the force field has not been
+    quietly redefined (see Lesson.everyday_params and Playground.is_everyday for
+    the rule and the reason).
+
+    Done here, on the way out of `make_spec`, because this is the one place the
+    force field's declarations and the playground's teaching intent are both in
+    scope. `advanced` is the mechanism that already exists for exactly this, and
+    reusing it means the panel, the joystick's focus cycle (which deliberately
+    skips the advanced group -- see control_focus.py) and the Advanced toggle all
+    follow with no changes of their own.
+    """
+    return tuple(
+        ss if playground.is_everyday(ss.key, ss.advanced)
+        else dataclasses.replace(ss, advanced=True)
+        for ss in slider_specs
     )
 
 
