@@ -20,7 +20,7 @@ assembled.
 Units are the paper's LJ-reduced units (sigma = eps = m = 1).
 """
 from ..playground import Lesson, Playground, random_fill
-from ._knobs import NO_ORIENTATION
+from ._knobs import VDW_ONLY
 from ..render_style import DEFAULT_STYLE, CameraOrbit
 
 # A dense, roughly cubic cloud of beads seen from outside is the scene the look
@@ -98,7 +98,7 @@ PLAYGROUND = Playground(
         claim="The same beads, poured in at random. They find the sheet on their own.",
         instruction="Press Play and watch. Colours mark separate clusters as they merge.",
         hook="So the beads make a membrane. What is a membrane for?",
-        hero_knobs=(NO_ORIENTATION,),
+        hero_knobs=(VDW_ONLY,),
     ),
     presets={
         "paper": {},

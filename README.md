@@ -54,12 +54,18 @@ one click away under "Advanced".
 
 Under each scene are its **hero knobs**: the one or two things worth doing to it,
 on the input device's buttons `5` upward (`F1`-`F4` on the keyboard) with the
-number printed on the button. `Remove orientation`, on the seven-bead patch and
-the assembly box, sets `k_tilt` and `k_splay` to zero: the same beads with the
-same attraction, and no membrane. `Heat`, on the sheet and the rod, takes the
-temperature to 0.2 against a melting point of 0.3, which is where the membrane
-stops sitting still and starts behaving like the liquid it is. Both toggle, and
-both say in numbers what they changed.
+number printed on the button. `van der Waals only`, on the two-bead pair, the
+seven-bead patch and the assembly box, sets `k_tilt` and `k_splay` to zero and
+leaves the plain attraction: the same beads, and no membrane. `Heat`, on the sheet
+and the rod, takes the temperature to 0.2 against a melting point of 0.3, which is
+where the membrane stops sitting still and behaves like the liquid it is. Both
+toggle, both put back the settings they found rather than the defaults, and both
+say in numbers what they changed.
+
+There is no printed key list on screen. The bindings are discoverable (the hat
+moves a visible cyan frame, the trigger runs the simulation, and every button
+worth pressing is drawn under the scene with its number on it), and a key list
+belongs on a card next to the display rather than in a fifth of it.
 
 | | |
 |---|---|

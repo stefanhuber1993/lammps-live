@@ -48,14 +48,14 @@ def _slider(app, key):
 
 # ---- a knob that drives force-field parameters ----------------------------
 
-def test_removing_orientation_drives_the_real_sliders_to_zero(patch):
+def test_van_der_waals_only_drives_the_real_sliders_to_zero(patch):
     """THROUGH the sliders, not around them. The app pushes every slider into the
     system once a frame, so this is both how the physics changes and how the panel
     stays honest about it -- an override held anywhere else would show k_tilt = 12
     on a screen where the patch has visibly stopped being flat.
     """
     knob = patch.system.spec.lesson.hero_knobs[0]
-    assert knob.label == "Remove orientation"
+    assert knob.label == "van der Waals only"
     assert any(_slider(patch, k).value != 0.0 for k in knob.params)
 
     patch._toggle_hero(0)
@@ -139,11 +139,11 @@ def test_two_knobs_do_not_forget_each_other(sheet):
     tested, and this is the failure it exists to avoid.
     """
     import dataclasses
-    from lammps_live.playgrounds._knobs import NO_ORIENTATION
+    from lammps_live.playgrounds._knobs import VDW_ONLY
 
     lesson = sheet.system.spec.lesson
     both = dataclasses.replace(
-        lesson, hero_knobs=lesson.hero_knobs + (NO_ORIENTATION,))
+        lesson, hero_knobs=lesson.hero_knobs + (VDW_ONLY,))
     sheet.system.spec = dataclasses.replace(sheet.system.spec, lesson=both)
 
     sheet._toggle_hero(0)                       # Heat
@@ -215,8 +215,9 @@ def test_the_click_the_key_and_the_device_button_are_one_state(patch):
 
 def test_a_scene_with_no_knobs_ignores_the_toggle(patch):
     """Every key that does not apply to a playground does nothing on it, and these
-    are three of them. Not an error and not a crash."""
-    patch._build_system("mesomem_bead")
+    are three of them. Not an error and not a crash. The torque patch is the cheap
+    scene that declares none (deliberately -- see test_lessons)."""
+    patch._build_system("mesomem_patch_torque")
     assert patch.system.spec.lesson.hero_knobs == ()
     patch._toggle_hero(0)
     patch._toggle_hero(3)

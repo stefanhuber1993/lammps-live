@@ -215,30 +215,48 @@ def test_a_playground_with_no_lesson_shows_everything():
 # ---- the hero knobs -------------------------------------------------------
 
 def test_the_hero_knobs_are_where_the_move_is_worth_making():
-    """One or none per scene, and each on the scene where its move is the obvious
+    """One or none per scene, and each on a scene where its move is the obvious
     thing to do next.
 
-    "Remove orientation" needs a scene whose beads visibly ARE a membrane a second
-    earlier, and the two it is on are the two where that is the whole claim: the
-    seven-bead patch (which flattens because of its arrows) and the assembly box
-    (which just built a sheet out of nothing). "Heat" needs a membrane big enough
-    to flow, which is the sheet and the rod.
+    "van der Waals only" is on the three scenes where taking the orientation away
+    shows something: the two-bead pair, where two of the three rows in the callout
+    go to exactly zero while the reader is looking at the numbers; the seven-bead
+    patch, which is flat because of its arrows; and the assembly box, which has
+    just built a sheet out of nothing. "Heat" is on the two scenes about a membrane
+    being a LIQUID, which need one big enough to flow.
 
     The torque patch has none deliberately: it is meant to read as identical to the
     force patch next door, and a button on only one of them is a difference the eye
-    has to rule out.
+    has to rule out. The two remote scenes have none because the one thing to do
+    there is watch, and a button that changes the physics of a run somebody queued
+    for is a button pressed by accident.
     """
     knobs = {key: [k.label for k in pg.lesson.hero_knobs] for key, pg in _offered()}
     assert knobs == {
-        "mesomem_bead": [],
-        "mesomem_patch": ["Remove orientation"],
+        "mesomem_bead": ["van der Waals only"],
+        "mesomem_patch": ["van der Waals only"],
         "mesomem_patch_torque": [],
         "mesomem_sheet": ["Heat"],
-        "mesomem_assembly": ["Remove orientation"],
+        "mesomem_assembly": ["van der Waals only"],
         "mesomem_rod": ["Heat"],
         "mesomem_remote": [],
         "mesomem_polymer": [],
     }, knobs
+
+
+def test_the_knob_is_named_for_what_is_left_not_for_what_is_taken():
+    """It was "Remove orientation", which is what it does but not what you then
+    see. The force field's own vocabulary is better than either: the two-bead
+    callout lists three terms by name, so a button reading "van der Waals only"
+    points at a row the reader is already looking at."""
+    from lammps_live.playgrounds._knobs import VDW_ONLY
+    assert VDW_ONLY.label == "van der Waals only"
+    assert VDW_ONLY.engaged_label == "All three terms"
+    # And the name matches a term the force field actually declares.
+    from lammps_live.playground import forcefield as ff_registry
+    names = [l.split("(")[0].strip().lower()
+             for l in ff_registry.get("mesomem")().energy_terms_labels]
+    assert "van der waals" in names
 
 
 def test_a_hero_knob_drives_something_the_playground_actually_has():

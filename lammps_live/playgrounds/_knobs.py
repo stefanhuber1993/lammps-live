@@ -11,21 +11,29 @@ next to it without ever being offered as a scene or walked by `--verify`.
 """
 from ..playground import HeroKnob
 
-# What the membrane loses when it stops caring which way its beads face.
+# What the model loses when it stops caring which way its beads face: the two
+# orientational terms go to zero and the plain isotropic attraction is all that is
+# left.
+#
+# NAMED FOR WHAT IS LEFT, not for what was taken away. It was "Remove orientation",
+# which is what it does but not what you then see, and the force field's own
+# vocabulary is better than either: the callout on the two-bead scene lists three
+# terms by name, "van der Waals" among them, so a button that says "van der Waals
+# only" points at a row the reader is already looking at. The way back says "All
+# three terms", which is the same vocabulary from the other side.
 #
 # THE SAME PARAMETERS THE `isotropic_only` PRESET SETS, and it has to stay that
 # way: the preset is how you start a run without orientation and the knob is how
 # you take it away mid-run, and two definitions of "isotropic only" that disagree
 # would be worse than either. tests/test_lessons.py pins them together.
 #
-# wc goes with them. With both moduli at zero the two orientational terms are
-# already exactly zero whatever the cutoff is, so this changes no physics -- but it
-# collapses the wc ring in the two-bead scene and reads honestly in the panel,
-# which is where the audience is looking for the answer to "what did you take
-# away".
-NO_ORIENTATION = HeroKnob(
-    label="Remove orientation",
-    engaged_label="Restore orientation",
+# wc goes with them, and changes no physics: with both moduli at zero the two
+# orientational terms are already exactly zero whatever their cutoff is. It is set
+# so the panel reads honestly, which is where anyone checking "what did you
+# actually take away" will look.
+VDW_ONLY = HeroKnob(
+    label="van der Waals only",
+    engaged_label="All three terms",
     caption="k_tilt = 0, k_splay = 0. Only the plain attraction is left.",
     params={"k_tilt": 0.0, "k_splay": 0.0, "wc": 0.0},
 )

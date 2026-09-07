@@ -118,6 +118,7 @@ Units are the paper's LJ-reduced units (sigma = eps = m = 1).
 """
 from ..mdsystem import ForceFeedbackProfile
 from ..playground import Control, Lesson, Playground, bead_and_partner
+from ._knobs import VDW_ONLY
 from .mesomem_patch import STYLE as PATCH_STYLE
 
 # WHERE THE PARTNER IS, which is also the pair's starting separation and also half
@@ -353,8 +354,12 @@ PLAYGROUND = Playground(
     # colouring toggle either. What IS on screen is the pair annotation, which is
     # this scene's whole instrument.
     #
-    # AND NO HERO KNOB. The hands are the experiment on this scene: driving the two
-    # beads together and turning the arrow is the entire thing there is to do.
+    # ONE HERO KNOB, AND THIS IS THE CLEAREST PLACE IN THE DEMO FOR IT. Everywhere
+    # else "van der Waals only" is watched as a shape collapsing; here the callout
+    # is showing all three terms as numbers, so pressing it puts two of those rows
+    # at exactly zero while the reader is looking at them. The claim of the model
+    # and the arithmetic behind it, in one press, before any membrane exists to
+    # confuse it with.
     lesson=Lesson(
         title="One interaction",
         claim="Each bead is a patch of lipid membrane. The arrow is the way it faces.",
@@ -362,6 +367,11 @@ PLAYGROUND = Playground(
         hook="That was one pair. What do six neighbours do?",
         everyday_params=(),
         plots=False,
+        # Every one of those numbers is either meaningless here (the
+        # temperature of two particles) or already written between the beads
+        # by the pair annotation, in the units this scene is about.
+        panel_readouts=False,
+        hero_knobs=(VDW_ONLY,),
     ),
     presets={"paper": {}},
     temperature=(0.0, 0.5),

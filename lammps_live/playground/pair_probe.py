@@ -78,21 +78,14 @@ from .state import FrameState, PairData
 # enough to stay far above the float64 cancellation floor of an O(1) energy.
 FD_STEP = 1e-3
 
-# THE READOUT'S OWN RESOLUTION, and the one number two layers have to agree on.
-# The callout prints each term to two decimals with a snap through zero (see
-# Renderer._pair_number) and fades any row whose every column reads "+0.00"; the
-# onset radii below are measured against this SAME number. So the ring that says
-# "this term starts here" and the row that stops being faded turn over at the same
-# separation, and the picture cannot contradict the numbers written on it. The
-# renderer imports it from here rather than keeping its own copy, because a second
-# copy is how the ring and the fade would drift apart.
+# THE READOUT'S OWN RESOLUTION. The callout prints each term to two decimals with a
+# snap through zero (see Renderer._pair_number) and fades any row whose every
+# column reads "+0.00", so this is the threshold at which a term stops being worth
+# a reader's attention. It lives here rather than in the renderer because it is a
+# statement about this module's numbers; the renderer imports it, so the rounding
+# and the fade cannot come apart.
 READOUT_EPS = 5e-3
 
-# How finely the onset scan walks the approach, and how far past the outermost
-# landmark it starts. 400 samples over ~2.6 sigma resolves about 0.007 sigma, well
-# under the two decimals the ring's label is printed to.
-ONSET_SAMPLES = 400
-ONSET_REACH = 1.05
 
 
 @dataclass(frozen=True)
@@ -131,25 +124,6 @@ class PairAnnotation:
     # ((label, radius, term_index), ...) -- the force field's own landmark radii
     # (see ForceField.pair_landmarks), drawn as rings around the fixed partner.
     shells: tuple = ()
-    # ((label, radius, term_index), ...) -- WHERE EACH TERM ACTUALLY STARTS, one
-    # entry per term that starts anywhere at the pair's current orientation, drawn
-    # as dashed rings around the same partner.
-    #
-    # THIS IS THE RING THE EYE EXPECTS A RING TO BE. The cutoffs in `shells` are
-    # exact, and they are where the force field says the terms END, but nothing
-    # measurable happens at either of them: at the paper's coefficients the van der
-    # Waals energy at rc = 2.5 is zero to four decimals, and the orientational
-    # weight w(r) just inside wc = 2.0 is e^-40, so a reader watching a bead cross
-    # those rings sees every number stay at zero and concludes the drawing is
-    # wrong. These are measured instead, against the readout's own resolution
-    # (READOUT_EPS), so the bead crosses the tilt ring at the moment the tilt row
-    # stops being faded.
-    #
-    # Orientation-dependent, and honestly so: with both directors broadside the
-    # tilt term is zero at every separation, so it has no onset and no ring, and
-    # turning the driven director makes one appear. That is this scene's lesson,
-    # drawn rather than written.
-    onsets: tuple = ()
     # World unit normal of the plane the driven particle is confined to, or None.
     # The landmark shells are spheres, and what the driven particle can actually
     # cross is their intersection with ITS OWN plane -- a circle in that plane,
@@ -190,57 +164,6 @@ def _rotate(v, axis, angle):
     leave a spurious energy difference behind in the terms that read its length."""
     c, s = math.cos(angle), math.sin(angle)
     return v * c + np.cross(axis, v) * s + axis * float(axis @ v) * (1.0 - c)
-
-
-def _term_onsets(force_field, labels, shells, d, r, ni, nj, params):
-    """Where each term first becomes readable, coming in from far away.
-
-    Returns ((label, radius, term_index), ...) for the terms that become readable
-    anywhere, outermost first.
-
-    ONE BATCHED EVALUATION, like the derivatives above: the pair is rebuilt at
-    every radius on a grid, in its own frame, and the force field's energy
-    expression is called once on all of them. The radial force comes off the same
-    grid by differencing it, so nothing here is a second expression of the physics
-    -- it is the one expression, sampled.
-
-    "Readable" is `abs(U) >= READOUT_EPS or abs(F) >= READOUT_EPS`: the callout
-    prints two decimals, so this is the outermost radius at which any column of
-    that term's row would show a digit. A term that never gets there at this
-    orientation (tilt, with both directors broadside) is simply absent from the
-    result, and no ring is drawn for it.
-    """
-    reach = max([radius for _, radius, _ in shells] or [r]) * ONSET_REACH
-    if reach <= 0.0:
-        return ()
-    grid = np.linspace(reach, 1e-3, ONSET_SAMPLES)      # outside in
-    pos = np.zeros((2 * len(grid), 3))
-    dirs = None if ni is None else np.zeros((2 * len(grid), 3))
-    for k, radius in enumerate(grid):
-        pos[2 * k + 1] = -d * (radius / r)
-        if dirs is not None:
-            dirs[2 * k], dirs[2 * k + 1] = ni, nj
-    a_idx = np.arange(0, 2 * len(grid), 2)
-    pairs = PairData(a_idx, a_idx + 1, pos[a_idx + 1] * -1.0, grid.copy())
-    bag = force_field.energy_terms(
-        FrameState(positions=pos, directors=dirs), pairs, params) or {}
-
-    out = []
-    for index, label in enumerate(labels):
-        u = bag.get(label)
-        if u is None:
-            continue
-        u = np.asarray(u, dtype=float)
-        # -dU/dr on the same grid. `grid` runs outside in, so the gradient is
-        # taken against it directly and the sign follows the same convention as
-        # PairTerm.radial_force (negative pulls the pair together).
-        f = -np.gradient(u, grid)
-        readable = (np.abs(u) >= READOUT_EPS) | (np.abs(f) >= READOUT_EPS)
-        if not readable.any():
-            continue
-        out.append((label.split("(")[0].strip(), float(grid[np.argmax(readable)]),
-                    index))
-    return tuple(out)
 
 
 def probe_pair(force_field, state, params, i=0, j=1, plane_normal=None,
@@ -344,13 +267,9 @@ def probe_pair(force_field, state, params, i=0, j=1, plane_normal=None,
         cos = float(-d @ directors[0]) / max(r * np.linalg.norm(directors[0]), 1e-12)
         angle = float(np.degrees(np.arccos(np.clip(cos, -1.0, 1.0))))
 
-    shells = tuple(force_field.pair_landmarks(params))
     return PairAnnotation(
         i=i, j=j, r=r, angle_deg=angle, terms=terms,
-        shells=shells,
-        onsets=_term_onsets(force_field, labels, shells, d, r,
-                            None if directors is None else ni,
-                            None if directors is None else nj, params),
+        shells=tuple(force_field.pair_landmarks(params)),
         plane_normal=(None if plane_normal is None
                       else tuple(float(c) for c in plane_normal)),
         torque_scale=float(torque_scale),

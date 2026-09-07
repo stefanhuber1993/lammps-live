@@ -295,6 +295,16 @@ class Lesson:
     # first scene big enough for a statistic to mean anything, and that arrival is
     # itself worth noticing.
     plots: bool = True
+    # Whether the panel shows the two live readout lines under the sliders (the
+    # instantaneous T*/P*, and the controlled bead's KE/PE).
+    #
+    # OFF ON THE SCENES THAT ALREADY SAY IT BETTER. On the two-bead pair every one
+    # of those numbers is either meaningless (a temperature of two particles) or
+    # already written between the beads by the pair annotation, in the units the
+    # scene is about. On the seven-bead patches the additive-energy panel in the
+    # corner is the same energy, broken down. A readout that repeats what is
+    # already on screen costs the reader a comparison and teaches nothing.
+    panel_readouts: bool = True
     # Whether to draw the WHOLE-SYSTEM energy panel (the second potential panel,
     # beside the pulled bead's own).
     #

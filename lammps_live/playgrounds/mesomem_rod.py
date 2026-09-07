@@ -122,6 +122,7 @@ Units are the paper's LJ-reduced units (sigma = eps = m = 1). The collaborator's
 original LAMMPS deck is kept beside the pair style, at
 `forcefields/mesomem_ff/planar_wrapping_rod.lmp`.
 """
+from ..mdsystem import ForceFeedbackProfile
 from ..playground import Control, Lesson, Playground, rod_on_sheet
 from ._knobs import HEAT
 from ..render_style import DEFAULT_STYLE
@@ -190,6 +191,38 @@ ROD_HEIGHT = 3.5
 # it, the camera has to frame it, and the Control has to declare it, and those three
 # drifting apart is how the rod ends up driven somewhere the picture does not go.
 LEASH = (14.0, 10.0)
+
+# HOW HARD THE WRAP PUSHES BACK, in the hand. The shared REDUCED_UNIT_FEEDBACK
+# profile (playground/spec.py) is knee'd at 4.0, which is right for a bead held by
+# six neighbours. The rod is in contact with fifty at once and its adhesion energy
+# is two orders above any bead's, so on the shared profile the reaction was PEGGED:
+# tanh saturates well below the smallest force this scene produces, the arrow sat
+# at full length whatever the rod was doing, and the spring on the stick was at its
+# stop from first contact onward. A signal that is always at maximum carries no
+# information, and "violent and random" is exactly what a saturated channel feels
+# like.
+#
+# So this scene carries its own calibration, scaled to what a rod on a membrane
+# actually does. Measured driving the rod down at full stick, the reaction on it
+# runs O(10-40) with peaks near 60 as a neck closes -- the same order as
+# `reaction_torque_max` below, and for the same reason. A knee at 20 puts the
+# everyday part of that in the middle of the arrow's travel and leaves the peaks
+# something to reach for, and the raised stiffness threshold keeps the spring quiet
+# while the rod is still in free space above the sheet.
+#
+# It is the same argument as the two-bead scene's PAIR_FEEDBACK, in the other
+# direction: that one is a tenth of a membrane's forces, this one is ten times
+# them, and neither is served by the profile in the middle.
+ROD_FEEDBACK = ForceFeedbackProfile(
+    ff_exaggeration=1.0,
+    ff_knee=20.0,
+    ff_max_mag=120.0,
+    stiffness_threshold=2.0,
+    stiffness_knee=12.0,
+    damper_min_fraction=0.10,
+    damper_max_fraction=0.55,
+    vel_damp_max_fraction=0.5,
+)
 
 PLAYGROUND = Playground(
     name="MesoMem membrane + rod (3D)",
@@ -367,14 +400,28 @@ PLAYGROUND = Playground(
         # be dragged sideways far enough to see whether the invagination travels
         # with it or the membrane hands it on.
         leash=LEASH,
-        # A rod pushing on ~50 beads at once meets far more resistance than a
-        # single bead does, and it weighs a dozen beads. Both want more authority
-        # than the sheet's 7.
-        max_input_force=30.0,
-        # It is heavy, so it wants more damping than a bead to stop it coasting
-        # after the stick is released.
-        damping_default=8.0,
-        damping_range=(0.0, 20.0),
+        # WELL DOWN FROM 30, AND THE DAMPING WELL UP, because at 30 the rod did not
+        # read as a rod being pushed into a membrane -- it read as violence. A
+        # wrap is a slow negotiation between adhesion and bending, and at that
+        # authority the stick simply won: the rod shot to the leash, punched a hole
+        # through the sheet on the way, and the force fed back to the hand was
+        # dominated by whatever bead it had just hit rather than by the wrap. What
+        # is on the screen and in the hand has to be the physics, and the physics
+        # here is quiet.
+        #
+        # 8 is enough to press the rod in against adhesion and to hold it there,
+        # and not enough to drive it through 3600 beads. It is above the sheet's
+        # own 7, which is the right relationship -- the rod pushes on ~50 beads at
+        # once and weighs a dozen -- rather than four times it.
+        max_input_force=8.0,
+        # AND A GENUINELY HEAVY DAMPER, which is the other half of the same fix.
+        # The rod's mass means it coasts, and coasting is what turned a nudge into
+        # an impact: it kept moving after the stick came back to centre, so every
+        # correction arrived on top of momentum from the last one. At 18 it stops
+        # when the hand stops, and the range still opens to 30 for anyone who wants
+        # to see it slide.
+        damping_default=18.0,
+        damping_range=(0.0, 30.0),
         # Steering is an angular-velocity kick, so the rod's inertia does not
         # blunt it -- and at this scenario's 20 steps a frame the patch's 1.0
         # would spin the rod most of a radian per frame. 0.3 turns a free rod
@@ -396,6 +443,7 @@ PLAYGROUND = Playground(
     # the rod finds its own long-ranged pairs rather than widening the membrane's
     # list to reach them (see MesoMemRod.extended_pairs) -- but it says nothing
     # about the rod, which is the subject.
+    force_feedback=ROD_FEEDBACK,
     observables=["rod_height", "rod_contacts", "rod_tilt_deg"],
     # The membrane is one sheet and the rod is one body, so cluster colouring has
     # two colours to give and the species colours already say which is which.

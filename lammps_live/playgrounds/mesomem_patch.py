@@ -15,7 +15,7 @@ opposite normal, because the tilt term is bistable (both +n and -n are minima).
 Units are the paper's LJ-reduced units (sigma = eps = m = 1).
 """
 from ..playground import Control, Lesson, Playground, hex_patch
-from ._knobs import NO_ORIENTATION
+from ._knobs import VDW_ONLY
 from ..render_style import DEFAULT_STYLE
 
 # Seven beads filling the frame is not the dense box the default look was tuned
@@ -113,7 +113,10 @@ PLAYGROUND = Playground(
         # bonds, so the box's breakdown is its own breakdown times roughly two: two
         # panels side by side saying one thing.
         system_energy=False,
-        hero_knobs=(NO_ORIENTATION,),
+        # The additive-energy panel in the corner is the same energy this
+        # would report, broken down by term.
+        panel_readouts=False,
+        hero_knobs=(VDW_ONLY,),
     ),
     presets={
         # The paper's standard conditions (also the declared defaults).

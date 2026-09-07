@@ -123,6 +123,7 @@ PLAYGROUND = Playground(
         everyday_params=("k_tilt", "k_splay"),
         plots=False,
         system_energy=False,
+        panel_readouts=False,
     ),
     presets={
         # mesomem_patch's, verbatim: the same four settings mean the same four

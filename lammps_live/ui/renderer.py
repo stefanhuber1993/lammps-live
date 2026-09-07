@@ -1221,13 +1221,22 @@ class Renderer:
         bead because the partner is the one that holds still -- a ring drawn round
         a moving bead is a ring the eye cannot use as a scale.
         """
-        # The cutoffs, solid, and the measured onsets, dashed. Two kinds of
-        # statement, and they have to look different: a cutoff is exact and is
-        # where a term ENDS, an onset is measured and is where the term becomes
-        # readable, which is the one the numbers on screen turn over at.
-        rings = ([(s, False) for s in ann.shells]
-                 + [(o, True) for o in ann.onsets])
-        if not rings:
+        # THE STATIC CUTOFFS ONLY, and this is the second time this drawing has
+        # been cut back. It first showed the force field's three cutoffs, and the
+        # wc one was misleading: w(r) vanishes there with an essential singularity,
+        # so the orientational rows read 0.00 for another 0.2 sigma after a bead
+        # crossed it. That was replaced by rings drawn at each term's MEASURED
+        # onset, which did line up with the numbers exactly -- and were worse to
+        # look at, because they moved as the director turned and appeared and
+        # disappeared with it. A ring that moves is not a landmark; it is a fourth
+        # animated thing on a scene that already has the bond, the arrows and the
+        # table, and it made people ask what the rings were rather than watch the
+        # pair.
+        #
+        # So: sigma and rc, both fixed for the whole scene, drawn once and never
+        # moving. What the numbers do between them is the callout's job, and the
+        # faded rows are what says which term is asleep.
+        if not ann.shells:
             return
         if ann.plane_normal is not None:
             n = np.asarray(ann.plane_normal, dtype=float)
@@ -1252,7 +1261,7 @@ class Renderer:
         toward = toward - float(toward @ np.cross(u, v)) * np.cross(u, v)
         norm = float(np.linalg.norm(toward))
         toward = toward / norm if norm > 1e-9 else u
-        for (label, radius, term), dashed in rings:
+        for label, radius, term in ann.shells:
             if radius <= 0.0:
                 continue
             world = center + radius * ring
@@ -1260,25 +1269,9 @@ class Renderer:
             if not np.all(np.isfinite(depth)):
                 continue
             ink = self._term_color(term)
-            col = self._pair_fade(ink, PAIR_SHELL_ALPHA)
-            loop = [(float(x), float(y)) for x, y in pts2]
-            if dashed:
-                # Every other segment of the ring, which on a circle sampled this
-                # finely reads as a dashed ellipse and needs no arc-length walk.
-                for k in range(0, len(loop) - 1, 2):
-                    pygame.draw.line(self.screen, col, loop[k], loop[k + 1],
-                                     UI.w(1))
-            else:
-                pygame.draw.lines(self.screen, col, True, loop, UI.w(1))
-            # THE ONSET RINGS CARRY NO TEXT, and that is the point of drawing them
-            # in their term's own colour: the callout already has a coloured
-            # swatch on every row, so a dashed ring in that colour and the row it
-            # belongs to identify each other with no words. Labelling them put
-            # five ticks on one line through the middle of the scene, two of them
-            # underneath the driven bead, on a scene that is already carrying a
-            # card, a rail, a bond reading and a four-row table.
-            if dashed:
-                continue
+            pygame.draw.lines(self.screen, self._pair_fade(ink, PAIR_SHELL_ALPHA),
+                              True, [(float(x), float(y)) for x, y in pts2],
+                              UI.w(1))
             tick, tick_depth, _ = camera.project_point(center + radius * toward)
             if not math.isfinite(tick_depth):
                 continue
@@ -2680,7 +2673,16 @@ class Renderer:
         # diagnostics.
         top = self._draw_lesson_card(spec, lesson_position)
         self._draw_chapter_rail(spec, lesson_position, acts, current_key)
+        # ON A SCENE WITH NOTHING TO STEER, neither the drive numbers nor the
+        # colour legend is about anything: a playback playground has no controlled
+        # particle, so "input force: (0.0, 0.0)" is a pair of zeros that cannot
+        # move and "drag the center bead" names a bead that is not there. Both are
+        # dropped, which takes two of the four lines out of the corner of the
+        # assembly boxes and the vesicle.
+        steered = not spec.playback_controls
         font = self.small_font if spec.lesson is not None else self.font
+        if not steered:
+            drive_str = ""
         label = font.render(
             (f"sim time: {sim_time_str}   steps: {total_steps:,} ({steps_per_frame}/frame)   "
              f"{drive_str}fps: {fps:4.0f}")
@@ -2691,6 +2693,12 @@ class Renderer:
         )
         self.screen.blit(label, (UI(10), top))
         top += label.get_height() + UI(2)
+        if not steered:
+            self._draw_potential_stack(spec, top, potential_terms,
+                                       total_potential_terms)
+            self._draw_hud(hud_lines)
+            self._draw_debug_line(debug_line)
+            return
         legend = font.render(
             "green = your twist, red = membrane reaction   |   the stick tips the "
             "center bead's director (WASD/mouse); each ring is that torque's "
@@ -2706,12 +2714,32 @@ class Renderer:
         # whatever the stack above them came to, rather than at a fixed height:
         # with a lesson card up there the old constant put them through the middle
         # of the instruction line.
-        self._draw_potential_panel(potential_terms, x=12, y0=top)
-        if total_potential_terms is not None and (
-                spec.lesson is None or spec.lesson.system_energy):
-            self._draw_potential_panel(total_potential_terms, x=336, y0=top)
+        self._draw_potential_stack(spec, top, potential_terms,
+                                   total_potential_terms)
         self._draw_hud(hud_lines)
         self._draw_debug_line(debug_line)
+
+    def _draw_potential_stack(self, spec, top, potential_terms,
+                              total_potential_terms):
+        """The additive-energy panels, PACKED FROM THE LEFT below whatever the
+        corner already holds -- whichever of them there are to draw.
+
+        They used to sit at two fixed x offsets, which was right while every scene
+        that had the second one also had the first, and wrong the moment one did
+        not: a playback scene has no puller, so the pulled-bead panel is None and
+        the whole-system panel was left at x = 336 with nothing to its left,
+        reading as a card floating in the middle of the frame rather than as the
+        top-left instrument stack it belongs to.
+        """
+        panels = [potential_terms]
+        if spec.lesson is None or spec.lesson.system_energy:
+            panels.append(total_potential_terms)
+        px = 12
+        for decomposition in panels:
+            if not decomposition:
+                continue
+            self._draw_potential_panel(decomposition, x=px, y0=top)
+            px += 324
 
     def draw_sim(self, positions, is_puller, puller_pos, input_force, reaction_force,
                  fps, spec, heat_fraction=0.0, sim_time_ps=0.0, atom_trails=None,
@@ -3266,15 +3294,19 @@ class Renderer:
         self.screen.blit(name_surf, (x, y))
         y += name_surf.get_height() + UI(2)
 
-        # Wrapped, not one line: every description here is a sentence or two and
-        # the panel is 460 px, so a single surface loses its tail off the right
-        # edge -- the same thing that was already fixed for the picker row and the
-        # key hints below, and the same fix.
-        for row in _wrap_items(spec.description.split(" "), self.small_font, w, " "):
-            self.screen.blit(self.small_font.render(row, True, DIM_TEXT_COLOR),
-                             (x, y))
-            y += UI(15)
-        y += UI(1)
+        # THE DESCRIPTION IS ONLY FOR A SCENE WITH NO LESSON CARD. Where there is
+        # one, the card over the picture already says what this scene is, in words
+        # written for the room rather than for a `--list` listing, and printing
+        # both put two descriptions of the same thing a hundred pixels apart.
+        # (Wrapped, because the panel is 460 px and a single surface loses its tail
+        # off the right edge -- the same fix the picker row got.)
+        if spec.lesson is None:
+            for row in _wrap_items(spec.description.split(" "),
+                                   self.small_font, w, " "):
+                self.screen.blit(self.small_font.render(row, True, DIM_TEXT_COLOR),
+                                 (x, y))
+                y += UI(15)
+            y += UI(1)
 
         # THE HOOK: the question this scene leaves open, which the next one
         # answers. It is what makes eight scenes an argument rather than a menu
@@ -3293,17 +3325,16 @@ class Renderer:
                 y += UI(15)
             y += UI(3)
 
-        # The turntable keys are only listed for the systems that have one --
-        # a hint for a key that does nothing is worse than no hint.
-        hints = (KEY_HINTS + (ORBIT_KEY_HINTS if spec.camera_orbit else "")
-                 + ("   " + JOYSTICK_HINTS if control_focus is not None else ""))
-        # Wrapped rather than one line: the hints are wider than the panel, so a
-        # single surface loses its tail (the temperature and fullscreen keys) off
-        # the right edge -- at every UI scale, since both grow together.
-        for row in _wrap_items(hints.split("   "), self.small_font, w, "   "):
-            self.screen.blit(self.small_font.render(row, True, DIM_TEXT_COLOR), (x, y))
-            y += UI(15)
-        y += UI(5)
+        # THE KEY AND STICK HINTS USED TO BE HERE, three to five wrapped lines of
+        # them, and they are gone. They were the largest block of text in the panel
+        # and the least read: the bindings are discoverable by pushing things (the
+        # hat moves a visible cyan frame, the trigger starts and stops the run, and
+        # every button worth pressing is now drawn under the scene with its own
+        # number on it), and a demo that wants a printed key list wants it on the
+        # poster next to the screen, where a reference can be read without taking a
+        # fifth of the display away from the simulation. KEY_HINTS and the two
+        # others are kept as constants for exactly that: they are the copy for such
+        # a card.
 
         # A cluster GPU still allocated behind another playground. Amber, and above
         # everything else: an allocation nobody can see is the expensive thing to
@@ -3387,6 +3418,31 @@ class Renderer:
         # reduced quantities; every other system stays in metal units.
         reduced = spec.reduced_units
 
+        # THE TWO READOUT LINES, on the scenes where they say something the screen
+        # does not already say (see Lesson.panel_readouts). The divider goes with
+        # them: with neither line drawn it would be a rule under nothing.
+        if spec.lesson is None or spec.lesson.panel_readouts:
+            y = self._draw_panel_readouts(x, y, w, spec, thermo_now, puller_energy,
+                                          puller_speed_m_s, reduced)
+            pygame.draw.line(self.screen, PANEL_DIVIDER, (x, y), (x + w, y),
+                             UI.w(1))
+            y += UI(10)
+
+        # THE PLOTS ARE NOT DRAWN ON EVERY PLAYGROUND, and the reason is not
+        # clutter -- it is that on the early scenes they are not TRUE yet. A time
+        # series is a statement about an ensemble; on two beads or seven, the
+        # temperature trace is thermostat noise on a sample too small to have a
+        # temperature and g(r) is a single spike. They arrive with the sheet, which
+        # is the first scene big enough for a statistic to mean something, and that
+        # arrival is itself worth an audience noticing. See Lesson.plots.
+        if spec.lesson is not None and not spec.lesson.plots:
+            return
+        self._draw_panel_plots(x, y, w, spec, history, rdf, reduced)
+
+    def _draw_panel_readouts(self, x, y, w, spec, thermo_now, puller_energy,
+                             puller_speed_m_s, reduced):
+        """The instantaneous thermo line and the controlled bead's own energies.
+        Returns the y to carry on from."""
         temp, press, ke, pe, etotal = thermo_now
         if reduced:
             readout_str = f"instantaneous: T*={temp:6.3f}   P*={press:8.3f}"
@@ -3413,21 +3469,10 @@ class Renderer:
                 puller_str = f"puller atom:   KE={puller_ke:7.4f} eV   PE={puller_pe:8.4f} eV{speed_bit}"
             puller_readout = self.small_font.render(puller_str, True, DIM_TEXT_COLOR)
             self.screen.blit(puller_readout, (x, y))
-        y += UI(20)
+        return y + UI(20)
 
-        pygame.draw.line(self.screen, PANEL_DIVIDER, (x, y), (x + w, y), UI.w(1))
-        y += UI(10)
-
-        # THE PLOTS ARE NOT DRAWN ON EVERY PLAYGROUND, and the reason is not
-        # clutter -- it is that on the early scenes they are not TRUE yet. A time
-        # series is a statement about an ensemble; on two beads or seven, the
-        # temperature trace is thermostat noise on a sample too small to have a
-        # temperature and g(r) is a single spike. They arrive with the sheet, which
-        # is the first scene big enough for a statistic to mean something, and that
-        # arrival is itself worth an audience noticing. See Lesson.plots.
-        if spec.lesson is not None and not spec.lesson.plots:
-            return
-
+    def _draw_panel_plots(self, x, y, w, spec, history, rdf, reduced):
+        """The four stacked time series at the foot of the panel."""
         # Four stacked plots share the space left below the readouts. Deriving the
         # per-plot height from what's actually left (rather than a fixed 140) keeps
         # all four on-screen whatever the slider count -- the MesoMem systems add
