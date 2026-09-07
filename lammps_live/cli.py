@@ -186,7 +186,10 @@ def _run_verify(target):
     force-field regression check -- see playground/verify.py."""
     from .playground import registry
     from .playground.verify import verify_all
-    refs = [target] if target else registry.bundled_keys()
+    # Every playground in the package, including the ones the demo does not offer
+    # (see registry._SHELVED): this is the force-field regression check, and a
+    # force field does not stop needing checking because a scene was shelved.
+    refs = [target] if target else sorted(registry.package_keys())
     ok, results = verify_all(refs)
     for label, res in results:
         if isinstance(res, Exception):

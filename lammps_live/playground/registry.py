@@ -73,12 +73,36 @@ _ORDER = ("mesomem_bead", "mesomem_patch", "mesomem_patch_torque",
           "mesomem_sheet", "mesomem_assembly", "mesomem_rod",
           "mesomem_remote", "mesomem_polymer")
 
+# In the package, but NOT in the demo: not in the picker, not on the number keys,
+# and not stepped through by Tab. The atomistic classics the app was built on
+# (real-units copper, argon and salt) are not what the MesoMem talk is about, and
+# cycling past three of them to reach the next membrane scene is three keypresses
+# of the wrong subject with an audience watching.
+#
+# Shelved rather than deleted, because they are the only non-MesoMem playgrounds
+# left and they are what keeps three real code paths exercised: real (metal) units
+# rather than reduced ones, the group/group interaction force (lj/cut implements
+# single(), the MesoMem pair style does not), and a force field with no pairwise
+# energy decomposition at all (EAM). tests/test_runtime.py builds all three by
+# name, and `--playground lj_argon` still loads one -- `resolve` below accepts any
+# module in the package, so a name that is off the demo is still a valid answer to
+# "which playground", it is just not offered.
+_SHELVED = ("lj_argon", "cu_deposition", "nacl")
+
+
+def package_keys():
+    """Every bundled playground module, demo or shelved. What `--verify` walks:
+    checking a force field against LAMMPS is a statement about the force field, so
+    it should not stop covering one because the demo stopped showing it."""
+    package = importlib.import_module(_PACKAGE)
+    return {m.name for m in pkgutil.iter_modules(package.__path__)
+            if not m.name.startswith("_")}
+
 
 def bundled_keys():
-    """Names of the bundled playground modules, in presentation order."""
-    package = importlib.import_module(_PACKAGE)
-    found = {m.name for m in pkgutil.iter_modules(package.__path__)
-             if not m.name.startswith("_")}
+    """The playground modules the app OFFERS, in presentation order -- which is
+    not everything in the package (see _SHELVED)."""
+    found = package_keys() - set(_SHELVED)
     first = [k for k in _ORDER if k in found]
     return first + sorted(found - set(first))
 
@@ -134,7 +158,12 @@ def resolve(ref):
     bundled names would."""
     if os.path.sep in ref or ref.endswith(".py"):
         return ref
-    known = bundled_keys()
-    if ref in known:
+    # Anything in the package, not just what the demo offers: a shelved
+    # playground (see _SHELVED) is still there and still runs, so asking for it by
+    # name is a legitimate request rather than a typo. The listing on the error
+    # path stays the offered set -- that is the useful answer to a name that is
+    # actually wrong.
+    if ref in package_keys():
         return ref
-    raise SystemExit(f"unknown playground {ref!r}.\nAvailable: " + ", ".join(known))
+    raise SystemExit(f"unknown playground {ref!r}.\nAvailable: "
+                     + ", ".join(bundled_keys()))
