@@ -29,7 +29,7 @@ from .theme import (
     HAZE_STRENGTH, HBOND_COLOR, HBOND_DASH,
     HBOND_WIDTH, HEADER_TEXT_COLOR, HUD_BG, HUD_TEXT_COLOR, INPUT_VEC_COLOR,
     ION_LABEL_COLOR, MELT_MARK_COLOR, MEMBRANE_BEAD_COLOR,
-    PAIR_CALLOUT_BG_DARK, PAIR_CALLOUT_BG_LIGHT, PAIR_CALLOUT_OFFSET_R,
+    PAIR_CALLOUT_BG_DARK, PAIR_CALLOUT_BG_LIGHT, PAIR_CALLOUT_GAP_PX,
     PAIR_CALLOUT_WIDTH, PAIR_GLYPH_HEAD_PX, PAIR_GLYPH_MAX_PX, PAIR_INK_DARKEN,
     PAIR_LINE_WIDTH, PAIR_SHELL_ALPHA, PAIR_SHELL_LABEL_ALPHA, PAIR_SHELL_SAMPLES,
     PANEL_BG, PANEL_DIVIDER, PANEL_PAD, PANEL_WIDTH, PLOT_COLORS,
@@ -1268,11 +1268,11 @@ class Renderer:
         rows = len(ann.terms) + 1                       # the terms, plus the net
         h = pad + head_h + UI(16) + rows * row_h + UI(19)
         # Below the bond (`perp` points down the screen -- see
-        # _draw_pair_annotation), clear of the beads and of the force arrows drawn
-        # on the driven one, then clamped into the sim viewport so a pair driven
-        # into a corner does not push its own reading off the edge.
+        # _draw_pair_annotation), just clear of the beads, then clamped into the sim
+        # viewport so a pair driven into a corner does not push its own reading off
+        # the edge.
         mid = (0.5 * (a[0] + b[0]), 0.5 * (a[1] + b[1]))
-        off = bead_r * PAIR_CALLOUT_OFFSET_R + UI.f(10)
+        off = bead_r + UI.f(PAIR_CALLOUT_GAP_PX)
         cx, cy = mid[0] + perp[0] * off, mid[1] + perp[1] * off
         x = max(UI(8), min(cx - w / 2.0, self.sim_width - w - UI(8)))
         y = max(UI(8), min(cy, self.window_size[1] - h - UI(8)))

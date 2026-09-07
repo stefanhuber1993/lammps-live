@@ -212,10 +212,20 @@ PAIR_CALLOUT_WIDTH = 360        # px at UI scale 1
 PAIR_CALLOUT_BG_DARK = (10, 12, 18, 210)
 PAIR_CALLOUT_BG_LIGHT = (250, 251, 253, 218)
 PAIR_INK_DARKEN = 0.42
-# How far off the bond the callout sits, in bead radii, measured perpendicular to
-# it: far enough that the box never covers either bead or the force arrows on
-# them, close enough that the leader line reads as pointing at the pair.
-PAIR_CALLOUT_OFFSET_R = 3.0
+# How far off the bond the callout's near edge sits, measured perpendicular to the
+# bond: one bead RADIUS to clear the silhouette of whichever bead is bigger, plus
+# this fixed gap. It used to be three radii and no gap, which is the same rule with
+# the wrong constant in it -- on a scene framed as tightly as the two-bead one a
+# bead is ~50 px, so the panel sat 150 px off the pair with an empty band between
+# them, at the bottom of the frame reading as a separate instrument rather than as
+# this pair's numbers. Clearing the bead is the actual requirement; the gap is then
+# the only free parameter, and it does not want to scale with the zoom.
+#
+# It does NOT clear the force arrows on the driven bead, which are as long as the
+# force is: they point along the drive, this scene's drive is along the bond, and
+# widening the gap enough to cover a straight-down shove would undo the change for
+# every other frame. The plate is translucent and the arrows are drawn over it.
+PAIR_CALLOUT_GAP_PX = 16.0
 # The bond line between the two beads, and the arrowheads on the per-term force
 # glyphs beside each number.
 PAIR_LINE_WIDTH = 2

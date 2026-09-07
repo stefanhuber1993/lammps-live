@@ -2,12 +2,13 @@
 one interaction at a time.
 
 This is the tutorial's opening slide, and it now has something to point at. A
-directored bead you drive, with the control net it moves on drawn underneath it and
-no box outline to distract from either -- and, at the net's right-hand edge, a
-SECOND bead of exactly the same kind, held absolutely still. That partner is the
-difference between a controls demo and a physics one: a lone bead has no
-neighbours, so every pair term in the force field is silent, and with one
-neighbour every term speaks in turn as you close the gap.
+directored bead you drive, with the control net it moves on drawn underneath it --
+centred on the pair, ruled in half-sigma cells, and no box outline to compete with
+it -- and, two sigma to its right and four cells along, a SECOND bead of exactly the
+same kind, held absolutely still. That partner is the difference between a controls
+demo and a physics one: a lone bead has no neighbours, so every pair term in the
+force field is silent, and with one neighbour every term speaks in turn as you
+close the gap.
 
 WHAT TO DO WITH IT. Push right, and read the numbers written between the two
 beads -- the whole force field, term by term, as a function of the one separation
@@ -101,13 +102,17 @@ WHAT IS DELIBERATELY SMALL -- AND WHAT WAS TOO SMALL.
     the same change: one pair's forces are a tenth of a membrane's, so the scene
     carries its own force-feedback calibration rather than the shared one. See
     PAIR_FEEDBACK below.
-  THE BOX AND THE NET  sized by the FORCE FIELD's reach, not by taste. The net's
-    right-hand half is 2 sigma, the partner sits at that edge, and the driven bead
-    starts at the net's centre -- so it starts exactly wc away, where (see the
-    table) every term reads zero to two decimals and there is a real "watch it turn
-    on" to watch. Driving LEFT instead takes the pair past rc, where the connector
-    goes dashed and the zeros are exact rather than merely small. The framing
-    rectangle below is derived from the same number rather than typed twice.
+  THE SEPARATION  sized by the FORCE FIELD's reach, not by taste. The partner sits
+    2 sigma to the right of where the driven bead starts -- so it starts exactly wc
+    away, where (see the table) every term reads zero to two decimals and there is
+    a real "watch it turn on" to watch. Driving LEFT instead takes the pair past
+    rc, where the connector goes dashed and the zeros are exact rather than merely
+    small. The framing rectangle below is derived from the same number rather than
+    typed twice, and the two beads land on the frame's thirds because of it.
+
+  THE NET is the exception: it is sized by the SCREEN rather than by either (see
+    NET), because it is the boundary of where the hand may go AND the only ruler
+    in the picture, and both of those want it as large as the frame will hold.
 
 Units are the paper's LJ-reduced units (sigma = eps = m = 1).
 """
@@ -115,17 +120,46 @@ from ..mdsystem import ForceFeedbackProfile
 from ..playground import Control, Playground, bead_and_partner
 from .mesomem_patch import STYLE as PATCH_STYLE
 
-# The net's right-hand edge, which is also where the partner is and also half the
-# framed width. One number, because three declarations have to agree: put them out
-# of step and either the bead starts already inside the interaction (nothing to
+# WHERE THE PARTNER IS, which is also the pair's starting separation and also half
+# the framed width. One number, because three declarations have to agree: put them
+# out of step and either the bead starts already inside the interaction (nothing to
 # watch turn on) or the partner sits outside the frame.
 #
 # 2 sigma, which is wc: the pair starts with every term zero to two decimals (the
-# van der Waals energy there is -0.001 eps) and with one sigma of empty net to
+# van der Waals energy there is -0.001 eps) and with one sigma of empty space to
 # cross before anything happens. Further out would be more honestly "outside rc"
 # and would buy nothing -- the potential is already silent here, and every extra
-# sigma is both empty net to cross and smaller beads in frame.
-NET_HALF_WIDTH = 2.0
+# sigma is both emptier picture and smaller beads in frame.
+#
+# It says nothing about how far the bead may be driven: that is the leash, and the
+# leash is sized by the SCREEN rather than by the force field (see `leash` below).
+PAIR_SEPARATION = 2.0
+
+# THE NET, which is also the leash: half-extents in sigma along the control plane's
+# two axes, centred on the pair (see `leash_center` below). It is drawn exactly at
+# the movement limits -- that is what a net IS here -- so this one number pair is
+# both "how big is the grid" and "how far may the bead go", and sizing it is a
+# framing decision as much as a physical one.
+#
+# SIZED TO SIT JUST INSIDE THE PICTURE. Measured by projecting the net's own four
+# corners through the real camera (Camera3D.fit_to_points, the framing below, and a
+# view that looks down about 34 degrees, so the plane's visible width narrows toward
+# the top of the frame). At these values the corners land at:
+#
+#     1300x900 windowed    x 0.04 .. 0.96    y 0.19 .. 0.76
+#     16:10 fullscreen     x 0.04 .. 0.96    y 0.12 .. 0.82
+#     1920x1080            x 0.04 .. 0.96    y 0.05 .. 0.89
+#
+# -- inside the frame on all four sides at every aspect the app is likely to be
+# shown at, with the horizontal margin the same at all of them because it is WIDTH
+# that binds the fit (a taller viewport shows more of the plane vertically, which is
+# why the vertical margin is the one that moves). Bigger and the net's own edge
+# leaves the frame on a projector, which reads as a grid that simply stops.
+#
+# 2.5 x 2.25 is also exactly 10 x 9 cells at the 0.5-sigma `grid_step`, so the cells
+# are square and the pair's 2-sigma separation is four of them: the grid can be
+# counted, which is half of what it is for.
+NET = (2.5, 2.25)
 
 # The patch's look, with five things changed for a scene that is two spheres.
 #
@@ -141,8 +175,9 @@ NET_HALF_WIDTH = 2.0
 #     own box and net alphas -- so a varied() before it (as mesomem_patch does) is
 #     overwritten by it, and only a varied() after it sticks.
 #   A NET THAT READS. It is what the tutorial points at when it says where the bead
-#     can go, and its right edge is where the partner is, so it is taken well up
-#     from the light theme's 120.
+#     can go, and it is also the only ruler in a scene of two spheres -- the pair's
+#     separation is four of its cells -- so it is taken well up from the light
+#     theme's 120. Where it is and how big it is: NET, above.
 #   DEPTH OF FIELD  off entirely. Both beads are at the same depth, on the control
 #     plane, so there is no depth for a blur to describe -- only a soft edge on the
 #     two objects the scene is about.
@@ -209,12 +244,14 @@ PLAYGROUND = Playground(
         n_rings=0,                  # one site: the driven bead, on its own
         a=1.0,
         # Room for both beads and the whole net inside it, with margin. Invisible
-        # (box_alpha=0) and only a backstop -- nothing here is meant to reach it.
+        # (box_alpha=0) and only a backstop -- nothing here is meant to reach it,
+        # and the net (which is the leash) keeps the bead 1.5 sigma clear of the
+        # nearest wall.
         box=10.0,
-        # THE PARTNER: middle-right of the net. On the control plane at the same
-        # height the driven bead starts at, so the approach is one joystick axis
-        # and the net's own right edge marks how far there is to go.
-        partner_x=NET_HALF_WIDTH,
+        # THE PARTNER: on the control plane at the same height the driven bead
+        # starts at, so the approach is one joystick axis and the whole story is a
+        # push to the right.
+        partner_x=PAIR_SEPARATION,
         partner_z=0.0,
         # Along +z, as a membrane bead's would be. The driven bead therefore
         # arrives BROADSIDE to it, which is the configuration the tilt term likes
@@ -231,26 +268,42 @@ PLAYGROUND = Playground(
         # take one honest force evaluation, and no longer: the beads start out of
         # range of each other, so there is nothing to relax.
         settle_steps=50,
-        # Framing: a rectangle in the control plane, spanning the net and a little
-        # more, so the partner at its right edge is comfortably inside the frame
-        # (see Camera3D.fit_to_points -- the tighter of the two axes binds, and it
-        # is height at the default window). Derived from NET_HALF_WIDTH rather than
-        # typed, because these two must not drift apart.
+        # Framing: a rectangle in the control plane spanning the pair and a little
+        # more, centred ON THE PAIR rather than on the patch. The two beads sit at
+        # x = 0 and x = PAIR_SEPARATION, so their midpoint is half of that, and
+        # centring there is what lands them on the frame's vertical thirds -- one
+        # at a third of the viewport width, one at two thirds, measured through the
+        # real projection (Camera3D.fit_to_points, at the default window and at
+        # 1920x1080 fullscreen: 0.335 and 0.665). Framed on the patch instead they
+        # came out at half-width and 0.83, with the whole left third of the frame
+        # empty and the partner crowding the panel edge.
+        #
+        # The half-extents are unchanged by that -- they set the zoom, and the zoom
+        # was already right; it is width that binds here, not height, so the thirds
+        # hold as the window's aspect changes. Both derived from PAIR_SEPARATION
+        # rather than typed, because these must not drift apart from where the
+        # partner is.
+        view_center_x=PAIR_SEPARATION / 2.0,
         view_center_z=0.0,
-        view_half_width=NET_HALF_WIDTH * 1.25,
-        view_half_height=NET_HALF_WIDTH,
+        view_half_width=PAIR_SEPARATION * 1.25,
+        view_half_height=PAIR_SEPARATION,
     ),
     mode="game",
     control=Control(
         atom="first",               # the driven one; the partner is last
         plane="xz",
-        # The x half-extent IS where the partner is, so the right-hand edge of the
-        # net is the contact and the bead can be driven exactly onto it -- it never
-        # gets there, because the 4-2 core stops it a little short, and finding
-        # that out is the point. The z half is smaller: the interesting travel is
-        # along the line joining the pair, and up/down is for coming at it from a
-        # different angle rather than for going anywhere.
-        leash=(1.5*NET_HALF_WIDTH, 1.0 * NET_HALF_WIDTH),
+        # The net, and the limits it is drawn at: see NET above for the sizing.
+        # It used to be centred on the world origin like every other scenario's,
+        # which put its middle at the DRIVEN bead and its right-hand edge barely
+        # past the partner -- a grid visibly off to one side of the pair it belongs
+        # to, with two spare sigma of empty cells on the left where there is nothing
+        # to look at. Centred on the pair instead, the two beads sit symmetrically
+        # inside it and the travel is symmetric too: 1.5 sigma past the partner
+        # (which the 4-2 core stops well short of) and 1.5 sigma back from the
+        # start, which is past rc -- far enough for the connector to go dashed and
+        # every term to read an exact zero.
+        leash=NET,
+        leash_center=(PAIR_SEPARATION / 2.0, 0.0),
         # Half again what this scene shipped with (1.0 and 0.3), and that is the
         # whole change: the hand needs enough authority to push INTO the core and
         # hold there rather than being turned away at the first hint of it, and
@@ -266,7 +319,9 @@ PLAYGROUND = Playground(
         # never got past a third and the twist read as unopposed. 2.5 is the
         # measured peak: a firm twist near contact now fills it.
         reaction_torque_max=2.5,
-        grid_step=0.5,              # ~12 cells across the 6-sigma net
+        # Half a sigma: a scale the pair can be read against (their separation is
+        # four cells), and it divides the net exactly -- 10 by 9 of them.
+        grid_step=0.5,
     ),
     # The two axes of the story, and the only two observables in this app that are
     # statements about a PAIR rather than about a membrane (see observables.py --

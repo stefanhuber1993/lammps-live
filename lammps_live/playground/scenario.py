@@ -384,6 +384,14 @@ class HexPatch(Scenario):
         # What the camera looks at and frames -- a rectangle in the control
         # plane, centred a little above the patch (see camera / fit_points).
         # Smaller half-extents = closer in.
+        #
+        # `view_center_x` slides that rectangle -- and the eye with it, so the
+        # scene is still viewed head-on -- along the control plane's horizontal
+        # axis. 0 is the patch's own centre, which is right for anything built
+        # symmetrically about the origin; a scene whose subject sits off-centre
+        # (see BeadAndPartner, whose two beads span 0 .. partner_x) uses it to
+        # put that subject in the middle of the frame instead of the patch.
+        structural("view_center_x", 0.0, "camera framing: centre, in x"),
         structural("view_center_z", 0.7, "camera framing: centre height, in z"),
         structural("view_half_width", 2.0, "camera framing: half-width, in x"),
         structural("view_half_height", 1.6, "camera framing: half-height, in z"),
@@ -431,8 +439,16 @@ class HexPatch(Scenario):
         is lifted by `view_center_z` and the vertical framing budget goes where
         the motion is."""
         span = max(box.lengths)
-        return dict(eye=(0.0, -0.9 * span, 0.6 * span),
-                    target=(0.0, 0.0, self.new_params()["view_center_z"]),
+        params = self.new_params()
+        # Eye and target share `view_center_x`, so sliding the frame sideways
+        # pans the camera rather than swinging it: the view axis stays parallel
+        # to -y, and two beads either side of that centre stay at equal depth
+        # and equal apparent size. Aiming an eye fixed at x = 0 at an off-centre
+        # target would foreshorten them differently, which on a two-bead scene
+        # reads as one bead being bigger than the other.
+        cx = params["view_center_x"]
+        return dict(eye=(cx, -0.9 * span, 0.6 * span),
+                    target=(cx, 0.0, params["view_center_z"]),
                     up=(0.0, 0.0, 1.0), fov_deg=34.0)
 
     def fit_points(self, params, box):
@@ -452,9 +468,9 @@ class HexPatch(Scenario):
         scene whose subject is seven beads, and the beads win.
         """
         w, h = params["view_half_width"], params["view_half_height"]
-        z = params["view_center_z"]
-        return np.array([(-w, 0.0, z - h), (w, 0.0, z - h),
-                         (-w, 0.0, z + h), (w, 0.0, z + h)])
+        x, z = params["view_center_x"], params["view_center_z"]
+        return np.array([(x - w, 0.0, z - h), (x + w, 0.0, z - h),
+                         (x - w, 0.0, z + h), (x + w, 0.0, z + h)])
 
 
 class BeadAndPartner(HexPatch):

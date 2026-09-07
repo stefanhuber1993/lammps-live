@@ -109,6 +109,20 @@ class Control:
     # it at 1.0 here too.
     max_input_torque: float = 1.0
     leash: tuple = (3.0, 3.0)
+    # WHERE THAT RECTANGLE IS CENTRED, on the same two axes. The default is the
+    # world origin, which is right for every scenario built symmetrically about it
+    # -- the patch, the sheet, the rod.
+    #
+    # It exists for a scene whose SUBJECT is off-centre. The two-bead pair spans
+    # x = 0 to x = partner_x, so a leash centred on the origin reaches two sigma
+    # further left than right of what there is to look at, and the net drawn at its
+    # limits is visibly off to one side of the pair it belongs to. Centring both on
+    # the pair's midpoint fixes the picture and the travel together -- which is why
+    # this is one field and not a rendering offset: the net IS the leash made
+    # visible (see u_range / v_range below, which both read), and a net drawn
+    # somewhere the particle cannot go, or stopping short of somewhere it can, is
+    # the one thing it must never be.
+    leash_center: tuple = (0.0, 0.0)
     # How much of each leash half-extent the REPORTED force fades out over as the
     # particle approaches that boundary, as a fraction. The leash is the app's
     # constraint, not the model's: nothing in the force field says there is a wall
@@ -162,11 +176,13 @@ class Control:
 
     @property
     def u_range(self):
-        return (-self.leash[0], self.leash[0])
+        c, h = self.leash_center[0], self.leash[0]
+        return (c - h, c + h)
 
     @property
     def v_range(self):
-        return (-self.leash[1], self.leash[1])
+        c, h = self.leash_center[1], self.leash[1]
+        return (c - h, c + h)
 
 
 @dataclass(frozen=True)
