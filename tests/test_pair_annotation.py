@@ -18,7 +18,8 @@ import pytest
 
 from lammps_live.forcefields.mesomem import ISO, SPLAY, TILT, MesoMem
 from lammps_live.playground.observables import get as get_observable
-from lammps_live.playground.pair_probe import FD_STEP, PairAnnotation, PairTerm, probe_pair
+from lammps_live.playground.pair_probe import (
+    FD_STEP, READOUT_EPS, PairAnnotation, PairTerm, probe_pair)
 from lammps_live.playground.state import FrameState
 
 # The paper's standard conditions, as the playground runs them.
@@ -91,12 +92,59 @@ def test_out_of_range_is_flat_zero_and_says_so():
 
 
 def test_the_shells_follow_the_live_cutoffs():
-    """The rings are drawn from the parameters, so dragging rc or wc moves them --
-    which is the only reason a ring is worth drawing rather than printing."""
-    assert probe(1.4).shells == (("sigma", 1.0, 0), ("wc", 2.0, 1), ("rc", 2.5, 0))
-    widened = probe_pair(MesoMem(), pair_state(1.4),
-                         dict(PARAMS, wc=1.5, rc=2.9))
-    assert widened.shells == (("sigma", 1.0, 0), ("wc", 1.5, 1), ("rc", 2.9, 0))
+    """The rings are drawn from the parameters, so dragging rc moves them -- which
+    is the only reason a ring is worth drawing rather than printing.
+
+    wc is deliberately NOT among them any more: w(r) vanishes there with an
+    essential singularity, so just inside it the orientational energies are e^-40
+    and a ring at that radius promised the audience something that then did not
+    happen for another 0.2 sigma. `onsets` below is what replaced it.
+    """
+    assert probe(1.4).shells == (("sigma", 1.0, 0), ("rc", 2.5, 0))
+    widened = probe_pair(MesoMem(), pair_state(1.4), dict(PARAMS, rc=2.9))
+    assert widened.shells == (("sigma", 1.0, 0), ("rc", 2.9, 0))
+
+
+def test_the_onset_rings_are_where_the_numbers_actually_turn_over():
+    """The point of them: a ring the bead crosses at the moment that term's row
+    stops reading zero.
+
+    Checked against the callout's own threshold rather than a number of its own,
+    which is what keeps the picture and the digits from disagreeing. Measured at
+    the paper's coefficients: the van der Waals term becomes readable at 2.07,
+    a long way inside rc = 2.5, and the orientational terms at about 1.8 with the
+    driven director turned 45 degrees, a long way inside the old wc ring at 2.0.
+    """
+    a = math.radians(45.0)
+    ann = probe(1.9, n_driven=(math.sin(a), 0.0, math.cos(a)))
+    onsets = {label: radius for label, radius, _ in ann.onsets}
+    assert set(onsets) == {"van der Waals", "tilt", "splay"}
+    assert 2.0 < onsets["van der Waals"] < 2.2
+    assert 1.7 < onsets["tilt"] < 1.9
+    assert onsets["splay"] < onsets["tilt"] < onsets["van der Waals"]
+
+    # AND EACH ONE IS A REAL CROSSING. Just inside its own onset the term reads
+    # something; just outside, it reads zero the way the callout prints it.
+    for label, radius, index in ann.onsets:
+        for r, expected in ((radius * 0.97, True), (radius * 1.06, False)):
+            t = probe(r, n_driven=(math.sin(a), 0.0, math.cos(a))).terms[index]
+            readable = (abs(t.energy) >= READOUT_EPS
+                        or abs(t.radial_force) >= READOUT_EPS)
+            assert readable is expected, (label, r)
+
+
+def test_a_term_that_is_off_at_this_orientation_gets_no_onset_ring():
+    """Broadside, the tilt term is built on (n . rhat) and both directors are
+    perpendicular to the bond, so it is exactly zero at EVERY separation. There is
+    no radius where it starts, so no ring claims there is one -- and turning the
+    director makes one appear, which is the scene's whole lesson drawn instead of
+    written."""
+    broadside = {label for label, _, _ in probe(1.4).onsets}
+    assert broadside == {"van der Waals"}
+    a = math.radians(30.0)
+    turned = {label for label, _, _ in
+              probe(1.4, n_driven=(math.sin(a), 0.0, math.cos(a))).onsets}
+    assert turned == {"van der Waals", "tilt", "splay"}
 
 
 def test_a_missing_partner_is_no_annotation():

@@ -34,12 +34,19 @@ from .input import (
     CP_OFFSET_MAX, DAMPER_COEFFICIENT_MAX, JoystickInput, KeyboardInput,
     MouseInput, SPRING_STIFFNESS_MAX,
 )
-from .ui import BEAD_COLOR_MODES, AtomTrails, Renderer, RollingHistory, Slider
+from .ui import (BEAD_COLOR_MODES, AtomTrails, Renderer, RollingHistory,
+                 Slider, bead_color_modes)
 from .ui.camera import Camera3D, OrbitController
 from .ui.alert import Alert
 from .ui.remote_panel import RemotePanel
 
 STEPS_PER_FRAME_CAP = 200  # sanity cap if a system's timestep is set absurdly small
+
+
+# The key `_toggle_hero` files the temperature dial's old value under, in the same
+# dict as the force-field parameters it saved. A name no force field can declare
+# (every Param name is a plain identifier), so it cannot collide with one.
+_TEMP_KEY = "@temperature"
 
 
 class App:
@@ -137,15 +144,17 @@ class App:
         # clicking its header (see _handle_events); pushed to the renderer each
         # frame so draw_panel knows whether to draw the advanced sliders.
         self.show_advanced = False
-        # THE THESIS TOGGLE (see playground/spec.py's Thesis): while engaged, the
-        # scene's orientational moduli are held at zero and the membrane is not a
-        # membrane. `_thesis_saved` is where the dials were before, so releasing it
-        # puts the physics back exactly rather than to the declared defaults --
-        # which matters, because the whole value of the button is that it is a
-        # round trip from wherever the demo happens to be. Cleared on every
-        # rebuild, since a new playground's sliders are new objects.
-        self.thesis_engaged = False
-        self._thesis_saved = {}
+        # THE HERO KNOBS THAT ARE CURRENTLY APPLIED (see playground/spec.py's
+        # HeroKnob), as indices into this playground's declared tuple, with what
+        # each one found when it was engaged so it can put exactly that back.
+        #
+        # Per knob rather than one flag, because two can be on at once and each has
+        # to restore its own settings: heating a sheet and then removing its
+        # orientation, then putting the orientation back, must leave the sheet
+        # warm. Both cleared on every rebuild, since a new playground has new
+        # sliders and a new set of knobs.
+        self.hero_engaged = set()
+        self._hero_saved = {}
         self.history = None
         self.atom_trails = None
         self._trail_frame_counter = 0
@@ -180,10 +189,24 @@ class App:
         # flips (renderer.bead_color_mode), reachable from the hat cycle. Its
         # options are pictures rather than points on a scale, so it steps once per
         # push instead of walking -- see control_focus.Choice.
+        # Its OPTIONS are per-playground (see Playground.bead_colors), so the list
+        # is replaced on every build rather than fixed here -- this is only the
+        # starting one, before any system exists.
         self.color_choice = Choice(
             "bead colour", BEAD_COLOR_MODES,
-            on_change=lambda i: setattr(self.renderer, "bead_color_mode",
-                                        BEAD_COLOR_MODES[i]))
+            on_change=self._on_color_chosen)
+        # Whether the VIEWER has picked a colouring this session, as opposed to
+        # sitting on whatever each scene opened in.
+        #
+        # It decides who wins on a playground switch, and both halves matter. A
+        # scene's first declared colouring is its default because it is the one
+        # that tells that scene's story -- the assembly boxes open in CLUSTER,
+        # since what is happening there is aggregates finding each other. But a
+        # colouring somebody deliberately switched to is their preference, and
+        # having it silently undone by every Tab would be worse than never
+        # defaulting at all. So: the scene's default until someone chooses, their
+        # choice afterwards, wherever the next scene offers it.
+        self._color_user_chosen = False
         # Whether the puller was released BY moving the focus off the viewport, so
         # coming back re-grabs it -- and a bead the user let go of with the trigger
         # is left alone (see _cycle_focus).
@@ -392,22 +415,31 @@ class App:
         # which is not a choice), and it follows whatever the toggle is set to
         # rather than resetting it -- the colouring is the viewer's preference, not
         # the playground's.
+        # THE COLOURING FOLLOWS THE SCENE, and only within what the scene offers
+        # (see Playground.bead_colors). Each scene's FIRST declared colouring is
+        # its default and wins on arrival, which is what "the assembly boxes open
+        # in cluster" is; once the viewer has picked one themselves it is their
+        # preference and follows them, except onto a scene that does not offer it.
+        # A scene offering nothing (the two-bead pair) is not a focus stop at all.
         choices = ()
-        if spec.render_3d:
-            self.color_choice.index = BEAD_COLOR_MODES.index(
-                self.renderer.bead_color_mode)
+        modes = bead_color_modes(spec) if spec.render_3d else ()
+        if modes:
+            if (not self._color_user_chosen
+                    or self.renderer.bead_color_mode not in modes):
+                self.renderer.bead_color_mode = modes[0]
+            self.color_choice.options = modes
+            self.color_choice.index = modes.index(self.renderer.bead_color_mode)
             choices = (self.color_choice,)
         self.focus.set_stops([s for s in self._sliders() if not s.advanced], choices)
         self._focus_released_puller = False
         # A different box, and a lever nobody has touched since: start whole again.
         self.view_slice.reset()
-        # The thesis goes back on with the new scene. It is a statement about the
-        # playground you are looking at ("THIS membrane needs its directors"), so
-        # carrying it across a switch would leave the next scene silently crippled
-        # with its button in whatever state the last one left -- and the saved
-        # values it would restore belong to sliders that no longer exist.
-        self.thesis_engaged = False
-        self._thesis_saved = {}
+        # Every hero knob comes back off with the new scene. They are statements
+        # about the playground you are looking at, they are indices into ITS
+        # declared tuple, and the values they would restore belong to sliders that
+        # no longer exist.
+        self.hero_engaged = set()
+        self._hero_saved = {}
         # Where this scene stands in the taught sequence, for the rail. Same
         # argument as `self.acts`: it is a property of the order, it cannot change
         # between switches, and the rail reads it 60 times a second.
@@ -480,15 +512,15 @@ class App:
         self.system.reset(restore_params=restore_params)
         if restore_params:
             self._reset_controls_to_defaults()
-            # AND THE THESIS COMES BACK ON, for the same reason the sliders go back
+            # AND EVERY HERO KNOB LETS GO, for the same reason the sliders go back
             # to their declared values: R is the one button that means "the
             # beginning", and a reset that left the orientation switched off would
             # rebuild a fresh membrane straight back into a droplet with nothing on
-            # screen explaining why. The saved values go with it -- the sliders they
-            # belonged to have just been overwritten, so restoring them later would
-            # put back a state nobody was in.
-            self.thesis_engaged = False
-            self._thesis_saved = {}
+            # screen explaining why. The saved values go with them, since the
+            # sliders they belonged to have just been overwritten and putting them
+            # back later would restore a state nobody was in.
+            self.hero_engaged = set()
+            self._hero_saved = {}
         self.history.reset()
         self.atom_trails.reset()
         self._trail_frame_counter = 0
@@ -747,12 +779,14 @@ class App:
                     self.remote_panel.toggle()
                 elif event.key == pygame.K_b:
                     self._toggle_puller_attached()
-                elif event.key == pygame.K_o:
-                    # O for orientation -- the thesis toggle, so the demo's one
-                    # big claim can be made without finding a button with a mouse
-                    # while talking. Silently nothing on a playground with no
-                    # thesis, like every other key that does not apply.
-                    self._toggle_thesis()
+                elif pygame.K_F1 <= event.key <= pygame.K_F4:
+                    # F1-F4 fire the hero knobs, numbered like the device buttons
+                    # drawn on them. Function keys because 1-9 are the playground
+                    # shortcuts and 5-8 on the keyboard would mean two different
+                    # things on the two input devices. Silently nothing where the
+                    # scene declares no such knob, like every other key that does
+                    # not apply.
+                    self._toggle_hero(event.key - pygame.K_F1)
                 elif pygame.K_1 <= event.key <= pygame.K_9:
                     idx = event.key - pygame.K_1
                     if idx < len(self.systems):
@@ -783,8 +817,9 @@ class App:
                     if name is not None:
                         self._playback_action(name)
                         continue
-                    if self.renderer.thesis_hit(event.pos):
-                        self._toggle_thesis()
+                    hero = self.renderer.hero_hit(event.pos)
+                    if hero is not None:
+                        self._toggle_hero(hero)
                         continue
                     if self.renderer.bead_color_hit(event.pos):
                         # Through the Choice, so clicking and pushing the stick are
@@ -832,42 +867,67 @@ class App:
             self.temp_slider.nudge(-rate * dt)
         return True
 
-    def _toggle_thesis(self):
-        """Take the force field's central claim away, or give it back.
+    def _on_color_chosen(self, index):
+        """The bead colouring changed, from the mouse toggle or the stick -- both
+        go through the Choice, so both land here (see `_color_user_chosen` for what
+        this flag then decides)."""
+        self.renderer.bead_color_mode = self.color_choice.options[index]
+        self._color_user_chosen = True
 
-        THROUGH THE REAL SLIDERS, which is the whole design of it: the app already
-        pushes every slider into the system once a frame (see _tick), so driving
-        them to zero here is all that "remove the orientation" needs to be, and it
+    def _hero_knobs(self):
+        """This playground's hero knobs, in declared order. From the spec, which is
+        what the renderer is handed, so the button's label and its action cannot
+        end up sourced from two different places."""
+        lesson = self.system.spec.lesson
+        return lesson.hero_knobs if lesson is not None else ()
+
+    def _toggle_hero(self, index):
+        """Apply hero knob `index`, or take it back off (see spec.py's HeroKnob).
+
+        THROUGH THE REAL CONTROLS, which is the whole design of it: the app already
+        pushes every slider and the temperature dial into the system once a frame
+        (see _tick), so moving them here is all a hero knob needs to be, and it
         means the panel is never lying about what the physics is. An override held
         somewhere else in the app would show k_tilt = 12 on a screen where the
-        membrane has visibly stopped being one, which is the exact thing this
-        button exists to make undeniable.
+        membrane has visibly stopped being one, or T = 0.001 over a sheet that is
+        visibly flowing.
 
-        A dial the thesis does not name is left alone, and a dial it names that
-        this playground does not have is skipped rather than an error -- a Thesis
-        is a statement about a force field, and a playground is free to be running
-        a different one.
+        It restores what it FOUND, not the playground's declared defaults, so it is
+        a round trip from wherever the demo happens to be. A setting the knob does
+        not name is left alone, including another knob's -- so heating a sheet and
+        then taking its orientation away and putting it back leaves it warm.
         """
-        # From the spec, which is what the rest of this file reads and what the
-        # renderer is handed -- so the button's label and its action cannot end up
-        # sourced from two different places.
-        lesson = self.system.spec.lesson
-        thesis = lesson.thesis if lesson is not None else None
-        if thesis is None:
+        knobs = self._hero_knobs()
+        if not 0 <= index < len(knobs):
             return
+        knob = knobs[index]
         by_key = dict(zip(self.extra_slider_keys, self.extra_sliders))
-        if self.thesis_engaged:
-            for key, value in self._thesis_saved.items():
-                if key in by_key:
+        if index in self.hero_engaged:
+            saved = self._hero_saved.pop(index, {})
+            for key, value in saved.items():
+                if key == _TEMP_KEY:
+                    self.temp_slider.value = value
+                elif key in by_key:
                     by_key[key].value = value
-            self._thesis_saved = {}
-            self.thesis_engaged = False
-        else:
-            self._thesis_saved = {key: by_key[key].value
-                                  for key in thesis.params if key in by_key}
-            for key in self._thesis_saved:
-                by_key[key].value = 0.0
-            self.thesis_engaged = bool(self._thesis_saved)
+            self.hero_engaged.discard(index)
+            return
+        saved = {key: by_key[key].value for key in knob.params if key in by_key}
+        if knob.temperature is not None:
+            saved[_TEMP_KEY] = self.temp_slider.value
+        if not saved:
+            # A knob that names nothing this playground has is a declaration
+            # mistake, not a state to enter: entering it would light a button that
+            # then had nothing to give back.
+            return
+        for key, value in knob.params.items():
+            if key in by_key:
+                by_key[key].value = value
+        if knob.temperature is not None:
+            self.temp_slider.value = max(
+                self.temp_slider.vmin,
+                min(self.temp_slider.vmax, knob.temperature))
+        self._hero_saved[index] = saved
+        self.hero_engaged.add(index)
 
     def _toggle_puller_attached(self):
         """Grab / release the puller (B, or moving the focus off the viewport --
@@ -1001,6 +1061,12 @@ class App:
             self.sim_playing = not self.sim_playing
         if config.JOYSTICK_RESET_BUTTON in fired:
             self._reset_simulation()
+        # Buttons 5 upward: this scene's hero knobs, in the order they are declared
+        # and drawn (see config.JOYSTICK_HERO_FIRST_BUTTON). The number on the
+        # on-screen button IS this arithmetic, so the two cannot disagree.
+        for offset in range(config.JOYSTICK_HERO_BUTTONS):
+            if config.JOYSTICK_HERO_FIRST_BUTTON + offset in fired:
+                self._toggle_hero(offset)
         # Last, and it returns: switching playground rebuilds the system out from
         # under everything above (and under the caller's `spec`).
         self._cycle_system_buttons(fired)
@@ -1395,7 +1461,7 @@ class App:
             # is app state because it is the sliders that carry it.
             lesson_position=self.lesson_position,
             acts=self.acts,
-            thesis_engaged=self.thesis_engaged,
+            hero_engaged=frozenset(self.hero_engaged),
             # Drawn last, inside the renderer, so it lands on top of the 3D scene
             # rather than under the composited frame.
             overlay=self._draw_overlays,

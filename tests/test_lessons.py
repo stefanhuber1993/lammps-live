@@ -18,19 +18,15 @@ os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 
 from lammps_live.playground import registry
-from lammps_live.playground.spec import Lesson, Thesis
+from lammps_live.playground.spec import HeroKnob, Lesson
 
-# The claim is read off a projector, from the back of a room, in the two seconds
-# before the presenter starts talking over it. That is the whole specification, and
-# this is it in a number: past about twelve words it is a sentence being read
-# rather than a line being taken in.
-CLAIM_MAX_WORDS = 13
-
-
-def _words(text):
-    """Words, not tokens: this codebase writes a dash as a bare "--", and counting
-    punctuation as a word would fail a line for having a dash in it."""
-    return [w for w in text.split() if any(c.isalnum() for c in w)]
+# The narrowest window the card is expected to hold up in. The claim is drawn from
+# the left margin of the sim view in `claim_font`, and the sim view is the window
+# minus the fixed-width panel -- so "does the claim fit" is a question with a real
+# answer in pixels, which is what this checks instead of counting words. A word
+# count was the first version of this rule and it was measuring the wrong thing:
+# it failed a line for containing a dash.
+NARROWEST_WINDOW = 1100
 
 
 def _offered():
@@ -78,11 +74,51 @@ def test_lesson_position_places_each_scene_and_declines_to_place_the_others():
 
 # ---- the three lines ------------------------------------------------------
 
-def test_the_claim_stays_short_enough_to_read_across_a_room():
-    long = {key: len(_words(pg.lesson.claim))
-            for key, pg in _offered()
-            if len(_words(pg.lesson.claim)) > CLAIM_MAX_WORDS}
-    assert not long, f"claims too long to take in at a glance: {long}"
+def test_every_card_line_fits_the_narrowest_window():
+    """The card is drawn straight onto the scene with no wrapping, so a line too
+    long for the sim view runs under the position rail or off the edge. Measured
+    against the real fonts at the real layout."""
+    import pygame
+    from lammps_live.ui.scale import UI
+    from lammps_live.ui.theme import LESSON_CLAIM_SIZE, LESSON_TITLE_SIZE, PANEL_WIDTH
+
+    # FONTS ONLY, no display. `pygame.display.set_mode` is process-global: calling
+    # it here resized the display surface that test_pair_annotation's module-scoped
+    # Renderer draws onto, and every annotation it drew afterwards was clipped to
+    # 10x10 px. Font metrics need `font.init()` and nothing else.
+    pygame.font.init()
+    sim_w = NARROWEST_WINDOW - UI(PANEL_WIDTH)
+    fonts = {"title": UI.font(LESSON_TITLE_SIZE, bold=True),
+             "claim": UI.font(LESSON_CLAIM_SIZE),
+             "instruction": UI.font(18)}
+    over = {}
+    for key, pg in _offered():
+        index = registry.lesson_position(key)[0]
+        for slot, text in (("title", f"{index}. {pg.lesson.title}"),
+                           ("claim", pg.lesson.claim),
+                           ("instruction", pg.lesson.instruction)):
+            width = UI(10) + fonts[slot].size(text)[0]
+            if width > sim_w - UI(16):
+                over[f"{key}.{slot}"] = width
+    assert not over, f"card lines wider than a {NARROWEST_WINDOW}px window: {over}"
+
+
+def test_no_card_line_is_written_in_dashes():
+    """Audience-facing text is plain sentences. The code around it writes a dash as
+    a bare "--" (this codebase's convention, since it stays ASCII), and that
+    convention leaking onto a projector is how a line stops reading like something
+    a person said out loud."""
+    bad = {}
+    for key, pg in _offered():
+        lesson = pg.lesson
+        for slot in ("claim", "instruction", "hook"):
+            text = getattr(lesson, slot)
+            if "--" in text or "\u2014" in text or "\u2013" in text:
+                bad[f"{key}.{slot}"] = text
+        for knob in lesson.hero_knobs:
+            if "--" in knob.caption:
+                bad[f"{key}.{knob.label}"] = knob.caption
+    assert not bad, f"dashes in audience text: {bad}"
 
 
 def test_the_instruction_tells_a_hand_what_to_do():
@@ -107,15 +143,15 @@ def test_every_scene_but_the_last_asks_the_next_one_s_question():
 
 
 def test_the_first_and_last_scenes_are_the_same_sentence():
-    """The bookend, and it is deliberate: the opening claim is that all we kept of
-    a hundred lipids was one arrow, and the closing one is that the arrow was
-    enough. Break either half and the callback the talk is built around is gone.
+    """The bookend, and it is deliberate: the first scene says what a bead is, and
+    the last says that nothing was added to it to get a vesicle. Break either half
+    and the callback the talk is built around is gone.
     """
     keys = registry.bundled_keys()
     first = dict(_offered())[keys[0]].lesson
     last = dict(_offered())[keys[-1]].lesson
-    assert "points" in first.claim and "which way" in first.claim
-    assert "arrow" in last.claim and "enough" in last.claim
+    assert "patch of lipid membrane" in first.claim
+    assert "same three terms" in last.claim.lower()
 
 
 # ---- progressive disclosure ------------------------------------------------
@@ -176,48 +212,96 @@ def test_a_playground_with_no_lesson_shows_everything():
     assert everyday, "nothing was hidden, so something should be everyday"
 
 
-# ---- the thesis -----------------------------------------------------------
+# ---- the hero knobs -------------------------------------------------------
 
-def test_the_thesis_appears_wherever_there_is_a_membrane_to_take_apart():
-    """Not before. The button's whole force is that what collapses was visibly a
-    membrane a second ago, which is not true of two beads or of seven."""
-    lessons = {key: pg.lesson for key, pg in _offered()}
-    has = {key for key, lesson in lessons.items() if lesson.thesis is not None}
-    assert has == {"mesomem_sheet", "mesomem_assembly", "mesomem_rod",
-                   "mesomem_remote", "mesomem_polymer"}
+def test_the_hero_knobs_are_where_the_move_is_worth_making():
+    """One or none per scene, and each on the scene where its move is the obvious
+    thing to do next.
+
+    "Remove orientation" needs a scene whose beads visibly ARE a membrane a second
+    earlier, and the two it is on are the two where that is the whole claim: the
+    seven-bead patch (which flattens because of its arrows) and the assembly box
+    (which just built a sheet out of nothing). "Heat" needs a membrane big enough
+    to flow, which is the sheet and the rod.
+
+    The torque patch has none deliberately: it is meant to read as identical to the
+    force patch next door, and a button on only one of them is a difference the eye
+    has to rule out.
+    """
+    knobs = {key: [k.label for k in pg.lesson.hero_knobs] for key, pg in _offered()}
+    assert knobs == {
+        "mesomem_bead": [],
+        "mesomem_patch": ["Remove orientation"],
+        "mesomem_patch_torque": [],
+        "mesomem_sheet": ["Heat"],
+        "mesomem_assembly": ["Remove orientation"],
+        "mesomem_rod": ["Heat"],
+        "mesomem_remote": [],
+        "mesomem_polymer": [],
+    }, knobs
 
 
-def test_the_thesis_zeroes_parameters_the_playground_actually_has():
-    """A Thesis names live parameters, and a name that no playground declares would
-    be a button that silently did nothing."""
-    for key, pg in _offered():
-        if pg.lesson.thesis is None:
-            continue
-        spec = dict(registry.list_playgrounds())[key]
+def test_a_hero_knob_drives_something_the_playground_actually_has():
+    """A knob naming a parameter no playground declares would be a button that
+    lights up and changes nothing."""
+    for key, spec in registry.list_playgrounds():
         keys = {s.key for s in spec.extra_sliders}
-        assert set(pg.lesson.thesis.params) <= keys, key
+        for knob in spec.lesson.hero_knobs:
+            assert set(knob.params) <= keys, (key, knob.label)
+            assert knob.params or knob.temperature is not None, (key, knob.label)
 
 
-def test_the_thesis_is_the_isotropic_only_preset_by_another_route():
+def test_the_temperature_a_heat_knob_asks_for_is_reachable_and_below_melting():
+    """"Heat" has to leave a membrane that still IS one. Above `melt_temp` the
+    sheet stops being a membrane and its barostat inflates the cell without
+    bound (see HexSheet), so a knob that landed there would be labelled wrong.
+    """
+    for key, spec in registry.list_playgrounds():
+        for knob in spec.lesson.hero_knobs:
+            if knob.temperature is None:
+                continue
+            assert spec.temperature.vmin <= knob.temperature <= spec.temperature.vmax
+            assert knob.temperature < spec.melt_temp, key
+            assert knob.temperature > spec.temperature.default * 10, (
+                f"{key}: heating to {knob.temperature} is not a change from "
+                f"{spec.temperature.default}")
+
+
+def test_removing_orientation_is_the_isotropic_only_preset_by_another_route():
     """One definition of what "isotropic only" means, not two: the preset is a
-    place to start and the button is a place to visit and come back from, and they
+    place to start and the knob is a place to visit and come back from, and they
     have to agree about what is being removed."""
     for key, pg in _offered():
-        thesis = pg.lesson.thesis
-        if thesis is None or "isotropic_only" not in pg.presets:
-            continue
-        preset = pg.presets["isotropic_only"]
-        assert set(thesis.params) == set(preset), key
-        assert all(v == 0.0 for v in preset.values()), key
+        for knob in pg.lesson.hero_knobs:
+            if not knob.params or "isotropic_only" not in pg.presets:
+                continue
+            preset = pg.presets["isotropic_only"]
+            assert knob.params == preset, key
 
 
-def test_the_thesis_says_what_is_missing_while_it_is_engaged():
-    """A room that walked in halfway through sees a collapse and no explanation
-    unless the screen carries one."""
+def test_every_hero_knob_says_in_numbers_what_it_did():
+    """A room that walked in halfway through sees a change and no explanation
+    unless the screen carries one, and "warm" is a feeling until it is a number."""
+    import re
     for key, pg in _offered():
-        if pg.lesson.thesis is not None:
-            assert pg.lesson.thesis.caption, key
-            assert pg.lesson.thesis.engaged_label != pg.lesson.thesis.label, key
+        for knob in pg.lesson.hero_knobs:
+            assert knob.caption, key
+            assert knob.engaged_label != knob.label, key
+            assert re.search(r"\d", knob.caption), (
+                f"{key}: {knob.label}'s caption states no number")
+
+
+def test_the_hero_row_fits_the_narrowest_window():
+    """Laid out centred at a fixed width per knob, so a scene with too many of them
+    would run off both edges rather than wrap."""
+    from lammps_live.ui.scale import UI
+    from lammps_live.ui.theme import HERO_GAP, HERO_W, PANEL_WIDTH
+    sim_w = NARROWEST_WINDOW - UI(PANEL_WIDTH)
+    for key, spec in registry.list_playgrounds():
+        n = len(spec.lesson.hero_knobs)
+        if not n:
+            continue
+        assert n * UI(HERO_W) + (n - 1) * UI(HERO_GAP) <= sim_w, key
 
 
 # ---- what the force field declares about its own terms --------------------
@@ -278,5 +362,52 @@ def test_the_spec_carries_the_lesson_to_the_renderer():
     the lesson has to have made the crossing."""
     for key, spec in registry.list_playgrounds():
         assert isinstance(spec.lesson, Lesson), key
-        if spec.lesson.thesis is not None:
-            assert isinstance(spec.lesson.thesis, Thesis), key
+        for knob in spec.lesson.hero_knobs:
+            assert isinstance(knob, HeroKnob), key
+
+
+# ---- what each scene colours its beads by ---------------------------------
+
+def test_the_colourings_are_only_offered_where_they_mean_something():
+    """Cluster colouring paints connected aggregates. On the two assembly boxes
+    that IS the story and it is what they open in; on a single connected membrane
+    it paints everything one colour, and on two beads or seven it is a joke."""
+    from lammps_live.ui import bead_color_modes
+    offered = {key: bead_color_modes(spec)
+               for key, spec in registry.list_playgrounds()}
+    assert offered["mesomem_bead"] == (), "one pair: nothing to choose between"
+    for key in ("mesomem_patch", "mesomem_patch_torque", "mesomem_sheet",
+                "mesomem_rod", "mesomem_polymer"):
+        assert "cluster" not in offered[key], key
+    for key in ("mesomem_assembly", "mesomem_remote"):
+        assert offered[key][0] == "cluster", f"{key} should open in cluster"
+
+
+def test_no_scene_offers_a_colouring_nothing_can_draw():
+    """The offered list is filtered against the real one, so a typo in a
+    playground cannot put a mode on the cycle that the renderer has no branch
+    for."""
+    from lammps_live.ui import BEAD_COLOR_MODES, bead_color_modes
+    for key, spec in registry.list_playgrounds():
+        assert set(bead_color_modes(spec)) <= set(BEAD_COLOR_MODES), key
+
+
+def test_the_whole_system_energy_panel_is_off_where_it_says_the_same_thing():
+    """On seven beads the pulled one takes part in half the bonds, so the box's
+    breakdown is its own times roughly two: two panels, one fact."""
+    lessons = {key: spec.lesson for key, spec in registry.list_playgrounds()}
+    assert lessons["mesomem_patch"].system_energy is False
+    assert lessons["mesomem_patch_torque"].system_energy is False
+    assert lessons["mesomem_sheet"].system_energy is True
+
+
+def test_the_over_informative_observables_are_gone():
+    """A nematic order parameter, a membrane thickness and an area per particle are
+    numbers nothing in the demo explains, so no scene puts one on the HUD. They
+    still EXIST as observables -- tests and sweeps use them, and
+    test_runtime.py's tension check reads nematic order directly."""
+    from lammps_live.playground import observables
+    banned = {"nematic_S", "thickness", "area_per_particle"}
+    for key, pg in _offered():
+        assert not banned & set(pg.observables), key
+    assert all(observables.get(name) is not None for name in banned)

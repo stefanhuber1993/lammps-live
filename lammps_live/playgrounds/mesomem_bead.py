@@ -329,32 +329,37 @@ PLAYGROUND = Playground(
     # exactly right here). Separation against sigma, wc and rc; and the angle the
     # tilt term is built on.
     observables=["pair_separation", "pair_director_angle"],
+    # NO COLOURING TOGGLE. There is one director and one pair on screen: energy
+    # colouring has a single bond to compare against nothing, and cluster
+    # colouring paints a two-bead cluster. Three lines of panel for a question
+    # with one answer.
+    bead_colors=(),
     # THE READOUT THIS SCENE EXISTS FOR: the three additive terms written between
     # the two beads, with the separation and the director angle they belong to, the
     # energy in each and the force each one is contributing along the bond -- plus
     # sigma / wc / rc drawn as rings around the fixed partner, so the shells are
     # visible before the bead reaches them. See playground/pair_probe.py.
     pair_annotation=True,
-    # Declaring it also switches OFF the two additive-energy panels in the upper
-    # left (see PlaygroundSystem.get_pair_annotation): on a scene of one pair they
-    # and the connector are three copies of the same three numbers, and the copy
-    # that is drawn between the beads it describes is the one worth keeping.
-    # THE OPENING SLIDE OF THE WHOLE TALK, so the claim is the coarse-graining
-    # rather than any one term: everything that follows is a consequence of having
-    # thrown the lipids away and kept one arrow, and it is worth saying once, at
-    # the start, next to the two objects it is true of. The last scene picks the
-    # same sentence back up (see mesomem_polymer).
+    # THE OPENING SLIDE OF THE WHOLE TALK, so the claim says what a bead IS. Every
+    # scene after this one is a consequence of having thrown the lipids away and
+    # kept one direction per patch, and it is worth saying plainly, once, next to
+    # the two objects it is true of. The last scene says it again (see
+    # mesomem_polymer).
     #
     # NOTHING IS EXPOSED HERE. No dials, because the subject is one interaction and
     # a dial whose effect cannot be seen teaches that the model is arbitrary; no
     # plots, because a time series of two beads is thermostat noise on a sample too
-    # small to have a temperature, and g(r) of a single pair is one spike. What IS
-    # on screen is the pair annotation, which is this scene's whole instrument.
+    # small to have a temperature, and g(r) of a single pair is one spike. No
+    # colouring toggle either. What IS on screen is the pair annotation, which is
+    # this scene's whole instrument.
+    #
+    # AND NO HERO KNOB. The hands are the experiment on this scene: driving the two
+    # beads together and turning the arrow is the entire thing there is to do.
     lesson=Lesson(
         title="One interaction",
-        claim="One bead is a hundred lipids. We kept only which way it points.",
-        instruction="Push right until the numbers wake up. Then twist.",
-        hook="Every term here is between two beads. What do six neighbours do?",
+        claim="Each bead is a patch of lipid membrane. The arrow is the way it faces.",
+        instruction="Drive the beads together and read the three terms between them.",
+        hook="That was one pair. What do six neighbours do?",
         everyday_params=(),
         plots=False,
     ),

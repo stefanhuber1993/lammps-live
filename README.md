@@ -37,21 +37,29 @@ model whose parameters otherwise stay pretty abstract.
 ## Scenes
 
 The eight of them are a sequence rather than a menu, in three acts, and the app
-says where you are: **Rules** (what one interaction is -- 1 to 3), **Material**
-(what a lot of them make, and that nobody had to arrange it -- 4 and 5), and
-**Life** (what such a material is for, at the size the science is done at -- 6 to
-8). Each scene puts three lines over the picture -- its title, one sentence of
-physics, and what to do with your hands -- and leaves the panel a note asking the
-question the next one answers. The dials and the plots arrive as they become worth
-looking at: the two-bead scene has none, the two patch scenes have exactly two,
-and the plots start at the sheet, which is the first scene big enough for a
-statistic to mean anything. Everything hidden is one click away under
-"Advanced".
+says where you are: **Rules** (what one interaction is, 1 to 3), **Material**
+(what a lot of them make, and that nobody had to arrange it, 4 and 5), and
+**Life** (what such a material is for, at the size the science is done at, 6 to
+8). Each scene puts three lines over the picture (its title, one sentence of
+physics, and what to do with your hands) and leaves the panel a note asking the
+question the next one answers.
 
-**`O` removes the orientation**, on every scene with a membrane in it: the two
-orientational moduli go to zero, the same beads keep the same attraction, and
-what was a membrane collapses. It is the whole claim of the model, proven by
-taking it away, and pressing `O` again puts it back exactly where it was.
+The dials, the plots and the colourings arrive as they become worth looking at.
+The two-bead scene has no dials, no plots and no colour toggle; the two
+seven-bead scenes have exactly two dials each and the same two, because switching
+between them with `Tab` is the experiment; the plots start at the sheet, which is
+the first scene big enough for a statistic to mean anything; and cluster colouring
+is only offered on the two assembly boxes, which open in it. Everything hidden is
+one click away under "Advanced".
+
+Under each scene are its **hero knobs**: the one or two things worth doing to it,
+on the input device's buttons `5` upward (`F1`-`F4` on the keyboard) with the
+number printed on the button. `Remove orientation`, on the seven-bead patch and
+the assembly box, sets `k_tilt` and `k_splay` to zero: the same beads with the
+same attraction, and no membrane. `Heat`, on the sheet and the rod, takes the
+temperature to 0.2 against a melting point of 0.3, which is where the membrane
+stops sitting still and starts behaving like the liquid it is. Both toggle, and
+both say in numbers what they changed.
 
 | | |
 |---|---|

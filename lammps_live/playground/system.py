@@ -101,6 +101,7 @@ def make_spec(playground, mode_name=None, preset=None):
                                 params.slider_specs(playground.param_ranges)
                                 + smoothing_slider_specs(playground, scenario)),
         lesson=playground.lesson,
+        bead_colors=playground.bead_colors,
     )
 
 
@@ -1291,14 +1292,15 @@ class PlaygroundSystem(MDSystem3D):
                 self._unstable,
                 "Dial the sliders back, then press R (or restart) to rebuild.",
             ]
-        lines = list(self.analysis.hud_lines() or [])
-        # Whether the input device is holding the particle, always shown for a
-        # game-mode system: it is a state the user can be in without having meant
-        # to be, and the line is also where they find out the key exists.
-        if self.mode.needs_control_particle and self.controlled_id is not None:
-            lines.append("puller: STEERED (B / trigger releases)" if self.mode.attached
-                         else "puller: RELEASED -- free in the simulation (B / trigger grabs)")
-        return lines or None
+        # THE PULLER'S GRABBED/RELEASED LINE USED TO BE APPENDED HERE, and it is
+        # gone for two reasons. It was WRONG: it said the trigger releases the
+        # bead, which stopped being true when the trigger became the run switch on
+        # every playground (see App._poll_device_buttons) -- B and moving the focus
+        # off the viewport are what release it now, and the key list in the panel
+        # says so. And it was in the way: the released state already has a
+        # loud reading of its own in the scene, the puller ring changing colour,
+        # which is where the eye is.
+        return list(self.analysis.hud_lines() or []) or None
 
     def get_all_positions(self):
         """2D shadow required by the interface; the 3D renderer uses

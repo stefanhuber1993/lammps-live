@@ -103,20 +103,26 @@ PLAYGROUND = Playground(
         max_input_torque=1.0,
         confine=False,          # no plane, no leash, no net -- see the docstring
     ),
-    observables=["mean_tilt_deg", "thickness", "coordination"],
+    observables=["mean_tilt_deg", "coordination"],
+    bead_colors=("director", "energy"),
     params={},
     # DELIBERATELY THE SAME EXPOSURE AS mesomem_patch -- the same two dials, the
-    # same absent plots -- because the comparison IS the lesson here (see the
-    # module docstring: these are the same seven beads and the same force field,
-    # and Tab between them is the experiment). A panel that rearranged itself
-    # between the two would hide the one thing that changed.
+    # same absent plots, the same absent system panel -- because the comparison IS
+    # the lesson here (see the module docstring: these are the same seven beads and
+    # the same force field, and Tab between them is the experiment). A panel that
+    # rearranged itself between the two would hide the one thing that changed.
+    #
+    # No hero knob, for the same reason: the patch next door has one, and a button
+    # appearing on only one of two scenes that are meant to be read as identical is
+    # a difference the eye has to rule out.
     lesson=Lesson(
         title="Twist",
-        claim="Tilt resists a twist -- and past 45 degrees the director flips over.",
-        instruction="Twist the centre director until it snaps to the other side.",
+        claim="Turn one arrow far enough and it flips over to face the other way.",
+        instruction="Twist the middle arrow with Q and E, or with the stick.",
         hook="Seven beads hold together. Does a real membrane stay flat?",
         everyday_params=("k_tilt", "k_splay"),
         plots=False,
+        system_energy=False,
     ),
     presets={
         # mesomem_patch's, verbatim: the same four settings mean the same four

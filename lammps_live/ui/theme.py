@@ -426,29 +426,42 @@ RAIL_ACT_GAP = 13
 RAIL_CURRENT_H = 9
 RAIL_LABEL_GAP = 7
 
-# THE THESIS BUTTON, centred at the bottom of the sim view just above the playback
-# row (Renderer.draw_thesis_button). It takes the force field's central claim away
-# and puts it back, so its engaged state has to be unmistakable from across a room
-# -- amber, which is the one alarm colour the rest of this UI reserves for a live
-# cluster allocation, and which nothing in a membrane scene is.
-THESIS_W = 232
-THESIS_H = 34
-THESIS_GAP = 12                 # above the playback row
-# RELEASED, it is a button in the same family as Play / Pause / Reset -- it is a
-# button, and being next to them is honest -- but with an amber hairline instead
-# of their grey one, because it is not a playback control and a click on it does
-# something none of them do. The one visual promise: whatever this border is, the
-# engaged state is the same hue turned all the way up.
-THESIS_BORDER = (168, 122, 52)
-THESIS_ENGAGED_BG = (208, 138, 30)
-THESIS_ENGAGED_TEXT = (16, 12, 4)
-THESIS_ENGAGED_BORDER = (245, 190, 90)
-# The caption drawn above the button while it is engaged, saying what is missing
-# from the scene. Amber too, and on a plate, because it has to be legible over
-# whatever the collapsing membrane is doing behind it.
-THESIS_CAPTION_COLOR = (250, 205, 110)
-THESIS_CAPTION_BG = (28, 20, 6, 216)
-THESIS_CAPTION_GAP = 10
+# THE HERO-KNOB ROW, centred at the bottom of the sim view just above the playback
+# controls (Renderer.draw_hero_knobs). One button per HeroKnob the scene declares,
+# each carrying the input-device button number that fires it.
+#
+# LOUD, BECAUSE IT IS THE THING TO DO NEXT. These are not more panel widgets: a
+# hero knob is the move whoever built the scene wants made on it, and a presenter
+# who has to hunt for it will not make it. So the released state is already an
+# accent button rather than another grey chip in the playback family, and the
+# engaged state goes full amber -- the one alarm colour the rest of this UI keeps
+# for a live cluster allocation, and which nothing in a membrane scene is.
+HERO_W = 250
+HERO_H = 42
+HERO_GAP = 14                   # between two knobs
+HERO_ROW_GAP = 14               # above the playback row
+# Released: a filled accent, dark enough for its own light text, with a brighter
+# rim. Not the playback buttons' grey, because it is not a playback control.
+HERO_BG = (46, 58, 78)
+HERO_TEXT = (226, 234, 246)
+HERO_BORDER = (120, 160, 210)
+# Engaged.
+HERO_ENGAGED_BG = (208, 138, 30)
+HERO_ENGAGED_TEXT = (16, 12, 4)
+HERO_ENGAGED_BORDER = (245, 190, 90)
+# The little device-button number on the left of each knob: "5" in a chip, so the
+# mapping is on the button rather than in a manual.
+HERO_BADGE_W = 26
+HERO_BADGE_BG = (16, 22, 34, 190)
+HERO_BADGE_TEXT = (170, 200, 235)
+HERO_BADGE_ENGAGED_BG = (120, 76, 8, 210)
+HERO_BADGE_ENGAGED_TEXT = (255, 226, 160)
+# The caption drawn above the row while any knob is engaged, saying in numbers what
+# that knob changed. Amber too, and on a plate, because it has to be legible over
+# whatever the membrane is doing behind it.
+HERO_CAPTION_COLOR = (250, 205, 110)
+HERO_CAPTION_BG = (28, 20, 6, 216)
+HERO_CAPTION_GAP = 10
 
 # THE HOOK LINE in the panel -- the question this scene leaves open. Its own
 # colour, and deliberately NOT the focus cyan: cyan already means "this is what
@@ -456,3 +469,21 @@ THESIS_CAPTION_GAP = 10
 # would read as a control. A soft blue instead: clearly a note, clearly not a
 # widget, and legible against the dark panel without competing with the header.
 HOOK_COLOR = (140, 185, 235)
+
+# HOW MUCH ROOM A SLIDER ROW NEEDS ABOVE ITS TRACK. `Slider.draw` blits its
+# "label: value" line at `rect.y - 18` and `Slider.focus_rect` starts the row at
+# `rect.y - 22`, so a track placed at the current y puts its own label 22 px into
+# whatever was drawn last. Everything that hands a y to a slider has to leave this
+# much headroom first, and the two places that did not were both visibly wrong:
+# the temperature label sat on the divider above it, and the first slider of the
+# expanded "Advanced" group sat on the word "Advanced".
+SLIDER_LABEL_H = 22
+
+# AND HOW TALL THE WHOLE ROW IS. A slider with an `optimum` (or the temperature's
+# melt mark) draws a caption BELOW its track as well, and at the plain pitch that
+# caption lands on the next row's label -- zeta's "opt" was sitting inside "splay
+# symmetry (0=signed, 1=|dot|)". The temperature slider already used the taller
+# pitch for exactly this reason; it is a property of the slider, not of which slot
+# it happens to be in, so both loops now ask.
+SLIDER_ROW_H = 34
+SLIDER_ROW_H_MARKED = 46

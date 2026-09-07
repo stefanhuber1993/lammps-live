@@ -59,6 +59,18 @@ JOYSTICK_RESET_BUTTON = 2
 # Switch playground, the same action as Tab (forward) and the number keys.
 JOYSTICK_PREV_PLAYGROUND_BUTTON = 3
 JOYSTICK_NEXT_PLAYGROUND_BUTTON = 4
+# The first device button that fires a HERO KNOB (see playground/spec.py), with
+# the rest following it upward: 5 is a scene's first knob, 6 its second, and so
+# on. Chosen as the first block that was still free, and left as a block so a
+# scene can declare more than one without the mapping moving.
+#
+# The number is drawn ON each button in the row (see Renderer.draw_hero_knobs), so
+# this constant and what the screen says cannot drift apart.
+JOYSTICK_HERO_FIRST_BUTTON = 5
+# How many of them are reachable that way. A scene may declare more knobs than
+# this -- they still draw and are still clickable, they just have no device button
+# -- but four is where the Sidewinder's numbered buttons run out.
+JOYSTICK_HERO_BUTTONS = 4
 # What the stick feels while it is NOT holding a bead -- flying the camera or
 # setting a slider (see app._route_stick). The spring goes to full stiffness and
 # true centre, because both of those controls are rate controls read off the

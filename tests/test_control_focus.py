@@ -300,7 +300,10 @@ def test_the_panel_holds_the_colouring_and_the_everyday_sliders(sim_app):
     for _ in range(4):
         _flick(sim_app, 0, -1)
         labels.append(sim_app.focus.label)
-    assert labels == ["bead colour (director)", "Temperature",
+    # The assembly box opens in CLUSTER colouring, which is its declared default
+    # (see Playground.bead_colors): what is happening in that box is aggregates
+    # finding each other, so that is the colouring it comes up in.
+    assert labels == ["bead colour (cluster)", "Temperature",
                       "k_tilt", "k_splay",
                       "zeta (attraction falloff, higher=shorter reach)"]
     # Down from the last row wraps within the panel rather than falling out of it:
@@ -575,21 +578,23 @@ def test_only_the_playground_buttons_fire_while_the_connect_panel_is_up(sim_app,
 def test_the_colouring_stop_drives_the_renderer_and_the_mouse_toggle_agrees(sim_app):
     """One state, two ways to move it: a click that changed the colouring behind
     the Choice's back would make the next stick push step from the wrong option."""
+    # This scene's own cycle, in its own declared order -- cluster first, since
+    # that is what it opens in (see Playground.bead_colors).
     _flick(sim_app, 1)                       # -> bead colour
     assert sim_app.focus.choice is not None
-    assert sim_app.renderer.bead_color_mode == "director"
+    assert sim_app.renderer.bead_color_mode == "cluster"
 
     sim_app._route_stick(1.0, 0.0, 0.0, FRAME)
-    assert sim_app.renderer.bead_color_mode == "energy"
-    assert sim_app.focus.label == "bead colour (energy)"
+    assert sim_app.renderer.bead_color_mode == "director"
+    assert sim_app.focus.label == "bead colour (director)"
 
     # The mouse toggle moves the same Choice, so the stick carries on from there.
     sim_app.color_choice.step(1)
-    assert sim_app.renderer.bead_color_mode == "cluster"
+    assert sim_app.renderer.bead_color_mode == "energy"
     for _ in range(20):                      # re-arm, then push again
         sim_app._route_stick(0.0, 0.0, 0.0, FRAME)
     sim_app._route_stick(1.0, 0.0, 0.0, FRAME)
-    assert sim_app.renderer.bead_color_mode == "director", "the cycle did not wrap"
+    assert sim_app.renderer.bead_color_mode == "cluster", "the cycle did not wrap"
 
 
 def test_a_stick_that_holds_nothing_gets_a_strong_centring_spring(sim_app):

@@ -167,23 +167,31 @@ class MesoMem(ForceField):
         return float(params["rc"])
 
     def pair_landmarks(self, params):
-        """The three radii the potential's story is told against (see
+        """The radii the potential's story is told against (see
         ForceField.pair_landmarks), inside out.
 
-        sigma is where the 4-2 core takes over from the attractive branch and the
-        isotropic term turns from a pull into a wall; wc is where the orientational
-        weight w(r) vanishes, so the tilt AND splay terms are exactly zero outside
-        it; rc is where everything stops. sigma is the force field's length unit
-        and therefore fixed at 1; the other two are live dials, so a ring moves
-        when its slider does.
+        sigma is where the 4-2 core takes over from the attractive branch, so it is
+        where the isotropic term turns from a pull into a wall: the radial force
+        passes through zero there and comes back out the other side. It is the
+        force field's length unit and therefore fixed at 1.
 
-        wc carries the TILT index rather than the splay one because both terms
-        share it and tilt is the larger of the two by an order of magnitude at
-        these coefficients (k_tilt = 12 against k_splay = 1) -- the ring is
-        labelled for the term whose arrival the hand actually notices.
+        rc is where everything stops, exactly, and it is drawn because the pair
+        connector already changes with it -- the bond goes dashed outside rc, and a
+        ring at the radius where that happens is the same statement twice, which is
+        the good kind.
+
+        wc USED TO BE HERE AND IS NOT ANY MORE. It is the outer edge of the
+        orientational weight w(r) = exp(r^2 / (rga^2 ((r/wc)^4 - 1))), and w does
+        vanish there exactly -- but it vanishes with an essential singularity, so
+        just inside it w is e^-40 and the tilt and splay energies read zero to
+        every decimal the callout prints. A ring at 2.0 promised an audience that
+        something starts at 2.0, and then the numbers sat at 0.00 until about 1.8.
+        What is drawn instead is each term's MEASURED onset (see
+        pair_probe._term_onsets), against the same threshold as the callout's own
+        rounding, so a bead crossing the tilt ring is a bead making the tilt row
+        light up.
         """
         return (("sigma", SIGMA, 0),
-                ("wc", float(params["wc"]), 1),
                 ("rc", float(params["rc"]), 0))
 
     # ---- the Python reference expression ------------------------------------

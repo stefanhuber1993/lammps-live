@@ -177,6 +177,10 @@ class SystemSpec:
     # the hook in the panel, and whether the panel's plots are drawn at all -- and
     # the renderer is handed a spec rather than a playground.
     lesson: object = None
+    # Which bead colourings this scene offers, first one being its default, or
+    # None for all of them and () for no toggle at all. See
+    # playground/spec.py's Playground.bead_colors for the rule.
+    bead_colors: tuple = None
 
 
 class MDSystem(ABC):

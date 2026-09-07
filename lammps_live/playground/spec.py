@@ -186,40 +186,49 @@ class Control:
 
 
 @dataclass(frozen=True)
-class Thesis:
-    """A one-click A/B on the force field's own central claim.
+class HeroKnob:
+    """One big move on this scene, as a button: apply it, and press again to undo.
 
-    THE CLAIM this whole demo makes is that a membrane's shape comes out of beads
-    that care which way they point -- and the fastest way to teach a claim is to
-    take it away. Zeroing the two orientational moduli leaves the SAME beads with
-    the SAME isotropic attraction, and what was a membrane collapses into a
-    droplet. One button, one second, and the thesis is proven rather than asserted.
+    A demo has one or two things worth DOING to each scene, and finding them means
+    knowing which of nine sliders to drag and how far. A hero knob is that move
+    written down once, by whoever built the scene: the settings it applies, the
+    settings it came from, and a line saying in numbers what changed. It is a
+    toggle rather than a preset because the point is the comparison -- the same
+    beads, before and after, with the audience watching the same screen.
 
-    It is a toggle rather than a preset because the point is the COMPARISON. A
-    preset (`isotropic_only`, which every membrane playground declares and which
-    this zeroes the same parameters as) is a way to start somewhere; this is a way
-    to go there and come back while the audience watches the same beads, which is
-    a different pedagogical act. Nothing is hidden while it is engaged: the app
-    drives the real sliders to zero and puts them back, so the panel always says
-    what the physics is (see App._toggle_thesis).
+    Two exist so far:
 
-    `params` are zeroed in order and restored to whatever they were. The default
-    set is MesoMem's two orientational moduli plus their cutoff -- exactly the
-    `isotropic_only` preset, because "what isotropic-only means" should have one
-    definition and not two.
+      REMOVE ORIENTATION  zeroes the two orientational moduli, on the scenes where
+        what happens next is the whole claim of the model: the same beads, the same
+        attraction, and no membrane. It applies the same values the
+        `isotropic_only` preset does, so "isotropic only" has one definition.
+      HEAT  moves the temperature dial to where the membrane flows instead of
+        sitting still, and the caption gives the number and the melting point it is
+        below, so "warm" is a quantity rather than a feeling.
+
+    A knob may drive live force-field parameters (`params`), the temperature dial
+    (`temperature`), or both. Whatever it does not name, it leaves alone -- another
+    knob's settings included, so two can be engaged at once without either
+    forgetting what it has to put back.
+
+    THE VALUES IT PUTS BACK ARE THE ONES IT FOUND, not the playground's declared
+    defaults. Someone who has spent a minute finding an interesting k_tilt and then
+    shows what removing orientation does has to get that k_tilt back.
     """
-    # On the button, released and engaged. The engaged label is the way OUT, which
-    # is what a lit button should say.
-    label: str = "Remove orientation"
-    engaged_label: str = "Restore orientation"
-    # Live force-field parameters driven to zero while engaged.
-    params: tuple = ("k_tilt", "k_splay", "wc")
-    # One line, drawn under the button while it is engaged, saying what is now on
-    # screen. Without it the audience sees a collapse and has to be told what was
-    # taken away; with it the screen says so, which is the difference between a
-    # demo and a lesson.
-    caption: str = ("no orientation: the same beads, the same attraction, "
-                    "and no membrane")
+    # On the button, before and after. The engaged label is the way OUT, which is
+    # what a lit button should say.
+    label: str
+    engaged_label: str
+    # What it does, in numbers, drawn above the button while it is engaged. This is
+    # the difference between an audience seeing a change and knowing what changed,
+    # so it should name the values -- "k_tilt = 0, k_splay = 0", "T = 0.20, up from
+    # 0.001" -- and not describe the mood of the result.
+    caption: str
+    # Live force-field parameters to hold at these values while engaged.
+    params: dict = field(default_factory=dict)
+    # The temperature dial's value while engaged, in the force field's own units,
+    # or None to leave the dial alone.
+    temperature: float = None
 
 
 @dataclass(frozen=True)
@@ -286,8 +295,29 @@ class Lesson:
     # first scene big enough for a statistic to mean anything, and that arrival is
     # itself worth noticing.
     plots: bool = True
-    # The one-click A/B on this scene's central claim (a Thesis), or None.
-    thesis: object = None
+    # Whether to draw the WHOLE-SYSTEM energy panel (the second potential panel,
+    # beside the pulled bead's own).
+    #
+    # OFF WHERE THE TWO PANELS SAY NEARLY THE SAME THING. On seven beads the
+    # pulled one is the centre of the patch and takes part in six of the twelve
+    # bonds, so its breakdown and the box's are the same three numbers at roughly
+    # a factor of two -- two panels, one fact, and the reader spends the scene
+    # working out which is which. On the sheet the pulled bead is one of nine
+    # hundred and the two panels are genuinely different questions. (The two-bead
+    # scene switches BOTH off in favour of the pair annotation; that is decided in
+    # PlaygroundSystem.get_pair_annotation, not here.)
+    system_energy: bool = True
+    # THE BIG MOVES on this scene, in order: a tuple of HeroKnob (above), drawn
+    # as a row of buttons under the scene and mapped to the input device's buttons
+    # 5 upward, so the one thing worth doing here is one press away with a hand
+    # already on the stick.
+    #
+    # AT MOST A COUPLE PER SCENE. The value of a hero knob is that it is the
+    # obvious thing to do next; a row of six is a second slider panel with worse
+    # labels. Most scenes have one, and several have none -- the two-bead pair and
+    # the torque patch are about a single interaction and the hands are already the
+    # experiment.
+    hero_knobs: tuple = ()
 
 
 @dataclass(frozen=True)
@@ -387,6 +417,20 @@ class Playground:
     # both ends -- the server builds the very same Playground to decide what to
     # integrate. See remote/session.py for the connection it describes.
     remote: object = None
+
+    # WHICH BEAD COLOURINGS THIS SCENE OFFERS, in cycle order, the first being the
+    # one it comes up in. None -> all of them (renderer.BEAD_COLOR_MODES); an empty
+    # tuple -> no colouring toggle at all, because there is no choice to make.
+    #
+    # A colouring is only offered where it MEANS something, which is not the same
+    # as where it runs. Cluster colouring paints connected aggregates: on a box
+    # that is busy finding them it is the whole story and is what the scene should
+    # open in, on a single connected membrane it paints everything one colour, and
+    # on two beads it is a joke. Energy is worth having anywhere there is more than
+    # one bond to compare. On the two-bead scene there is nothing to choose between
+    # at all -- one director, one pair -- so the toggle and its three-line caption
+    # are three lines of panel spent on a question with one answer.
+    bead_colors: tuple = None
 
     element_label: str = ""            # legend text, e.g. "Ar (LJ)"
     lattice_spacing: float = 1.0       # informational, and the bond-overlay optimum

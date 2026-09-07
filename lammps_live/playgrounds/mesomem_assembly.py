@@ -19,7 +19,8 @@ assembled.
 
 Units are the paper's LJ-reduced units (sigma = eps = m = 1).
 """
-from ..playground import Lesson, Playground, Thesis, random_fill
+from ..playground import Lesson, Playground, random_fill
+from ._knobs import NO_ORIENTATION
 from ..render_style import DEFAULT_STYLE, CameraOrbit
 
 # A dense, roughly cubic cloud of beads seen from outside is the scene the look
@@ -77,20 +78,27 @@ PLAYGROUND = Playground(
         center_accel=0.05,
     ),
     mode="sim",
-    observables=["nematic_S", "coordination", "thickness"],
+    observables=["coordination"],
+    # CLUSTER FIRST, and it is the default this scene comes up in: what is
+    # happening here IS aggregates finding each other, and the colouring that
+    # paints them is the one that tells you so.
+    bead_colors=("cluster", "director", "energy"),
     param_ranges={"k_splay": (0.0, 5.0)},
     # THE PANEL GETS SIMPLER HERE, not richer, and that is the point: this scene is
     # watched rather than driven, so there is no puller, no leash and nothing to
     # steer -- temperature, time and the turntable. Disclosure follows the lesson
     # rather than accumulating down the sequence.
     #
-    # The order parameter climbing while you watch is the story, so the plots stay.
+    # THE HERO KNOB IS THE MODEL'S CLAIM AGAIN, and this is the strongest place to
+    # make it: the box has just built a membrane out of nothing, and taking the
+    # orientation away un-builds it into droplets while everything else about the
+    # run stays the same.
     lesson=Lesson(
         title="It builds itself",
-        claim="Nobody arranged this. Random beads find the membrane on their own.",
-        instruction="Press Play and watch. Warm it up if it stalls.",
-        hook="So we have a material. What is a membrane FOR?",
-        thesis=Thesis(),
+        claim="The same beads, poured in at random. They find the sheet on their own.",
+        instruction="Press Play and watch. Colours mark separate clusters as they merge.",
+        hook="So the beads make a membrane. What is a membrane for?",
+        hero_knobs=(NO_ORIENTATION,),
     ),
     presets={
         "paper": {},

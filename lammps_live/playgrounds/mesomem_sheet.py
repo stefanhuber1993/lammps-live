@@ -26,7 +26,8 @@ inflates without bound; that is honest, not a fault.
 
 Units are the paper's LJ-reduced units (sigma = eps = m = 1).
 """
-from ..playground import Control, Lesson, Playground, Thesis, hex_sheet
+from ..playground import Control, Lesson, Playground, hex_sheet
+from ._knobs import HEAT
 from ..render_style import DEFAULT_STYLE
 
 # A flat lattice seen at a tilt is the opposite shape of problem from the
@@ -94,27 +95,30 @@ PLAYGROUND = Playground(
         max_input_force=7.0,
         grid_step=0.8,
     ),
-    observables=["nematic_S", "thickness", "area_per_particle"],
+    # NONE. A nematic order parameter, a membrane thickness and an area per
+    # particle are three numbers nothing on screen explains, and a scene whose
+    # claim is "flat, fluid, and it heals" is better watched than read off.
+    observables=[],
+    # One connected periodic membrane: there is nothing for cluster colouring to
+    # separate.
+    bead_colors=("director", "energy"),
     # A large membrane buckles under high splay rather than merely stiffening, so
     # the dial is worth taking far past the patch's useful span of 3.
     param_ranges={"k_splay": (0.0, 40.0)},
     # THE LAB BENCH: the first scene big enough for a statistic to be true, so the
     # plots arrive, and the whole dial panel comes with them.
     #
-    # AND THE FIRST SCENE WITH A MEMBRANE TO TAKE APART, which is why the thesis
-    # button is here and not earlier. Zeroing the two orientational moduli leaves
-    # 900 beads with the same isotropic attraction and no reason to be a sheet, and
-    # what is on screen collapses into a droplet -- the demo's whole claim, proven
-    # by removal, in one click and about a second. It is the same parameters as the
-    # `isotropic_only` preset below, and deliberately so: one definition of what
-    # "isotropic only" means, reachable either as a place to start or as a place to
-    # visit and come back from.
+    # THE HERO KNOB IS HEAT, because this is the scene where the membrane being a
+    # LIQUID is the point, and at the default temperature it sits almost still. The
+    # dial runs to 0.5 and melting is at 0.3; 0.2 is warm enough that beads swap
+    # neighbours while the sheet still holds together, which is the state a real
+    # bilayer is in. The caption gives both numbers, so "warm" is a quantity.
     lesson=Lesson(
         title="A membrane",
-        claim="Nine hundred beads, held at zero tension: flat, fluid, and it heals.",
-        instruction="Pull a bead out. Warm it up. Then remove the orientation.",
-        hook="We placed every bead on a lattice. Did we have to?",
-        thesis=Thesis(),
+        claim="900 beads and no edges: a piece of bilayer that holds itself flat.",
+        instruction="Pull a bead out and let go. Then heat it and watch it flow.",
+        hook="Every bead here was placed on a lattice. Was that necessary?",
+        hero_knobs=(HEAT,),
     ),
     presets={
         "paper": {},

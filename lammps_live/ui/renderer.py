@@ -8,7 +8,8 @@ import moderngl
 import numpy as np
 import pygame
 
-from .. import units
+from .. import config, units
+from ..playground.pair_probe import READOUT_EPS
 from ..render_style import DEFAULT_STYLE
 from .gl3d import GLScene, proj_matrix, view_matrix
 from .glcompositor import GLCompositor
@@ -36,11 +37,13 @@ from .theme import (
     PAIR_LINE_WIDTH, PAIR_SHELL_ALPHA, PAIR_SHELL_LABEL_ALPHA, PAIR_SHELL_SAMPLES,
     PANEL_BG, PANEL_DIVIDER, PANEL_PAD, PANEL_WIDTH, PLOT_COLORS,
     RAIL_ACT_GAP, RAIL_CURRENT_H, RAIL_LABEL_GAP, RAIL_MARK_GAP, RAIL_MARK_H,
+    SLIDER_LABEL_H, SLIDER_ROW_H, SLIDER_ROW_H_MARKED,
     RAIL_MARK_W,
-    THESIS_CAPTION_BG, THESIS_CAPTION_COLOR, THESIS_CAPTION_GAP,
-    THESIS_BORDER,
-    THESIS_ENGAGED_BG, THESIS_ENGAGED_BORDER, THESIS_ENGAGED_TEXT, THESIS_GAP,
-    THESIS_H, THESIS_W,
+    HERO_BADGE_BG, HERO_BADGE_ENGAGED_BG, HERO_BADGE_ENGAGED_TEXT,
+    HERO_BADGE_TEXT, HERO_BADGE_W, HERO_BG, HERO_BORDER,
+    HERO_CAPTION_BG, HERO_CAPTION_COLOR, HERO_CAPTION_GAP,
+    HERO_ENGAGED_BG, HERO_ENGAGED_BORDER, HERO_ENGAGED_TEXT,
+    HERO_GAP, HERO_H, HERO_ROW_GAP, HERO_TEXT, HERO_W,
     POTENTIAL_COLORS, POTENTIAL_PANEL_BG, POTENTIAL_TOTAL_COLOR, POTENTIAL_TRACK_COLOR,
     PULLER_BOND_COLOR, PULLER_LABEL_BG, PULLER_LABEL_COLOR, PULLER_RADIUS_BOOST,
     PULLER_RING_COLOR, PULLER_RING_FREE_COLOR, PULLER_RING_WIDTH,
@@ -59,6 +62,23 @@ from .theme import (
 # it is part of. See theme.py for the first two's colours and CLUSTER_COLORS for
 # the third's, and playground/clustering.py for what "part of" means.
 BEAD_COLOR_MODES = ("director", "energy", "cluster")
+
+
+def bead_color_modes(spec):
+    """The colourings `spec` offers, in cycle order, the first being its default.
+
+    A scene declares its own set because a colouring is only worth offering where
+    it MEANS something -- cluster colouring paints one colour over a single
+    connected membrane and is a joke on two beads (see
+    playground/spec.py's Playground.bead_colors). None means the scene has no
+    opinion and gets all of them; an empty tuple means no toggle.
+    """
+    offered = getattr(spec, "bead_colors", None)
+    if offered is None:
+        return BEAD_COLOR_MODES
+    # Filtered against the real list, in the scene's own order, so a typo in a
+    # playground cannot put a mode on the cycle that nothing knows how to draw.
+    return tuple(m for m in offered if m in BEAD_COLOR_MODES)
 
 # The shader's `in_material` value for each RenderStyle.body_material name -- what
 # a particle drawn as a BODY is painted as, instead of any of the colourings above
@@ -86,7 +106,7 @@ def _lerp_color(a, b, t):
 
 KEY_HINTS = (
     "1-9: system   Tab/shift-Tab: next, previous   WASD/mouse: move   Q/E or L/R click: rotate   "
-    "Space: play/pause   R: reset   B: grab bead   O: remove/restore orientation   "
+    "Space: play/pause   R: reset   B: grab bead   F1-F4: the buttons under the scene   "
     "Up/Down or wheel: temperature   F11/green button: fullscreen   Esc: exit fullscreen / quit"
 )
 # Appended for systems with a turntable camera (SystemSpec.camera_orbit).
@@ -103,8 +123,19 @@ JOYSTICK_HINTS = (
     "hat L/R: scene <-> panel (cyan frame)   in the panel: stick or hat up/down "
     "picks a control, stick L/R drives it (a colour steps per push)   "
     "twist: zoom   1: play/pause   2: reset   3/4: playground   "
+    "5+: the buttons under the scene   "
     "lever: slice (ends = off)"
 )
+
+
+def _row_height(slider):
+    """How much vertical room one slider row needs, in px at UI scale 1.
+
+    Taller for a slider that draws a caption below its track (its `optimum` tick's
+    "opt", the temperature's "melt"): at the plain pitch that caption lands inside
+    the next row's label. See theme.SLIDER_ROW_H.
+    """
+    return SLIDER_ROW_H_MARKED if slider.optimum is not None else SLIDER_ROW_H
 
 
 def _wrap_items(items, font, width, separator="  "):
@@ -163,13 +194,11 @@ class Renderer:
         # reads them back via playback_hit to route clicks. Empty-rect until first
         # drawn, and hit-testing is gated on `_playback_visible`, so a click
         # cannot land on a stale rect before the first frame or behind a modal.
-        # The thesis button (Renderer.draw_thesis_button): one Button, relabelled
-        # each frame from the Thesis that owns it, positioned just above the
-        # playback row and hit-tested the same way (thesis_hit). Rect stays empty
-        # and `_thesis_visible` False on a playground that declares no thesis, so a
-        # click can never land on a stale rect from one that did.
-        self.thesis_button = Button("thesis", "")
-        self._thesis_visible = False
+        # The hero-knob row (Renderer.draw_hero_knobs): one rect per HeroKnob the
+        # scene declares, laid out fresh every frame and hit-tested by index
+        # (hero_hit). Emptied on a playground that declares none, so a click can
+        # never land on a stale rect from one that did.
+        self._hero_rects = []
         self.playback_buttons = [Button("play", "Play"),
                                  Button("pause", "Pause"),
                                  Button("reset", "Reset")]
@@ -1140,8 +1169,14 @@ class Renderer:
         direction for something that has none. The threshold is half of what the
         second decimal can show, so nothing that would have printed a nonzero digit
         is touched.
+
+        THE THRESHOLD IS SHARED with the onset rings drawn around the fixed partner
+        (pair_probe.READOUT_EPS, which is where it is defined and why): the ring
+        that says a term starts here and the row that stops being faded have to
+        turn over at the same separation, or the picture contradicts the numbers
+        printed on it.
         """
-        return f"{0.0 if abs(value) < 5e-3 else value:+.2f}"
+        return f"{0.0 if abs(value) < READOUT_EPS else value:+.2f}"
 
     def _draw_pair_annotation(self, camera, ann, pts, screen, radii, spec, shown):
         """The whole annotation: landmark shells, the bond, and the callout.
@@ -1186,7 +1221,13 @@ class Renderer:
         bead because the partner is the one that holds still -- a ring drawn round
         a moving bead is a ring the eye cannot use as a scale.
         """
-        if not ann.shells:
+        # The cutoffs, solid, and the measured onsets, dashed. Two kinds of
+        # statement, and they have to look different: a cutoff is exact and is
+        # where a term ENDS, an onset is measured and is where the term becomes
+        # readable, which is the one the numbers on screen turn over at.
+        rings = ([(s, False) for s in ann.shells]
+                 + [(o, True) for o in ann.onsets])
+        if not rings:
             return
         if ann.plane_normal is not None:
             n = np.asarray(ann.plane_normal, dtype=float)
@@ -1211,7 +1252,7 @@ class Renderer:
         toward = toward - float(toward @ np.cross(u, v)) * np.cross(u, v)
         norm = float(np.linalg.norm(toward))
         toward = toward / norm if norm > 1e-9 else u
-        for label, radius, term in ann.shells:
+        for (label, radius, term), dashed in rings:
             if radius <= 0.0:
                 continue
             world = center + radius * ring
@@ -1219,9 +1260,25 @@ class Renderer:
             if not np.all(np.isfinite(depth)):
                 continue
             ink = self._term_color(term)
-            pygame.draw.lines(self.screen, self._pair_fade(ink, PAIR_SHELL_ALPHA),
-                              True, [(float(x), float(y)) for x, y in pts2],
-                              UI.w(1))
+            col = self._pair_fade(ink, PAIR_SHELL_ALPHA)
+            loop = [(float(x), float(y)) for x, y in pts2]
+            if dashed:
+                # Every other segment of the ring, which on a circle sampled this
+                # finely reads as a dashed ellipse and needs no arc-length walk.
+                for k in range(0, len(loop) - 1, 2):
+                    pygame.draw.line(self.screen, col, loop[k], loop[k + 1],
+                                     UI.w(1))
+            else:
+                pygame.draw.lines(self.screen, col, True, loop, UI.w(1))
+            # THE ONSET RINGS CARRY NO TEXT, and that is the point of drawing them
+            # in their term's own colour: the callout already has a coloured
+            # swatch on every row, so a dashed ring in that colour and the row it
+            # belongs to identify each other with no words. Labelling them put
+            # five ticks on one line through the middle of the scene, two of them
+            # underneath the driven bead, on a scene that is already carrying a
+            # card, a rail, a bond reading and a four-row table.
+            if dashed:
+                continue
             tick, tick_depth, _ = camera.project_point(center + radius * toward)
             if not math.isfinite(tick_depth):
                 continue
@@ -2650,7 +2707,8 @@ class Renderer:
         # with a lesson card up there the old constant put them through the middle
         # of the instruction line.
         self._draw_potential_panel(potential_terms, x=12, y0=top)
-        if total_potential_terms is not None:
+        if total_potential_terms is not None and (
+                spec.lesson is None or spec.lesson.system_energy):
             self._draw_potential_panel(total_potential_terms, x=336, y0=top)
         self._draw_hud(hud_lines)
         self._draw_debug_line(debug_line)
@@ -2934,67 +2992,90 @@ class Renderer:
                                  border_radius=UI(2))
                 mx += mw
 
-    def draw_thesis_button(self, thesis, engaged):
-        """The one-click A/B on the force field's central claim, centred at the
-        bottom of the sim view just above the playback row.
+    def draw_hero_knobs(self, knobs, engaged):
+        """The scene's big moves, as a centred row of buttons just above the
+        playback controls. `engaged` is the set of indices currently applied.
 
-        IN THE SCENE, NOT IN THE PANEL, and that is the whole point of where it is:
-        in the panel it would be a tenth grey widget among the dials, and what it
-        does is not a dial -- it takes the physics away and gives it back, and it is
-        the thing a presenter reaches for while looking at the beads. Above the
-        playback row rather than in it because it is not a playback control, and
-        being adjacent to three of them is already as close as it should get to
-        looking like one.
+        IN THE SCENE, NOT IN THE PANEL, and that is the point of where they are: in
+        the panel a hero knob would be one more grey widget among ten dials, and
+        what it does is not a dial. It is the move whoever built the scene wants
+        made on it, and it is reached for while looking at the beads. Above the
+        playback row rather than in it because these are not playback controls, and
+        being adjacent to three of them is as close as they should get to looking
+        like one.
 
-        Engaged it goes amber and says the way OUT (`Thesis.engaged_label`), with
-        the caption above it naming what is missing -- so a room that walked in
-        halfway through can still read what it is looking at.
+        EACH ONE WEARS THE DEVICE BUTTON THAT FIRES IT, in a chip on its left: the
+        row is the mapping, so nobody has to remember that 5 is Heat on this scene
+        and Remove orientation on the next. Buttons 5 upward, in declared order
+        (see App._poll_device_buttons and config.JOYSTICK_HERO_FIRST_BUTTON).
+
+        Engaged, a knob goes amber and says the way OUT, with its caption above the
+        row naming in numbers what changed -- so a room that walked in halfway
+        through can still read what it is looking at.
         """
-        if thesis is None:
-            self._thesis_visible = False
-            self.thesis_button.rect = pygame.Rect(0, 0, 0, 0)
+        self._hero_rects = []
+        if not knobs:
             return
-        w, h = UI(THESIS_W), UI(THESIS_H)
-        # Stacked on the playback row's own geometry, so the two move together if
-        # either is ever retuned.
+        w, h, gap = UI(HERO_W), UI(HERO_H), UI(HERO_GAP)
+        total = len(knobs) * w + (len(knobs) - 1) * gap
+        x0 = (self.sim_width - total) // 2
         play_h, play_gap = UI(34), UI(16)
-        y0 = self.window_size[1] - play_h - play_gap - UI(THESIS_GAP) - h
-        self.thesis_button.rect = pygame.Rect((self.sim_width - w) // 2, y0, w, h)
-        self.thesis_button.label = thesis.engaged_label if engaged else thesis.label
+        y0 = self.window_size[1] - play_h - play_gap - UI(HERO_ROW_GAP) - h
 
-        if engaged:
-            rect = self.thesis_button.rect
-            pygame.draw.rect(self.screen, THESIS_ENGAGED_BG, rect,
-                             border_radius=UI(6))
-            pygame.draw.rect(self.screen, THESIS_ENGAGED_BORDER, rect,
-                             width=UI.w(2), border_radius=UI(6))
-            surf = self.font.render(self.thesis_button.label, True,
-                                    THESIS_ENGAGED_TEXT)
-            self.screen.blit(surf, surf.get_rect(center=rect.center))
-            if thesis.caption:
-                cap = self.font.render(thesis.caption, True, THESIS_CAPTION_COLOR)
-                pad = UI(8)
-                cw, ch = cap.get_width() + 2 * pad, cap.get_height() + 2 * pad
-                cx = (self.sim_width - cw) // 2
-                cy = y0 - UI(THESIS_CAPTION_GAP) - ch
-                plate = pygame.Surface((cw, ch), pygame.SRCALPHA)
-                plate.fill(THESIS_CAPTION_BG)
-                self.screen.blit(plate, (cx, cy))
-                self.screen.blit(cap, (cx + pad, cy + pad))
-        else:
-            self.thesis_button.draw(self.screen, self.font)
-            # The accent hairline over the button's own grey one: same geometry,
-            # same radius, so it reads as this button's border rather than as a
-            # ring around it.
-            pygame.draw.rect(self.screen, THESIS_BORDER, self.thesis_button.rect,
-                             width=UI.w(1), border_radius=UI(6))
-        self._thesis_visible = True
+        for i, knob in enumerate(knobs):
+            on = i in engaged
+            rect = pygame.Rect(x0 + i * (w + gap), y0, w, h)
+            self._hero_rects.append(rect)
+            bg, fg, border = ((HERO_ENGAGED_BG, HERO_ENGAGED_TEXT,
+                               HERO_ENGAGED_BORDER) if on
+                              else (HERO_BG, HERO_TEXT, HERO_BORDER))
+            pygame.draw.rect(self.screen, bg, rect, border_radius=UI(7))
+            pygame.draw.rect(self.screen, border, rect, width=UI.w(2),
+                             border_radius=UI(7))
+            # The device-button chip, inset on the left, with a hairline separating
+            # it from the label so the number does not read as part of the words.
+            badge_w = UI(HERO_BADGE_W)
+            badge = pygame.Rect(rect.x + UI(4), rect.y + UI(4), badge_w,
+                                rect.height - UI(8))
+            plate = pygame.Surface(badge.size, pygame.SRCALPHA)
+            plate.fill(HERO_BADGE_ENGAGED_BG if on else HERO_BADGE_BG)
+            self.screen.blit(plate, badge.topleft)
+            num = self.small_font.render(
+                str(config.JOYSTICK_HERO_FIRST_BUTTON + i), True,
+                HERO_BADGE_ENGAGED_TEXT if on else HERO_BADGE_TEXT)
+            self.screen.blit(num, num.get_rect(center=badge.center))
+            label = knob.engaged_label if on else knob.label
+            surf = self.font.render(label, True, fg)
+            self.screen.blit(surf, surf.get_rect(
+                center=(badge.right + (rect.right - badge.right) // 2,
+                        rect.centery)))
 
-    def thesis_hit(self, pos):
-        """Whether `pos` is on the thesis button. False while it is not shown, so a
-        click cannot hit a stale rect from a playground that has one after
-        switching to a playground that does not."""
-        return self._thesis_visible and self.thesis_button.hit(pos)
+        # The captions of whatever is engaged, stacked above the row. Stacked
+        # rather than joined, because each one is a sentence about its own knob and
+        # two of them on one line would read as one claim.
+        captions = [knobs[i].caption for i in sorted(engaged)
+                    if knobs[i].caption]
+        cy = y0 - UI(HERO_CAPTION_GAP)
+        for text in reversed(captions):
+            cap = self.font.render(text, True, HERO_CAPTION_COLOR)
+            pad = UI(8)
+            cw, ch = cap.get_width() + 2 * pad, cap.get_height() + 2 * pad
+            cx = (self.sim_width - cw) // 2
+            cy -= ch
+            plate = pygame.Surface((cw, ch), pygame.SRCALPHA)
+            plate.fill(HERO_CAPTION_BG)
+            self.screen.blit(plate, (cx, cy))
+            self.screen.blit(cap, (cx + pad, cy + pad))
+            cy -= UI(4)
+
+    def hero_hit(self, pos):
+        """Index of the hero knob under `pos`, or None. Empty while none are
+        shown, so a click cannot hit a stale rect from a playground that had one
+        after switching to a playground that does not."""
+        for i, rect in enumerate(self._hero_rects):
+            if rect.collidepoint(pos):
+                return i
+        return None
 
     def draw_playback_controls(self, playing):
         """Play / Pause / Reset buttons centered along the bottom of the sim view.
@@ -3031,7 +3112,10 @@ class Renderer:
         the viewport get, so "what is the stick driving" is one thing to look for
         wherever the answer happens to live."""
         self._bead_color_visible = False
-        if not spec.render_3d:
+        if not spec.render_3d or not bead_color_modes(spec):
+            # No colouring toggle at all: a 2D crystal (which colours by species,
+            # not by choice) or a scene with only one colouring worth having (see
+            # Playground.bead_colors).
             return y
         self._bead_color_visible = True
         mode = self.bead_color_mode
@@ -3254,18 +3338,22 @@ class Renderer:
         # The rest split into "basic" (drawn in order right after temperature) and
         # "advanced" (hidden behind a collapsible toggle -- see self.show_advanced).
         focused = control_focus.slider if control_focus is not None else None
+        # Headroom for the first track's own label, which is drawn ABOVE it (see
+        # theme.SLIDER_LABEL_H). Without it the temperature label is blitted over
+        # the divider line just above.
+        y += UI(SLIDER_LABEL_H)
         temp_slider = sliders[0]
         temp_slider.rect = pygame.Rect(x, y, w, UI(4))
         temp_slider.draw(self.screen, self.font, mark_value=spec.melt_temp,
                           mark_label="melt", focused=temp_slider is focused)
-        y += UI(46)
+        y += UI(SLIDER_ROW_H_MARKED)
 
         basic = [s for s in sliders[1:] if not s.advanced]
         advanced = [s for s in sliders[1:] if s.advanced]
         for extra in basic:
             extra.rect = pygame.Rect(x, y, w, UI(4))
             extra.draw(self.screen, self.font, focused=extra is focused)
-            y += UI(34)
+            y += UI(_row_height(extra))
 
         if advanced:
             arrow = "v" if self.show_advanced else ">"
@@ -3279,10 +3367,13 @@ class Renderer:
                 toggle_surf.get_height() + UI(6))
             y += toggle_surf.get_height() + UI(8)
             if self.show_advanced:
+                # Same headroom again: the first revealed slider's label would
+                # otherwise land on the word "Advanced" it was just revealed by.
+                y += UI(SLIDER_LABEL_H)
                 for extra in advanced:
                     extra.rect = pygame.Rect(x, y, w, UI(4))
                     extra.draw(self.screen, self.font)
-                    y += UI(34)
+                    y += UI(_row_height(extra))
             else:
                 # Collapsed: park the hidden sliders off-screen so a stale rect
                 # from when they were last visible can't be clicked/dragged.
@@ -3431,7 +3522,7 @@ class Renderer:
               hud_lines=None, scene_3d=None, total_steps=0, steps_per_frame=1,
               debug_line=None, playback_playing=None, puller_attached=True,
               overlay=None, control_focus=None, remote_note=None,
-              lesson_position=None, acts=(), thesis_engaged=False):
+              lesson_position=None, acts=(), hero_engaged=frozenset()):
         # In GL mode the default framebuffer is cleared first; the 3D scene (if
         # any) is drawn straight into its sim viewport, and every 2D surface is
         # composited over it at the end. In CPU mode self.screen IS the display
@@ -3490,12 +3581,10 @@ class Renderer:
         self._playback_visible = False
         if playback_playing is not None:
             self.draw_playback_controls(playback_playing)
-        # And, just above them, the button that takes this scene's central claim
-        # away and puts it back -- on the playgrounds that declare one (see
-        # playground/spec.py's Thesis), which is every scene with a membrane in it
-        # to collapse.
-        self.draw_thesis_button(spec.lesson.thesis if spec.lesson else None,
-                                thesis_engaged)
+        # And, just above them, this scene's big moves (see playground/spec.py's
+        # HeroKnob) -- on the playgrounds that declare any.
+        self.draw_hero_knobs(spec.lesson.hero_knobs if spec.lesson else (),
+                             hero_engaged or frozenset())
         # A modal card over the sim view (the remote connect panel). Drawn here
         # rather than by the caller after draw() returns, because in GL mode every
         # 2D surface has to be on self.screen before it is composited -- and

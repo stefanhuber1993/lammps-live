@@ -352,8 +352,16 @@ def test_the_sheet_relaxes_to_zero_lateral_tension():
         # +0.17 a frozen cell sits at.
         assert abs(system.lmp.get_thermo("pxx")) < 0.03
         assert abs(system.lmp.get_thermo("pyy")) < 0.03
-        # Still a membrane: this is well below melt_temp.
-        assert system.analysis.values()["nematic_S"] > 0.8
+        # Still a membrane: this is well below melt_temp. Measured with the
+        # nematic-order observable directly rather than through
+        # `system.analysis`, which only computes what the PLAYGROUND declares --
+        # and this one declares no HUD observables at all, because a bare
+        # "nematic order S = 0.93" is a number the demo never explains. It is
+        # still the right physics check here.
+        from lammps_live.playground import observables
+        order = observables.get("nematic_S").fn(
+            system.current_state(), None, system.params)
+        assert order > 0.8
     finally:
         system.close()
 
