@@ -367,6 +367,11 @@ PLAYGROUND = Playground(
         hook="That was one pair. What do six neighbours do?",
         everyday_params=(),
         plots=False,
+        # No temperature dial. Two particles have no temperature, and the
+        # thermostat's per-step kick shows up here as the separation and the three
+        # energies twitching in the third decimal -- in a scene built around a
+        # reading that holds still.
+        temperature_dial=False,
         # Every one of those numbers is either meaningless here (the
         # temperature of two particles) or already written between the beads
         # by the pair annotation, in the units this scene is about.

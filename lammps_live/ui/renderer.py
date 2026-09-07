@@ -3369,18 +3369,29 @@ class Renderer:
         # The rest split into "basic" (drawn in order right after temperature) and
         # "advanced" (hidden behind a collapsible toggle -- see self.show_advanced).
         focused = control_focus.slider if control_focus is not None else None
-        # Headroom for the first track's own label, which is drawn ABOVE it (see
-        # theme.SLIDER_LABEL_H). Without it the temperature label is blitted over
-        # the divider line just above.
-        y += UI(SLIDER_LABEL_H)
         temp_slider = sliders[0]
-        temp_slider.rect = pygame.Rect(x, y, w, UI(4))
-        temp_slider.draw(self.screen, self.font, mark_value=spec.melt_temp,
-                          mark_label="melt", focused=temp_slider is focused)
-        y += UI(SLIDER_ROW_H_MARKED)
-
         basic = [s for s in sliders[1:] if not s.advanced]
         advanced = [s for s in sliders[1:] if s.advanced]
+        # The temperature dial is not offered on every scene (see
+        # Lesson.temperature_dial). Parked off screen when it is not, like a
+        # collapsed advanced slider, so a stale rect from a playground that DID
+        # show it cannot be clicked or dragged here.
+        show_temp = spec.lesson is None or spec.lesson.temperature_dial
+        if not show_temp:
+            temp_slider.rect = pygame.Rect(-1000, -1000, 0, 0)
+
+        # HEADROOM FOR THE FIRST ROW ACTUALLY DRAWN, once. A track's label is
+        # blitted ABOVE it (see theme.SLIDER_LABEL_H), so without this the first
+        # label lands on the divider; adding it unconditionally, on the other hand,
+        # left a band of empty panel on a scene whose first row is not drawn at
+        # all.
+        if show_temp or basic:
+            y += UI(SLIDER_LABEL_H)
+        if show_temp:
+            temp_slider.rect = pygame.Rect(x, y, w, UI(4))
+            temp_slider.draw(self.screen, self.font, mark_value=spec.melt_temp,
+                              mark_label="melt", focused=temp_slider is focused)
+            y += UI(SLIDER_ROW_H_MARKED)
         for extra in basic:
             extra.rect = pygame.Rect(x, y, w, UI(4))
             extra.draw(self.screen, self.font, focused=extra is focused)

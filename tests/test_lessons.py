@@ -429,3 +429,26 @@ def test_the_over_informative_observables_are_gone():
     for key, pg in _offered():
         assert not banned & set(pg.observables), key
     assert all(observables.get(name) is not None for name in banned)
+
+
+def test_no_scene_hides_the_temperature_dial_and_then_drives_it():
+    """A "Heat" knob on a scene with no temperature dial would move a control the
+    user cannot see and cannot move back by hand. The two declarations have to
+    agree."""
+    for key, pg in _offered():
+        if pg.lesson.temperature_dial:
+            continue
+        for knob in pg.lesson.hero_knobs:
+            assert knob.temperature is None, f"{key}: {knob.label} needs the dial"
+
+
+def test_the_two_bead_scene_offers_no_temperature_dial():
+    """Two particles have no temperature: the thermostat's per-step kick shows up
+    as the separation and the three energies twitching in the third decimal, in a
+    scene built around a reading that holds still (see BeadAndPartner, which nails
+    the partner down for the same reason)."""
+    lessons = {key: pg.lesson for key, pg in _offered()}
+    assert lessons["mesomem_bead"].temperature_dial is False
+    # And it is the only one: every other scene has a membrane whose state the
+    # temperature genuinely changes.
+    assert [k for k, l in lessons.items() if not l.temperature_dial] == ["mesomem_bead"]

@@ -264,3 +264,55 @@ def test_the_two_bead_scene_is_not_a_colour_stop_at_all(patch):
     assert patch.system.spec.bead_colors == ()
     assert all(stop is not patch.color_choice
                for stop in patch.focus._stops), "a stop with nothing to show"
+
+
+# ---- a scene that does not offer the temperature dial ----------------------
+
+def test_nothing_moves_a_hidden_temperature_dial(patch):
+    """Hidden means NOT OFFERED, not merely undrawn (see Lesson.temperature_dial).
+    An invisible control that the wheel and the arrow keys still drove would be
+    the one thing worse than a useless visible one."""
+    import pygame
+
+    patch._build_system("mesomem_bead")
+    assert not patch._temperature_offered()
+    started = patch.temp_slider.value
+
+    # The wheel over the sim view.
+    pygame.event.post(pygame.event.Event(pygame.MOUSEWHEEL, x=0, y=3,
+                                         flipped=False, which=0))
+    patch._handle_events(FRAME)
+    assert patch.temp_slider.value == pytest.approx(started)
+
+    # A drag where the track would have been: the rect is parked off screen by
+    # the renderer, and the handler is skipped as well.
+    patch.renderer.draw_panel(
+        patch.systems, patch.system_key,
+        (patch.temp_slider, patch.damping_slider, *patch.extra_sliders),
+        (0.0, 0.0, 0.0, 0.0, 0.0), (None, None), patch.history, None,
+        patch.system.spec)
+    assert patch.temp_slider.rect.x < 0
+    pygame.event.post(pygame.event.Event(
+        pygame.MOUSEBUTTONDOWN, button=1, pos=(60, 300), touch=False))
+    patch._handle_events(FRAME)
+    assert patch.temp_slider.value == pytest.approx(started)
+
+    # And it is not a stop in the joystick's focus cycle.
+    assert all(s is not patch.temp_slider for s in patch.focus._stops)
+
+    # The thermostat still runs, at the playground's declared default.
+    patch._tick(FRAME)
+    assert patch.system._target_temp == pytest.approx(
+        patch.system.spec.temperature.default)
+
+
+def test_the_dial_comes_back_on_a_scene_that_offers_it(patch):
+    """It is per playground, so switching away has to restore it -- both the widget
+    and the four ways a hand can reach it."""
+    patch._build_system("mesomem_bead")
+    assert not patch._temperature_offered()
+    patch._build_system("mesomem_patch")
+    assert patch._temperature_offered()
+    assert any(s is patch.temp_slider for s in patch.focus._stops)
+    patch.temp_slider.nudge(0.05)
+    assert patch.temp_slider.value > patch.system.spec.temperature.default

@@ -295,6 +295,22 @@ class Lesson:
     # first scene big enough for a statistic to mean anything, and that arrival is
     # itself worth noticing.
     plots: bool = True
+    # Whether the temperature dial is offered at all.
+    #
+    # OFF WHERE THERE IS NOTHING TO HEAT. Two particles have no temperature: the
+    # thermostat gives them a random kick each step, which on this scene shows up
+    # as the separation and the three energies twitching in the third decimal
+    # while somebody is trying to read them. The scene is built around a reading
+    # that holds still (see BeadAndPartner: the partner is nailed down for exactly
+    # that reason), so the dial is not a control it wants, and a slider whose only
+    # effect is to spoil the instrument is worse than no slider.
+    #
+    # HIDDEN MEANS NOT OFFERED, not merely undrawn: the keyboard's Up/Down and the
+    # mouse wheel stop driving it too, and the joystick's focus cycle skips it.
+    # Leaving those live would be an invisible control, which is the one thing
+    # worse than a useless visible one. The thermostat still runs, at the
+    # playground's `temperature_default`.
+    temperature_dial: bool = True
     # Whether the panel shows the two live readout lines under the sliders (the
     # instantaneous T*/P*, and the controlled bead's KE/PE).
     #

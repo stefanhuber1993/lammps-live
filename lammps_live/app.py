@@ -430,7 +430,13 @@ class App:
             self.color_choice.options = modes
             self.color_choice.index = modes.index(self.renderer.bead_color_mode)
             choices = (self.color_choice,)
-        self.focus.set_stops([s for s in self._sliders() if not s.advanced], choices)
+        # A stop on a widget that is not drawn is a stop the hand cannot see, so
+        # the dial leaves the cycle on a scene that does not offer it -- the same
+        # rule the bead-colour toggle follows when a scene offers no colouring.
+        stops = [s for s in self._sliders() if not s.advanced]
+        if not self._temperature_offered():
+            stops = [s for s in stops if s is not self.temp_slider]
+        self.focus.set_stops(stops, choices)
         self._focus_released_puller = False
         # A different box, and a lever nobody has touched since: start whole again.
         self.view_slice.reset()
@@ -716,8 +722,22 @@ class App:
                       f"{type(exc).__name__}: {exc}")
 
     def _sliders(self):
-        """Every slider that can be dragged, whatever system is loaded."""
+        """Every slider that can be dragged, whatever system is loaded.
+
+        Always includes the temperature dial, even on a scene that does not offer
+        it: this is the list the renderer is handed and the list reset walks, and
+        the dial still exists and still drives the thermostat there -- it is only
+        not a control the user is given. What EXCLUDES it is `_temperature_offered`,
+        at each of the four places that would otherwise let a hand move it.
+        """
         return [self.temp_slider, self.damping_slider, *self.extra_sliders]
+
+    def _temperature_offered(self):
+        """Whether this playground gives the user the temperature dial (see
+        Lesson.temperature_dial). False on the two-bead scene, whose whole subject
+        is a reading that holds still."""
+        lesson = self.system.spec.lesson if self.system is not None else None
+        return lesson is None or lesson.temperature_dial
 
     def _drop_lost_drags(self, event):
         """End any drag the left button is demonstrably no longer holding.
@@ -803,7 +823,7 @@ class App:
                 # position of its own, so ask where the pointer is.
                 if self.orbit_cam is not None and self._in_sim_view(pygame.mouse.get_pos()):
                     self.orbit_cam.zoom(event.y)
-                else:
+                elif self._temperature_offered():
                     step = self.temp_slider.vmax - self.temp_slider.vmin
                     self.temp_slider.nudge(event.y * config.TEMP_WHEEL_STEP_FRACTION * step)
             elif self._handle_orbit_mouse(event):
@@ -842,7 +862,8 @@ class App:
                         if self.damping_slider.advanced:
                             self.damping_slider.dragging = False
                     continue
-                self.temp_slider.handle_event(event)
+                if self._temperature_offered():
+                    self.temp_slider.handle_event(event)
                 # Hidden advanced sliders don't receive events (their rects are
                 # parked off-screen while collapsed anyway).
                 if not (self.damping_slider.advanced and not self.show_advanced):
@@ -859,12 +880,13 @@ class App:
         self._poll_device_buttons()
         self._sync_orbit_camera(dt)
         keys = pygame.key.get_pressed()
-        temp_range = self.temp_slider.vmax - self.temp_slider.vmin
-        rate = config.TEMP_KEY_RATE_FRACTION * temp_range
-        if keys[pygame.K_UP]:
-            self.temp_slider.nudge(rate * dt)
-        if keys[pygame.K_DOWN]:
-            self.temp_slider.nudge(-rate * dt)
+        if self._temperature_offered():
+            temp_range = self.temp_slider.vmax - self.temp_slider.vmin
+            rate = config.TEMP_KEY_RATE_FRACTION * temp_range
+            if keys[pygame.K_UP]:
+                self.temp_slider.nudge(rate * dt)
+            if keys[pygame.K_DOWN]:
+                self.temp_slider.nudge(-rate * dt)
         return True
 
     def _on_color_chosen(self, index):
