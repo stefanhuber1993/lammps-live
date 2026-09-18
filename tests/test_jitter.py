@@ -236,7 +236,10 @@ def test_a_frame_rate_change_is_not_a_temperature_change():
 def test_the_defaults_are_the_ones_the_slider_offers():
     """The slider is built from these, so a typo here is a silently different
     demo rather than an error."""
-    assert 0.0 < jitter.DEFAULT_JITTER <= jitter.JITTER_MAX
+    # Zero is a legal default and is the one shipping now -- the effect is off
+    # until someone drags the slider up. What this still catches is a default
+    # past the top of the slider's own range.
+    assert 0.0 <= jitter.DEFAULT_JITTER <= jitter.JITTER_MAX
     assert jitter.TAU_WALL > 1.0 / 60      # correlated over more than one frame
 
 

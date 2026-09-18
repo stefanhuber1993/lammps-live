@@ -87,15 +87,22 @@ import numpy as np
 from .state import normalize_rows
 
 # The slider, in units of "as much motion as a full-rate wire would have shown".
-# 1.0 is the honest setting and the default: the frames BETWEEN arrivals -- the
-# ones that would otherwise be frozen -- carry the same amount of movement they
-# would have if every frame had been sent, which with the Smoothing slider at
-# zero (where it lives) is what stops the scene reading as colder than the
-# thermostat it is running at.
+# 1.0 is the honest setting -- the frames BETWEEN arrivals, the ones that would
+# otherwise be frozen, carry the same amount of movement they would have if every
+# frame had been sent, which with the Smoothing slider at zero (where it lives)
+# is what stops the scene reading as colder than the thermostat it is running at.
 #
 # It is meaningful as a ratio only because the amplitude is derived from a
 # measured per-frame step rather than from an excursion; see `_sigma_for`.
-DEFAULT_JITTER = 1.0
+#
+# THE DEFAULT IS NONETHELESS ZERO, i.e. the effect ships OFF. Everything above is
+# still true of what it does; what is no longer taken for granted is that the
+# demo needs it. The wire is fast enough that the stutter it was written to hide
+# is small, and a cosmetic rattle on a scene whose whole claim is "this is
+# running now, not a recording" is a thing to be asked for rather than assumed.
+# The slider is still there, still advanced, so turning it back up mid-demo is
+# one drag -- and 1.0 is what it was tuned at, should this be reverted.
+DEFAULT_JITTER = 0.0
 # The slider's top end. Past 1 the beads visibly move more than the real ones do,
 # which is the point at which the effect stops being invisible -- useful for
 # seeing what it is doing, and for a demo room that wants the scene livelier than
