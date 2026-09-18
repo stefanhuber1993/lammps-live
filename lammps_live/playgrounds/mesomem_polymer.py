@@ -41,14 +41,16 @@ a teal-to-magenta ramp along each ring's own contour instead, which is the one
 thing about them nothing else in the picture shows: a strand can be followed by eye
 through the melt (see VesiclePolymer.render_tints).
 
-SIZE, AND WHY THESE NUMBERS. 18,000 membrane beads at the paper's benchmark
-spacing make a vesicle of radius ~34 sigma; 62 rings of 512 beads fill it
-at about the reference system's volume fraction. ~50,000 particles in total, which
+SIZE, AND WHY THESE NUMBERS. 23,120 membrane beads at the spacing a closed
+vesicle is tension-free at make a vesicle of radius ~35 sigma; 62 rings of 512
+beads fill it at about the reference system's volume fraction. ~55,000 particles
+in total, which
 is the size `mesomem_remote` established a GPU can run and this end can draw (see
 that file on what stopped being the limit and why). The collaborator's own run is
 twice this -- 35,280 membrane beads and 125 rings -- and `n_membrane` / `n_polymer`
 below are the two numbers to raise if the wire and the window turn out to have the
-headroom.
+headroom -- but `n_membrane` is not free at a fixed radius, because the spacing it
+implies is what decides whether the envelope holds together (see `a` below).
 
 RUNNING IT. As `mesomem_remote`: select it, connect through the panel, and the
 cluster builds this same file at the other end. For the pipeline without the
@@ -94,46 +96,92 @@ STYLE = DEFAULT_STYLE.varied(
 
 # The two sizes, kept here rather than inline because they are what to change and
 # because the description below quotes them.
-N_MEMBRANE = 18_000
+N_MEMBRANE = 23_120
 N_POLYMER = 32_000
+
+SCENARIO = vesicle_polymer(
+    n_membrane=N_MEMBRANE,
+    n_polymer=N_POLYMER,
+    # THE SPACING A CLOSED VESICLE IS TENSION-FREE AT, which is NOT the flat
+    # sheet's and is the whole reason this scene used to tear itself open.
+    #
+    # A periodic sheet runs under `fix nph/sphere`: it is handed a spacing,
+    # the barostat adjusts the cell, and the membrane reaches zero tension
+    # whatever it started from (mesomem_rod measures 0.775 that way). A
+    # VESICLE HAS NO BAROSTAT. Its area per bead is fixed at build time by the
+    # bead count and the radius -- and the radius is itself derived from the
+    # spacing -- so a spacing that is too loose is a lateral tension the
+    # membrane cannot relieve by any amount of running.
+    #
+    # What it does instead is tear. Measured on the bare vesicle (no polymer,
+    # 18,000 beads, 2000 steps), as `a` comes down:
+    #
+    #     a       R shrinks by   largest gap   surface open
+    #     0.800      -3.9%          3.3 sigma      2.3%
+    #     0.775      -3.8%          3.0            1.2%
+    #     0.740      -3.6%          2.1            0.02%
+    #     0.700      -2.2%          0.7            0%
+    #     0.660      +0.1%          0.7            0%
+    #
+    # 0.7 sigma of gap is the defect-free floor (a/sqrt(3) plus thermal
+    # roughness), so at 0.70 the envelope is intact and stays intact; above
+    # 0.74 it sheds its excess area as ~70 small pores spread over the sphere
+    # -- not at the icosahedron's twelve five-fold vertices, which are its
+    # TIGHTEST-packed spots and the last to open -- and those pores do not
+    # close again. The shrinkage column is the same story read as tension: the
+    # envelope contracting is it trying, and failing, to reach this spacing.
+    #
+    # Denser also COVERS better, so nothing is traded away here: the old
+    # comment worried about a monolayer of radius-sigma/2 beads ceasing to
+    # cover itself above a = sqrt(3)/2 ~ 0.87, and every number that fixes the
+    # tearing moves away from that bound, not toward it. The cost is bead
+    # count: holding the vesicle at the ~35 sigma this demo is framed for
+    # takes 23,120 beads at 0.70 where it took 18,000 at 0.80. See N_MEMBRANE.
+    a=0.70,
+    # Just enough vacuum around the vesicle that it can bulge, and that the
+    # outline reads as a container rather than as a tight shrink-wrap.
+    box_factor=1.12,
+    # Laid over nine tenths of the lumen's radius, which puts the melt at
+    # about the reference system's volume fraction (~0.1) and leaves a couple
+    # of sigma of clearance to the wall. So the scene STARTS as a full
+    # nucleus -- the picture this playground is about -- and the first thing
+    # it does is swell that last stretch into contact.
+    fill_fraction=0.90,
+    # 512 beads a ring, as the reference system. Even, which the ring
+    # construction requires (see state.lattice_ring).
+    ring_side=8,
+    settle_steps=400,
+    # 10 steps a frame. The membrane's own stability sets the ceiling on the
+    # step size and the chains do not lower it -- FENE at these constants is
+    # stable well past 0.005 -- so this is the sheet playgrounds' number.
+    timestep=0.005,
+    sim_time_per_frame=0.05,
+)
+
+# THE COUNTS THE CARD QUOTES, asked of the scenario rather than written down.
+# `n_membrane` is rounded to an icosphere size (they only come in 20*nu^2) and
+# `n_polymer` down to whole rings, so the two constants above are REQUESTS and
+# these are the answers. A number on a screen in front of a room has to be the
+# one actually running, and the two differ by 256 beads as it happens.
+_SP = SCENARIO.new_params()
+N_MEMBRANE_RUN = SCENARIO.subdivision(_SP)[1]
+N_POLYMER_RUN = SCENARIO.particle_count(_SP) - N_MEMBRANE_RUN
+N_TOTAL_RUN = N_MEMBRANE_RUN + N_POLYMER_RUN
+
+
+def _k(n):
+    """55_000 -> "55k". Rounded, not truncated: 31,744 beads of polymer is 32k
+    and calling it 31k understates what is on the screen."""
+    return f"{round(n / 1000)}k"
+
 
 PLAYGROUND = Playground(
     name="MesoMem vesicle + polymer, remote GPU (3D)",
-    description=f"A closed membrane with {N_POLYMER // 1000}k beads of ring "
-                f"polymer sealed inside, on a cluster A100. "
-                f"Slice the view with the thrust lever to see in.",
+    description=f"A {_k(N_MEMBRANE_RUN)}-bead closed membrane with "
+                f"{_k(N_POLYMER_RUN)} beads of ring polymer sealed inside, on a "
+                f"cluster A100. Slice the view with the thrust lever to see in.",
     force_field="mesomem_polymer",
-    scenario=vesicle_polymer(
-        n_membrane=N_MEMBRANE,
-        n_polymer=N_POLYMER,
-        # The paper's benchmark spacing, and the flat sheet playground's. Also
-        # the loosest packing that still gives a CLOSED envelope to look at: with
-        # beads of radius sigma/2 on a triangular lattice, the deepest uncovered
-        # point of a face sits a/sqrt(3) from its corners, so a monolayer stops
-        # covering itself at a = sqrt(3)/2 ~ 0.87 -- and at 0.85 it was covering
-        # by a hundredth of a sigma, which the membrane's own thermal roughness
-        # ate. The result was a shell you could see the polymer through, which is
-        # the opposite of what a sealed vesicle should look like.
-        a=0.80,
-        # Just enough vacuum around the vesicle that it can bulge, and that the
-        # outline reads as a container rather than as a tight shrink-wrap.
-        box_factor=1.12,
-        # Laid over nine tenths of the lumen's radius, which puts the melt at
-        # about the reference system's volume fraction (~0.1) and leaves a couple
-        # of sigma of clearance to the wall. So the scene STARTS as a full
-        # nucleus -- the picture this playground is about -- and the first thing
-        # it does is swell that last stretch into contact.
-        fill_fraction=0.90,
-        # 512 beads a ring, as the reference system. Even, which the ring
-        # construction requires (see state.lattice_ring).
-        ring_side=8,
-        settle_steps=400,
-        # 10 steps a frame. The membrane's own stability sets the ceiling on the
-        # step size and the chains do not lower it -- FENE at these constants is
-        # stable well past 0.005 -- so this is the sheet playgrounds' number.
-        timestep=0.005,
-        sim_time_per_frame=0.05,
-    ),
+    scenario=SCENARIO,
     mode="sim",
     observables=["vesicle_radius", "polymer_gyration", "polymer_contact"],
     bead_colors=("director", "energy"),
@@ -146,9 +194,22 @@ PLAYGROUND = Playground(
     #
     # No hook: there is nothing after this one. No hero knob either, for the remote
     # scene's reason.
+    #
+    # THE COUNT IS IN THE TITLE HERE, where the sibling remote scene keeps it in
+    # the claim. Both are deliberate and they are not the same situation: "At
+    # scale" has one number and the claim can carry it in words, while this scene
+    # has TWO worth saying (the envelope and what is sealed in it) and a total
+    # that is the largest thing the demo runs. So the title says the total, which
+    # is the number a presenter says out loud and the one that is impressive
+    # because it is happening on a machine somewhere else, and the claim breaks it
+    # into the two halves the picture actually shows.
+    #
+    # Interpolated from N_*_RUN, never typed: raise the bead counts above and this
+    # line follows, where a hardcoded "55k" would quietly start lying.
     lesson=Lesson(
-        title="A vesicle",
-        claim="A closed bilayer with a polymer sealed inside. Still the same three terms.",
+        title=f"A vesicle, {_k(N_TOTAL_RUN)} beads",
+        claim=f"{_k(N_MEMBRANE_RUN)} of membrane closed around "
+              f"{_k(N_POLYMER_RUN)} of polymer. Still the same three terms.",
         instruction="Cut the vesicle open with the lever to see inside it.",
     ),
     presets={
