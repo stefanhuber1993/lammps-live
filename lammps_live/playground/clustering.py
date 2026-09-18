@@ -450,7 +450,7 @@ def neighbour_graph(centre, radius, box, count):
 
     A rank rather than a distance threshold, deliberately. A threshold needs a
     length, and there is no length here that means the same thing on a 20-sigma
-    cell holding one membrane and a 109-sigma cell holding a thousand droplets;
+    cell holding one membrane and an 87-sigma cell holding a thousand droplets;
     "the four nearest" means the same thing on both. It is also the more stable of
     the two over time -- a cluster drifting past a fixed radius flips in and out
     of the constraint, while a rank changes only when clusters overtake each

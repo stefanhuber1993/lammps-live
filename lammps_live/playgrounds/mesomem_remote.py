@@ -6,7 +6,7 @@ fraction phi, coarsening under Langevin dynamics. Every coefficient, the
 thermostat, the two watchability nudges and the whole look are that playground's;
 what changes is where it runs and therefore how big it can be.
 
-    N = 50,000 beads in a 109 sigma cell, against 1,500 in a 20 sigma cell.
+    N = 50,000 beads in an 87 sigma cell, against 1,500 in a 20 sigma cell.
 
 WHAT SETS THE SIZE. It used to be the *client*, not the GPU: the Python analysis
 rebuilt a full pair list over every bead, which docs/a100-plan.md section 3
@@ -52,8 +52,8 @@ from ..render_style import CameraOrbit
 
 # The size, and the cell that puts it at the chosen volume fraction. Written as
 # the relation rather than as a number so changing N keeps the physics: with
-# Vp = (pi/6) sigma^3, phi = N*Vp/L^3, so L = (N*(pi/6)/phi)^(1/3). 10k at
-# phi = 0.1 is 37.41 sigma, which holds several independent membranes rather than
+# Vp = (pi/6) sigma^3, phi = N*Vp/L^3, so L = (N*(pi/6)/phi)^(1/3). 50k at
+# phi = 0.04 is 86.82 sigma, which holds several independent membranes rather than
 # the single one the 1500-bead cell manages.
 N_BEADS = 50_000
 PHI = 0.04
@@ -91,7 +91,7 @@ PLAYGROUND = Playground(
     # by accident.
     lesson=Lesson(
         title="At scale",
-        claim="Ten thousand beads on a cluster GPU, computed there and drawn here.",
+        claim="Fifty thousand beads on a cluster GPU, computed there and drawn here.",
         instruction="Drag to orbit. This is running now, not a recording.",
         hook="This sheet has no edges, but it is not closed. What if it closes?",
     ),
