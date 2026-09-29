@@ -168,7 +168,13 @@ class ParamSet:
         specs = []
         for p in self.live_params():
             lo, hi = (range_overrides or {}).get(p.name, (p.vmin, p.vmax))
-            specs.append(dataclasses.replace(p, vmin=lo, vmax=hi).slider_spec())
+            # THE SLIDER STARTS AT THIS SET'S VALUE, not the declaration's: a
+            # playground's own override or a preset is what the system is built
+            # with, and the app pushes every slider into the system every frame
+            # -- so a slider left at the declared default silently undid the
+            # override on the first frame.
+            specs.append(dataclasses.replace(
+                p, vmin=lo, vmax=hi, default=self.values[p.name]).slider_spec())
         return tuple(specs)
 
     def tier_of(self, name):

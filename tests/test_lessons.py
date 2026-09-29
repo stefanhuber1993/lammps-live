@@ -456,3 +456,16 @@ def test_the_two_bead_scene_offers_no_temperature_dial():
     # And it is the only one: every other scene has a membrane whose state the
     # temperature genuinely changes.
     assert [k for k, l in lessons.items() if not l.temperature_dial] == ["mesomem_bead"]
+
+
+def test_a_playgrounds_own_parameter_values_reach_its_sliders():
+    """The app pushes every slider into the system every frame, so a slider that
+    started at the force field's declared default instead of the playground's
+    own value undid that value on the first frame."""
+    from lammps_live.playground.system import make_spec
+    for key, name, value in (("mesomem_rod", "eps_rod", 1.0),
+                             ("mesomem_vesicle_chain", "k_bend", 0.0)):
+        pg = registry.load(key)
+        spec = make_spec(pg, pg.mode)
+        default = {s.key: s.default for s in spec.extra_sliders}[name]
+        assert default == value, (key, name, default)
