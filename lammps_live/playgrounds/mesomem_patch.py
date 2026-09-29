@@ -103,7 +103,8 @@ PLAYGROUND = Playground(
     # can be reached either as a place to start or as a place to visit and come
     # back from.
     lesson=Lesson(
-        title="Push",
+        title="A seven-bead membrane patch answering a force that pulls one bead out of plane",
+        ui=("panel", "energy"),
         claim="Pull one bead out of the patch and its neighbours lean to follow.",
         instruction="Drag the middle bead out of the plane, then let go of it.",
         hook="You pushed it. What happens if you only turn it?",

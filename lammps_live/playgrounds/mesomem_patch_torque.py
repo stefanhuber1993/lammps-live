@@ -117,7 +117,8 @@ PLAYGROUND = Playground(
     # button appearing on only one of two scenes that are meant to be read as
     # identical is a difference the eye has to rule out.
     lesson=Lesson(
-        title="Twist",
+        title="A seven-bead membrane patch answering a torque that turns one bead's orientation",
+        ui=("panel", "energy"),
         claim="Turn one arrow far enough and it flips over to face the other way.",
         instruction="Twist the middle arrow with Q and E, or with the stick.",
         hook="Seven beads hold together. Does a real membrane stay flat?",

@@ -465,7 +465,8 @@ PLAYGROUND = Playground(
     # rod, and a cold membrane deforms like a sheet of foil instead -- so rather
     # than a Heat button the scene simply opens at the sheet's warm T = 0.2.
     lesson=Lesson(
-        title="It wraps",
+        title="A fluid membrane adhering to and wrapping a rod-shaped particle, as in endocytosis",
+        ui=("panel", "energy", "colour", "plots", "readings", "status"),
         claim="The membrane sticks to the rod and bends around it. Cells eat this way.",
         instruction="Steer the rod into the sheet. Cut it open with the lever to look.",
         hook="Three thousand beads on a laptop. Does it hold at ten times that?",

@@ -75,12 +75,15 @@ def test_lesson_position_places_each_scene_and_declines_to_place_the_others():
 # ---- the three lines ------------------------------------------------------
 
 def test_every_card_line_fits_the_narrowest_window():
-    """The card is drawn straight onto the scene with no wrapping, so a line too
-    long for the sim view runs under the position rail or off the edge. Measured
-    against the real fonts at the real layout."""
+    """The title is a full sentence and wraps (shrinking to fit two lines where
+    it can), but even on the narrowest window to at most three lines; the
+    instruction is not wrapped at all, so it has to fit on one. (The claim is no
+    longer drawn over the scene.) Measured against the real fonts at the real
+    layout."""
     import pygame
+    from lammps_live.ui.renderer import _wrap_items
     from lammps_live.ui.scale import UI
-    from lammps_live.ui.theme import LESSON_CLAIM_SIZE, LESSON_TITLE_SIZE, PANEL_WIDTH
+    from lammps_live.ui.theme import PANEL_WIDTH
 
     # FONTS ONLY, no display. `pygame.display.set_mode` is process-global: calling
     # it here resized the display surface that test_pair_annotation's module-scoped
@@ -88,19 +91,23 @@ def test_every_card_line_fits_the_narrowest_window():
     # 10x10 px. Font metrics need `font.init()` and nothing else.
     pygame.font.init()
     sim_w = NARROWEST_WINDOW - UI(PANEL_WIDTH)
-    fonts = {"title": UI.font(LESSON_TITLE_SIZE, bold=True),
-             "claim": UI.font(LESSON_CLAIM_SIZE),
-             "instruction": UI.font(18)}
+    # The smallest of the sizes the card falls back to (Renderer.TITLE_SIZES).
+    title_font = UI.brand_font(22, bold=True)
+    body = UI.font(18)
     over = {}
     for key, pg in _offered():
         index = registry.lesson_position(key)[0]
-        for slot, text in (("title", f"{index}. {pg.lesson.title}"),
-                           ("claim", pg.lesson.claim),
-                           ("instruction", pg.lesson.instruction)):
-            width = UI(10) + fonts[slot].size(text)[0]
-            if width > sim_w - UI(16):
-                over[f"{key}.{slot}"] = width
-    assert not over, f"card lines wider than a {NARROWEST_WINDOW}px window: {over}"
+        room = sim_w - UI(32)
+        if pg.lesson.ui is not None and "snellius" in pg.lesson.ui:
+            room -= UI(260)
+        rows = _wrap_items(f"{index}.  {pg.lesson.title}".split(" "), title_font,
+                           room, " ")
+        if len(rows) > 3:
+            over[f"{key}.title"] = len(rows)
+        width = UI(16) + body.size(pg.lesson.instruction)[0]
+        if width > sim_w - UI(16):
+            over[f"{key}.instruction"] = width
+    assert not over, f"card lines too long for a {NARROWEST_WINDOW}px window: {over}"
 
 
 def test_no_card_line_is_written_in_dashes():

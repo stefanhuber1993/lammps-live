@@ -344,6 +344,12 @@ class Lesson:
     # the torque patch are about a single interaction and the hands are already the
     # experiment.
     hero_knobs: tuple = ()
+    # WHICH PIECES OF THE INTERFACE THIS SCENE SHOWS, by name (see
+    # ui/disclosure.py for the names and what each one is). None shows
+    # everything. The sequence starts bare -- the two-bead scene shows none of
+    # them -- and each later scene adds what it needs; an element that appears
+    # for the first time gets an arrow saying what it is.
+    ui: tuple = None
 
 
 @dataclass(frozen=True)

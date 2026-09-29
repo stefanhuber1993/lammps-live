@@ -20,7 +20,14 @@ line lands on a whole pixel. Sharp, and the right size.
 `UI.factor == 1.0` reproduces the original layout exactly (`UI(n) == n` for
 integer n), so the default costs nothing.
 """
+import os
+
 import pygame
+
+# SURF's heading typeface (Nunito, SIL Open Font License), bundled so the titles
+# and the Snellius badge look the same on any machine the demo is run from.
+BRAND_FONT_PATH = os.path.join(os.path.dirname(__file__), "assets",
+                               "Nunito-VariableFont_wght.ttf")
 
 
 class _UIScale:
@@ -44,6 +51,16 @@ class _UIScale:
     def font(self, size, bold=False):
         """A UI font of a size quoted at scale 1 -- rasterized at final size."""
         return pygame.font.SysFont(None, self(size), bold=bold)
+
+    def brand_font(self, size, bold=False):
+        """The same, in the bundled brand face -- falling back to the UI font if
+        the file is missing, so a stripped install still runs."""
+        try:
+            font = pygame.font.Font(BRAND_FONT_PATH, self(size))
+        except (OSError, FileNotFoundError):
+            return self.font(size, bold=bold)
+        font.set_bold(bold)
+        return font
 
 
 UI = _UIScale()

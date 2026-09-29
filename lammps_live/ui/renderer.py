@@ -14,6 +14,7 @@ from ..render_style import DEFAULT_STYLE
 from .gl3d import GLScene, proj_matrix, view_matrix
 from .glcompositor import GLCompositor
 from .plotting import draw_plot
+from . import disclosure
 from .scale import UI, auto_ui_scale, set_ui_scale
 from .widgets import Button
 from .theme import (
@@ -171,6 +172,10 @@ class Renderer:
         self.windowed_size = (min(self.desktop_size[0], UI(window_size[0])),
                               min(self.desktop_size[1], UI(window_size[1])))
         self.fullscreen = fullscreen
+        # Whether the right-hand instrument panel is drawn at all. Off on a scene
+        # that shows none of it (see ui/disclosure.py): the sim view then takes
+        # the whole window. Changed through set_panel_visible, which re-lays out.
+        self.panel_visible = True
         self._init_display()   # sets screen + all size-dependent layout state
 
         self.font = UI.font(18)
@@ -179,8 +184,22 @@ class Renderer:
         # The lesson card's two large sizes (see theme.LESSON_*): the title is set
         # to survive a projector at the back of a room, the claim to be read
         # without competing with it.
-        self.lesson_font = UI.font(LESSON_TITLE_SIZE, bold=True)
+        self.lesson_font = UI.brand_font(LESSON_TITLE_SIZE, bold=True)
         self.claim_font = UI.font(LESSON_CLAIM_SIZE)
+        # The Snellius badge: SURF's logo and the machine's name in SURF's face.
+        self.brand_big_font = UI.brand_font(30, bold=True)
+        self.brand_small_font = UI.brand_font(15)
+        self._surf_logo = None
+        try:
+            import os as _os
+            self._surf_logo = pygame.image.load(_os.path.join(
+                _os.path.dirname(__file__), "assets", "surf_logo.png"))
+        except (OSError, pygame.error):
+            pass
+        self._surf_logo_scaled = {}
+        # Where each disclosable element (ui/disclosure.py) was drawn this frame,
+        # for the callouts that point at them. Refilled every frame.
+        self._ui_rects = {}
 
         # Collapsible "Advanced" slider group: the app owns the open/closed state
         # (self.show_advanced, set before each draw) and reads back the clickable
@@ -275,8 +294,10 @@ class Renderer:
         drawing targets, later composited over the GL scene (see GLCompositor); in
         the CPU fallback it is the display surface set by the caller's set_mode."""
         self.window_size = tuple(size)
-        self.panel_width = UI(PANEL_WIDTH)
+        self.panel_width = UI(PANEL_WIDTH) if self.panel_visible else 0
         self.sim_width = max(UI(200), size[0] - self.panel_width)
+        if not self.panel_visible:
+            self.sim_width = size[0]
         self.panel_rect = pygame.Rect(self.sim_width, 0, self.panel_width, size[1])
         self.box_x = self.box_y = None
         self.scale = self.ox = self.oy = None
@@ -359,6 +380,17 @@ class Renderer:
         if not self.gl_enabled:
             self.screen = pygame.display.set_mode(size, mode_flag)
         self._apply_layout(size)
+
+    def set_panel_visible(self, visible):
+        """Show or hide the instrument panel, re-laying the window out if that
+        changes anything. Returns whether it did -- the caller then has to redo
+        whatever depends on the sim viewport's size (camera, mouse mapping)."""
+        visible = bool(visible)
+        if visible == self.panel_visible:
+            return False
+        self.panel_visible = visible
+        self._apply_layout(self.window_size)
+        return True
 
     def is_fullscreen(self):
         """True if the view currently fills the screen -- either our own SDL
@@ -678,7 +710,10 @@ class Renderer:
         surfs = [self.font.render(t, True, HUD_TEXT_COLOR) for t in lines]
         h = sum(s.get_height() for s in surfs) + 2 * pad
         w = max(s.get_width() for s in surfs) + 2 * pad
-        y0 = self.window_size[1] - h - UI(10)
+        # Bottom-left, but raised clear of the playback row, which it used to sit
+        # underneath.
+        y0 = (self.window_size[1] - h - UI(self.PLAY_H) - UI(self.PLAY_BOTTOM)
+              - UI(12))
         bg = pygame.Surface((w, h), pygame.SRCALPHA)
         bg.fill(HUD_BG)
         self.screen.blit(bg, (UI(10), y0))
@@ -1513,6 +1548,7 @@ class Renderer:
         # for a scene with no card.
         y0 = UI(48) if y0 is None else int(y0)
         h = title_h + len(rows) * row_h + pad
+        bottom = y0 + h
         bg = pygame.Surface((w, h), pygame.SRCALPHA)
         bg.fill(POTENTIAL_PANEL_BG)
         self.screen.blit(bg, (x, y0))
@@ -1548,6 +1584,7 @@ class Renderer:
                 pygame.draw.line(self.screen, col, (cx, by), (cx + blen, by),
                                  UI.w(4) if not is_total else UI.w(5))
             y += row_h
+        return bottom
 
     def _draw_cone(self, base_screen, tip_screen, half_w, color):
         """A filled director 'spike': a triangle from a base of width 2*half_w
@@ -2676,7 +2713,11 @@ class Renderer:
         # over a card written for a room they are what they always were, which is
         # diagnostics.
         top = self._draw_lesson_card(spec, lesson_position)
-        self._draw_chapter_rail(spec, lesson_position, acts, current_key)
+        ui = disclosure.shown(spec.lesson)
+        if "snellius" in ui:
+            self._draw_snellius_badge(spec)
+        # The position rail is gone: the scene number leads the title, and a row of
+        # tick marks was one more thing to read that said less than that.
         # ON A SCENE WITH NOTHING TO STEER, neither the drive numbers nor the
         # colour legend is about anything: a playback playground has no controlled
         # particle, so "input force: (0.0, 0.0)" is a pair of zeros that cannot
@@ -2687,40 +2728,56 @@ class Renderer:
         font = self.small_font if spec.lesson is not None else self.font
         if not steered:
             drive_str = ""
-        label = font.render(
-            (f"sim time: {sim_time_str}   steps: {total_steps:,} ({steps_per_frame}/frame)   "
-             f"{drive_str}fps: {fps:4.0f}")
-            if spec.lesson is not None else
-            (f"{spec.name}  |  sim time: {sim_time_str}   steps: {total_steps:,} ({steps_per_frame}/frame)   "
-             f"{drive_str}fps: {fps:4.0f}"),
-            True, spec.render_style.text_color,
-        )
-        self.screen.blit(label, (UI(10), top))
-        top += label.get_height() + UI(2)
-        if not steered:
-            self._draw_potential_stack(spec, top, potential_terms,
-                                       total_potential_terms)
-            self._draw_hud(hud_lines)
+        # THE STATUS LINE ONLY WHERE THE SCENE SHOWS IT (or under --debug, where
+        # every number is wanted). On the taught scenes it is just the clock --
+        # the drive numbers are an expert's readout, and the arrows already draw
+        # them.
+        show_status = "status" in ui or bool(debug_line)
+        label = None
+        if show_status and spec.lesson is not None and not debug_line:
+            label = font.render(f"simulated time: {sim_time_str}", True,
+                                spec.render_style.text_color)
+        elif show_status:
+            head = "" if spec.lesson is not None else f"{spec.name}  |  "
+            label = font.render(
+                f"{head}sim time: {sim_time_str}   steps: {total_steps:,} "
+                f"({steps_per_frame}/frame)   {drive_str}fps: {fps:4.0f}",
+                True, spec.render_style.text_color)
+        if show_status and label is not None:
+            self.screen.blit(label, (UI(16), top))
+            self._ui_rects["status"] = pygame.Rect(UI(16), top, label.get_width(),
+                                                   label.get_height())
+            top += label.get_height() + UI(2)
+        show_energy = "energy" in ui
+        if not steered or not show_energy:
+            if show_energy:
+                self._draw_potential_stack(spec, top, potential_terms,
+                                           total_potential_terms)
+            if "readings" in ui:
+                self._draw_hud(hud_lines)
             self._draw_debug_line(debug_line)
             return
         legend = font.render(
-            "green = your twist, red = membrane reaction   |   the stick tips the "
-            "center bead's director (WASD/mouse); each ring is that torque's "
-            "rotation, drawn in the plane it turns in"
+            "green = your twist,  red = the membrane twisting back"
             if torque_drive else
-            "green = your pull/twist, red = membrane reaction   |   drag the center bead (WASD/mouse); twist / Q-E / L-R click rotates its director",
+            "green = your push,  red = the membrane pushing back",
             True, spec.render_style.dim_text_color,
         )
-        self.screen.blit(legend, (UI(10), top))
+        self.screen.blit(legend, (UI(16), top))
+        legend_top = top
         top += legend.get_height() + UI(6)
         # Puller-bead breakdown on the left; the whole-system total (if the system
         # supplies one) as a second panel just to its right. Both start below
         # whatever the stack above them came to, rather than at a fixed height:
         # with a lesson card up there the old constant put them through the middle
         # of the instruction line.
-        self._draw_potential_stack(spec, top, potential_terms,
-                                   total_potential_terms)
-        self._draw_hud(hud_lines)
+        bottom = self._draw_potential_stack(spec, top, potential_terms,
+                                            total_potential_terms)
+        self._ui_rects["energy"] = pygame.Rect(
+            UI(12), legend_top, max(UI(312), legend.get_width()),
+            max(bottom, top) - legend_top)
+        if "readings" in ui:
+            self._draw_hud(hud_lines)
         self._draw_debug_line(debug_line)
 
     def _draw_potential_stack(self, spec, top, potential_terms,
@@ -2739,11 +2796,14 @@ class Renderer:
         if spec.lesson is None or spec.lesson.system_energy:
             panels.append(total_potential_terms)
         px = 12
+        bottom = top
         for decomposition in panels:
             if not decomposition:
                 continue
-            self._draw_potential_panel(decomposition, x=px, y0=top)
+            bottom = max(bottom, self._draw_potential_panel(decomposition, x=px,
+                                                            y0=top) or top)
             px += 324
+        return bottom
 
     def draw_sim(self, positions, is_puller, puller_pos, input_force, reaction_force,
                  fps, spec, heat_fraction=0.0, sim_time_ps=0.0, atom_trails=None,
@@ -2952,25 +3012,73 @@ class Renderer:
             return UI(10)
         text_col = spec.render_style.text_color
         dim_col = spec.render_style.dim_text_color
-        x, y = UI(10), UI(10)
-
+        x, y = UI(16), UI(12)
+        # The title is a full descriptive sentence now (about ten words), so it
+        # wraps to the sim view's width rather than running off it -- leaving room
+        # at the right for the Snellius badge on the scenes that carry one.
+        room = self.sim_width - x - UI(16)
+        if "snellius" in disclosure.shown(lesson):
+            room -= UI(260)
         index = position[0] if position else 0
-        # "3. Twist" -- ordinal numbering, the way a slide is numbered, and how a
-        # presenter says it out loud. No separator character: this file's
-        # convention is ASCII throughout (the codebase writes "--" for a dash and
-        # spells out sigma), and a spaced middle dot in ASCII is a stray period.
-        head = f"{index}. {lesson.title}" if index else lesson.title
-        surf = self.lesson_font.render(head, True, text_col)
-        self.screen.blit(surf, (x, y))
-        y += surf.get_height() + UI(LESSON_TITLE_GAP)
-
-        claim = self.claim_font.render(lesson.claim, True, text_col)
-        self.screen.blit(claim, (x, y))
-        y += claim.get_height() + UI(LESSON_CLAIM_GAP)
-
+        head = f"{index}.  {lesson.title}" if index else lesson.title
+        font, rows = self._fit_title(head, room)
+        for row in rows:
+            surf = font.render(row, True, text_col)
+            self.screen.blit(surf, (x, y))
+            y += surf.get_height()
+        y += UI(LESSON_TITLE_GAP)
         instr = self.font.render(lesson.instruction, True, dim_col)
         self.screen.blit(instr, (x, y))
+        # Callouts keep below this, so an arrow never covers the title.
+        self._title_bottom = y + instr.get_height()
         return y + instr.get_height() + UI(LESSON_BLOCK_GAP)
+
+    # The title's sizes, largest first: the largest that fits in two lines wins,
+    # so a narrow window shrinks the title rather than stacking it four deep.
+    TITLE_SIZES = (LESSON_TITLE_SIZE, 26, 22)
+
+    def _fit_title(self, text, room):
+        """(font, rows) for `text` in `room` px."""
+        fonts = getattr(self, "_title_fonts", None)
+        if fonts is None:
+            fonts = self._title_fonts = [UI.brand_font(n, bold=True)
+                                         for n in self.TITLE_SIZES]
+        for font in fonts:
+            rows = _wrap_items(text.split(" "), font, room, " ")
+            if len(rows) <= 2:
+                return font, rows
+        return fonts[-1], rows
+
+    def _draw_snellius_badge(self, spec):
+        """Top-right of the sim view on the scenes that run on the cluster: SURF's
+        logo and "Snellius" in SURF's own face, so nobody has to be told that this
+        one is not running on the laptop in front of them."""
+        text_col = spec.render_style.text_color
+        dim_col = spec.render_style.dim_text_color
+        right, top = self.sim_width - UI(18), UI(14)
+        name = self.brand_big_font.render("Snellius", True, text_col)
+        sub = self.brand_small_font.render("live on the national supercomputer",
+                                           True, dim_col)
+        logo = None
+        if self._surf_logo is not None:
+            lh = name.get_height() + sub.get_height()
+            logo = self._surf_logo_scaled.get(lh)
+            if logo is None:
+                lw = int(self._surf_logo.get_width() * lh
+                         / self._surf_logo.get_height())
+                logo = pygame.transform.smoothscale(self._surf_logo, (lw, lh))
+                self._surf_logo_scaled[lh] = logo
+        text_w = max(name.get_width(), sub.get_width())
+        gap = UI(12)
+        total_w = text_w + (logo.get_width() + gap if logo is not None else 0)
+        x = right - total_w
+        if logo is not None:
+            self.screen.blit(logo, (x, top))
+            x += logo.get_width() + gap
+        self.screen.blit(name, (x, top - UI(3)))
+        self.screen.blit(sub, (x, top + name.get_height() - UI(3)))
+        h = name.get_height() + sub.get_height()
+        self._ui_rects["snellius"] = pygame.Rect(right - total_w, top, total_w, h)
 
     def _draw_chapter_rail(self, spec, position, acts, current_key):
         """Where this scene sits in the taught sequence, top-right of the sim view:
@@ -3179,15 +3287,13 @@ class Renderer:
         # What the colours mean, on its own line under the button: a colour scale
         # nobody can read is decoration.
         lo, hi = spec.render_style.energy_range
+        # One line: what the colours mean. (It was four; the rest is a talk.)
         caption = {
-            "energy": [f"each bead's potential energy, inferno {lo:g} to {hi:g} eps",
-                       "dark = tightly bound, bright = strained or free"],
-            "cluster": ["connected aggregates, across the periodic walls -- ten",
-                        "colours reused, never near each other; grey = loose beads"],
-        }.get(mode, ["director bands: yellow hydrophobic equator, blue poles",
-                     "the band tilts with the director, so tilt and splay show"])
+            "energy": [f"potential energy per bead: dark = bound, bright = free"],
+            "cluster": ["one colour per connected aggregate; grey = loose beads"],
+        }.get(mode, ["yellow = the oily equator, blue = the poles"])
         cy = y + UI(29)
-        for line in caption + ["white cap marks the +director pole, either way"]:
+        for line in caption:
             self.screen.blit(self.small_font.render(line, True, DIM_TEXT_COLOR),
                              (x, cy))
             cy += UI(14)
@@ -3288,74 +3394,23 @@ class Renderer:
         w = self.panel_width - 2 * UI(PANEL_PAD)
         y = UI(10)
 
-        # Compact picker: number + the scene's LESSON TITLE where it has one, and
-        # the module key where it does not (the shelved playgrounds, and anyone's
-        # own file). The current one is bracketed and drawn brighter.
-        #
-        # The title rather than the key because this row's job is "which number is
-        # the scene I want", and mid-talk the answer is "the one where it wraps",
-        # not "mesomem_rod" -- the module name is a filename, and the full
-        # technical name of the active scene is already in the header directly
-        # below. It is also shorter, so the whole sequence fits in fewer rows.
-        picker_bits = []
-        for i, (key, sys_spec) in enumerate(systems, start=1):
-            label = (sys_spec.lesson.title if sys_spec.lesson is not None
-                     else key)
-            picker_bits.append(f"[{i}>{label}]" if key == current_key
-                               else f"{i}:{label}")
-        # Wrapped, not one line: past about six playgrounds the row runs off the
-        # panel and the last few become unfindable (which is what adding the remote
-        # one did to `cu_deposition`).
-        for row in _wrap_items(picker_bits, self.small_font, w, "  "):
-            self.screen.blit(self.small_font.render(row, True, DIM_TEXT_COLOR), (x, y))
-            y += UI(15)
-        y += UI(3)
-
-        name_surf = self.header_font.render(spec.name, True, HEADER_TEXT_COLOR)
-        self.screen.blit(name_surf, (x, y))
-        y += name_surf.get_height() + UI(2)
-
-        # THE DESCRIPTION IS ONLY FOR A SCENE WITH NO LESSON CARD. Where there is
-        # one, the card over the picture already says what this scene is, in words
-        # written for the room rather than for a `--list` listing, and printing
-        # both put two descriptions of the same thing a hundred pixels apart.
-        # (Wrapped, because the panel is 460 px and a single surface loses its tail
-        # off the right edge -- the same fix the picker row got.)
+        # NO PICKER, NAME, DESCRIPTION OR HOOK ANY MORE. The panel used to open
+        # with the whole sequence as a row of numbered names, the scene's technical
+        # name, and the presenter's hook -- four blocks of small text above the
+        # first control. The title over the scene now says what it is in a full
+        # sentence, the number keys and 3/4 walk the sequence, and the panel is
+        # left holding only things a hand can change.
+        ui = disclosure.shown(spec.lesson)
         if spec.lesson is None:
+            name_surf = self.header_font.render(spec.name, True, HEADER_TEXT_COLOR)
+            self.screen.blit(name_surf, (x, y))
+            y += name_surf.get_height() + UI(2)
             for row in _wrap_items(spec.description.split(" "),
                                    self.small_font, w, " "):
                 self.screen.blit(self.small_font.render(row, True, DIM_TEXT_COLOR),
                                  (x, y))
                 y += UI(15)
-            y += UI(1)
-
-        # THE HOOK: the question this scene leaves open, which the next one
-        # answers. It is what makes eight scenes an argument rather than a menu
-        # (see playground/spec.py's Lesson).
-        #
-        # IN THE PANEL, not over the scene, and the split is deliberate: the scene
-        # carries what the ROOM needs -- the title, the claim, the instruction --
-        # and the panel carries what the person DRIVING needs, which is where to go
-        # next and what to say on the way. The audience should hear the question,
-        # not read it.
-        if spec.lesson is not None and spec.lesson.hook:
-            for row in _wrap_items(("-> " + spec.lesson.hook).split(" "),
-                                    self.small_font, w, " "):
-                self.screen.blit(self.small_font.render(row, True, HOOK_COLOR),
-                                 (x, y))
-                y += UI(15)
-            y += UI(3)
-
-        # THE KEY AND STICK HINTS USED TO BE HERE, three to five wrapped lines of
-        # them, and they are gone. They were the largest block of text in the panel
-        # and the least read: the bindings are discoverable by pushing things (the
-        # hat moves a visible cyan frame, the trigger starts and stops the run, and
-        # every button worth pressing is now drawn under the scene with its own
-        # number on it), and a demo that wants a printed key list wants it on the
-        # poster next to the screen, where a reference can be read without taking a
-        # fifth of the display away from the simulation. KEY_HINTS and the two
-        # others are kept as constants for exactly that: they are the copy for such
-        # a card.
+            y += UI(4)
 
         # A cluster GPU still allocated behind another playground. Amber, and above
         # everything else: an allocation nobody can see is the expensive thing to
@@ -3378,9 +3433,16 @@ class Renderer:
         # The bead colouring is the only Choice in the cycle today, so "a choice
         # holds the focus" and "the colouring holds the focus" are the same
         # question. A second one would want the stop itself passed down here.
-        y = self._draw_bead_color_toggle(
-            x, y, w, spec,
-            focused=(control_focus is not None and control_focus.choice is not None))
+        self._bead_color_visible = False
+        if "colour" in ui:
+            colour_top = y
+            y = self._draw_bead_color_toggle(
+                x, y, w, spec,
+                focused=(control_focus is not None
+                         and control_focus.choice is not None))
+            if self._bead_color_visible:
+                self._ui_rects["colour"] = pygame.Rect(x, colour_top, w,
+                                                       y - colour_top)
 
         pygame.draw.line(self.screen, PANEL_DIVIDER, (x, y), (x + w, y), UI.w(1))
         y += UI(12)
@@ -3406,6 +3468,7 @@ class Renderer:
         # label lands on the divider; adding it unconditionally, on the other hand,
         # left a band of empty panel on a scene whose first row is not drawn at
         # all.
+        sliders_top = y
         if show_temp or basic:
             y += UI(SLIDER_LABEL_H)
         if show_temp:
@@ -3444,6 +3507,8 @@ class Renderer:
                     extra.rect = pygame.Rect(-1000, -1000, 0, 0)
         else:
             self.advanced_toggle_rect = None
+        self._ui_rects["panel"] = pygame.Rect(x - UI(4), sliders_top, w + UI(8),
+                                              max(UI(30), y - sliders_top))
 
         # MesoMem runs in reduced (LJ) units, so its readouts and plot axes drop
         # the Kelvin/bar/eV/m-s labels (meaningless here) for the dimensionless
@@ -3467,9 +3532,11 @@ class Renderer:
         # temperature and g(r) is a single spike. They arrive with the sheet, which
         # is the first scene big enough for a statistic to mean something, and that
         # arrival is itself worth an audience noticing. See Lesson.plots.
-        if spec.lesson is not None and not spec.lesson.plots:
+        if spec.lesson is not None and not (spec.lesson.plots and "plots" in ui):
             return
         self._draw_panel_plots(x, y, w, spec, history, rdf, reduced)
+        self._ui_rects["plots"] = pygame.Rect(x, y, w, self.window_size[1] - y
+                                              - UI(10))
 
     def _draw_panel_readouts(self, x, y, w, spec, thermo_now, puller_energy,
                              puller_speed_m_s, reduced):
@@ -3567,6 +3634,89 @@ class Renderer:
                 ref_lines=[(1.0, DIM_TEXT_COLOR, "gas")],
             )
 
+    CALLOUT_COLOR = (255, 176, 32)
+
+    def draw_callout(self, name, alpha=1.0):
+        """Introduce a new piece of the interface: an amber frame round it, an
+        arrow, and its one line from ui/disclosure.py. `alpha` 1 -> 0 over the
+        callout's fade. Pulses, so it is noticed; placed on the side of the element
+        that faces the middle of the scene, so it does not cover what it points at
+        and does not run off the window."""
+        rect = self._ui_rects.get(name)
+        text = disclosure.ELEMENTS.get(name, "")
+        if rect is None or not text:
+            return
+        pulse = 0.5 + 0.5 * math.sin(time.monotonic() * 5.0)
+        col = self.CALLOUT_COLOR
+        a = int(255 * alpha)
+        frame = pygame.Surface(self.window_size, pygame.SRCALPHA)
+        pygame.draw.rect(frame, (*col, int(a * (0.55 + 0.45 * pulse))),
+                         rect.inflate(UI(10), UI(10)),
+                         width=UI.w(3), border_radius=UI(8))
+
+        surf = self.font.render(text, True, (255, 255, 255))
+        pad_x, pad_y = UI(12), UI(8)
+        bw, bh = surf.get_width() + 2 * pad_x, surf.get_height() + 2 * pad_y
+        W, H = self.window_size
+        gap = UI(46)
+        if rect.left >= self.sim_width - UI(8):
+            # In the panel: bubble to its left, in the scene.
+            bx = rect.left - gap - bw
+            by = rect.centery - bh // 2
+            tip = (rect.left - UI(8), rect.centery)
+            tail = (bx + bw, by + bh // 2)
+        elif rect.centerx > self.sim_width // 2:
+            # Top-right: bubble below, right-aligned with it.
+            bx = rect.right - bw
+            by = rect.bottom + gap
+            tip = (rect.centerx, rect.bottom + UI(8))
+            tail = (min(max(rect.centerx, bx + UI(20)), bx + bw - UI(20)), by)
+        else:
+            # Left side of the scene: bubble to its right.
+            bx = rect.right + gap
+            by = rect.centery - bh // 2
+            tip = (rect.right + UI(8), rect.centery)
+            tail = (bx, by + bh // 2)
+        bx = max(UI(8), min(W - bw - UI(8), bx))
+        by = max(UI(8), min(H - bh - UI(8), by))
+        if bx < self.sim_width:
+            by = max(by, self._title_bottom + UI(8))
+            tail = (tail[0], min(max(tail[1], by), by + bh))
+        pygame.draw.rect(frame, (*col, a), (bx, by, bw, bh),
+                         border_radius=UI(8))
+        pygame.draw.line(frame, (*col, a), tail, tip, UI.w(4))
+        # The arrowhead, at the element.
+        ang = math.atan2(tip[1] - tail[1], tip[0] - tail[0])
+        L = UI(14)
+        head = [tip,
+                (tip[0] - L * math.cos(ang - 0.45), tip[1] - L * math.sin(ang - 0.45)),
+                (tip[0] - L * math.cos(ang + 0.45), tip[1] - L * math.sin(ang + 0.45))]
+        pygame.draw.polygon(frame, (*col, a), head)
+        text_surf = self.font.render(text, True, (25, 20, 10))
+        text_surf.set_alpha(a)
+        frame.blit(text_surf, (bx + pad_x, by + pad_y))
+        self.screen.blit(frame, (0, 0))
+
+    def draw_idle_countdown(self, number):
+        """The last ten seconds before the idle return: a big number in the middle
+        of the scene and what it is counting down to. Goes the moment anything is
+        touched (the app stops asking for it)."""
+        W, H = self.sim_width, self.window_size[1]
+        big = getattr(self, "_count_font", None)
+        if big is None:
+            big = self._count_font = UI.brand_font(160, bold=True)
+        num = big.render(str(number), True, (255, 255, 255))
+        msg = self.font.render("No one here? Going back to the start -- "
+                               "touch anything to stay.", True, (255, 255, 255))
+        w = max(num.get_width(), msg.get_width()) + UI(60)
+        h = num.get_height() + msg.get_height() + UI(40)
+        plate = pygame.Surface((w, h), pygame.SRCALPHA)
+        pygame.draw.rect(plate, (15, 18, 26, 190), plate.get_rect(),
+                         border_radius=UI(18))
+        plate.blit(num, num.get_rect(midtop=(w // 2, UI(10))))
+        plate.blit(msg, msg.get_rect(midtop=(w // 2, num.get_height() + UI(14))))
+        self.screen.blit(plate, ((W - w) // 2, (H - h) // 2))
+
     def draw_toast(self, text, alpha=1.0):
         """A short note centred in the sim view, on a dark pill, fading out over
         its last half second (`alpha` 1 -> 0)."""
@@ -3581,6 +3731,64 @@ class Renderer:
         x = (self.sim_width - w) // 2
         y = int(self.window_size[1] * 0.30)
         self.screen.blit(pill, (x, y))
+
+    def draw_loading(self, spec, position, elapsed, progress=None):
+        """The screen shown while a scene is being built: where the demo is going
+        (number, title, and what to do there) over a progress bar. `progress` is
+        0..1, or None for an indeterminate sweep."""
+        style = spec.render_style if spec.render_3d else None
+        bg = style.background if style is not None else BG
+        fg = style.text_color if style is not None else TEXT_COLOR
+        dim = style.dim_text_color if style is not None else DIM_TEXT_COLOR
+        if self.gl_enabled:
+            self.gl.screen.use()
+            self.gl.clear(*(c / 255.0 for c in bg))
+            self.screen.fill((0, 0, 0, 0))
+        else:
+            self.screen.fill(bg)
+        W, H = self.window_size
+        width = min(W - UI(80), UI(1100))
+        lesson = spec.lesson
+        index = position[0] if position else 0
+        title = lesson.title if lesson is not None else spec.name
+        head = f"{index}.  {title}" if index else title
+        rows = _wrap_items(head.split(" "), self.lesson_font, width, " ")
+        lines = [(self.lesson_font, r, fg) for r in rows]
+        if lesson is not None:
+            lines.append((self.font, "", dim))
+            lines.append((self.font, lesson.instruction, dim))
+        total_h = sum(f.get_height() for f, _, _ in lines)
+        y = H // 2 - total_h - UI(20)
+        for font, text, col in lines:
+            if text:
+                surf = font.render(text, True, col)
+                self.screen.blit(surf, surf.get_rect(midtop=(W // 2, y)))
+            y += font.get_height()
+
+        bar_w, bar_h = min(width, UI(520)), UI(8)
+        bx, by = (W - bar_w) // 2, H // 2 + UI(30)
+        pygame.draw.rect(self.screen, (*dim, 90) if self.gl_enabled else dim,
+                         (bx, by, bar_w, bar_h), border_radius=bar_h // 2)
+        accent = self.CALLOUT_COLOR
+        if progress is None:
+            seg = bar_w // 4
+            t = (elapsed * 0.6) % 1.0
+            sx = bx + int((bar_w + seg) * t) - seg
+            left, right = max(bx, sx), min(bx + bar_w, sx + seg)
+            if right > left:
+                pygame.draw.rect(self.screen, accent, (left, by, right - left,
+                                                       bar_h),
+                                 border_radius=bar_h // 2)
+        else:
+            pygame.draw.rect(self.screen, accent,
+                             (bx, by, max(bar_h, int(bar_w * progress)), bar_h),
+                             border_radius=bar_h // 2)
+        note = self.small_font.render(
+            f"building the simulation ...  {elapsed:4.1f} s", True, dim)
+        self.screen.blit(note, note.get_rect(midtop=(W // 2, by + UI(18))))
+        if self.gl_enabled:
+            self.compositor.present(self.screen)
+        pygame.display.flip()
 
     def draw_splash(self, message, detail=None):
         """One frame saying the app is still coming up.
@@ -3615,13 +3823,15 @@ class Renderer:
               debug_line=None, playback_playing=None, puller_attached=True,
               overlay=None, control_focus=None, remote_note=None,
               lesson_position=None, acts=(), hero_engaged=frozenset(),
-              toast=None):
+              toast=None, callouts=(), overlay_top=None):
         # In GL mode the default framebuffer is cleared first; the 3D scene (if
         # any) is drawn straight into its sim viewport, and every 2D surface is
         # composited over it at the end. In CPU mode self.screen IS the display
         # and everything just draws to it. A 3D system clears to ITS OWN
         # background rather than the UI's, so a light scene does not spend the
         # frame before its first blit as a dark one.
+        self._ui_rects = {}
+        self._title_bottom = 0
         if self.gl_enabled:
             self.gl.screen.use()
             clear_bg = spec.render_style.background if spec.render_3d else BG
@@ -3658,9 +3868,16 @@ class Renderer:
                            total_steps=total_steps, steps_per_frame=steps_per_frame,
                            debug_line=debug_line,
                            puller_attached=puller_attached)
-        self.draw_panel(systems, current_key, sliders, thermo_now, puller_energy,
-                         history, rdf, spec, puller_speed_m_s,
-                         control_focus=control_focus, remote_note=remote_note)
+        if self.panel_visible:
+            self.draw_panel(systems, current_key, sliders, thermo_now,
+                            puller_energy, history, rdf, spec, puller_speed_m_s,
+                            control_focus=control_focus, remote_note=remote_note)
+        elif remote_note:
+            # No panel to carry it, and a GPU still held is not something to hide.
+            note = self.small_font.render(remote_note, True, SLIDER_HANDLE_ACTIVE)
+            self.screen.blit(note, (self.sim_width - note.get_width() - UI(16),
+                                    self.window_size[1] - note.get_height()
+                                    - UI(8)))
         # The scene is what the stick is driving: frame it. Drawn over the sim
         # view (and so over the 3D scene, which in GL mode is already in the
         # framebuffer) rather than around it, because the viewport runs to the
@@ -3678,8 +3895,14 @@ class Renderer:
         # HeroKnob) -- on the playgrounds that declare any.
         self.draw_hero_knobs(spec.lesson.hero_knobs if spec.lesson else (),
                              hero_engaged or frozenset())
+        for name, alpha in callouts or ():
+            self.draw_callout(name, alpha)
         if toast is not None:
             self.draw_toast(*toast)
+        # Anything the app wants above everything but the modal cards (the idle
+        # countdown, the loading and lock screens are drawn by it here).
+        if overlay_top is not None:
+            overlay_top(self)
         # A modal card over the sim view (the remote connect panel). Drawn here
         # rather than by the caller after draw() returns, because in GL mode every
         # 2D surface has to be on self.screen before it is composited -- and

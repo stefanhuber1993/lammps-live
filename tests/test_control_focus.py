@@ -620,9 +620,10 @@ def test_a_stick_that_holds_nothing_gets_a_strong_centring_spring(sim_app):
 
 # ---- the force-feedback playgrounds ---------------------------------------
 
-def test_the_colouring_is_a_stop_here_too(game_app):
-    """Every 3D bead scene gets it, puller playgrounds included -- what the beads
-    are coloured by is the viewer's question, not the mode's."""
+def test_the_colouring_is_not_a_stop_where_its_toggle_is_not_shown(game_app):
+    """The patch offers colourings but does not SHOW the toggle yet -- it arrives
+    with the sheet (see ui/disclosure.py) -- and a stop on a widget that is not
+    drawn is a stop the hand cannot see."""
     assert game_app.system.spec.render_3d
     labels = []
     _flick(game_app, 1)
@@ -630,7 +631,7 @@ def test_the_colouring_is_a_stop_here_too(game_app):
         labels.append(game_app.focus.label)
         _flick(game_app, 0, -1)
     _flick(game_app, -1)                     # back out, so the bead is picked up
-    assert "bead colour (director)" in labels
+    assert not any(label.startswith("bead colour") for label in labels)
 
 
 

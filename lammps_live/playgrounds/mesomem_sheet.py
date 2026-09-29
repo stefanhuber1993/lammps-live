@@ -114,7 +114,8 @@ PLAYGROUND = Playground(
     # neighbours while the sheet still holds together, which is the state a real
     # bilayer is in. The caption gives both numbers, so "warm" is a quantity.
     lesson=Lesson(
-        title="A membrane",
+        title="A periodic sheet of 900 beads held flat by orientation-dependent interactions",
+        ui=("panel", "energy", "colour", "plots", "readings"),
         claim="900 beads and no edges: a piece of bilayer that holds itself flat.",
         instruction="Pull a bead out and let go. Then heat it and watch it flow.",
         hook="Every bead here was placed on a lattice. Was that necessary?",

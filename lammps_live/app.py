@@ -15,8 +15,10 @@ _route_stick / _poll_device_buttons below for the mapping.
 import atexit
 import math
 import os
+import json
 import signal
 import sys
+import threading
 from time import perf_counter
 
 import pygame
@@ -39,6 +41,7 @@ from .ui import (BEAD_COLOR_MODES, AtomTrails, Renderer, RollingHistory,
 from .ui.camera import Camera3D, OrbitController
 from .ui.alert import Alert
 from .ui.remote_panel import RemotePanel
+from .ui import disclosure
 
 STEPS_PER_FRAME_CAP = 200  # sanity cap if a system's timestep is set absurdly small
 
@@ -237,6 +240,18 @@ class App:
 
         self.system_key = None
         self.system = None
+        # A window close that arrived while a build was running (see
+        # _build_with_loading_screen), acted on by the main loop.
+        self._quit_requested = False
+        # THE IDLE RETURN (see _check_idle): when anybody last touched anything,
+        # and whether they have touched anything since the last automatic return
+        # -- a demo already sitting untouched on its first scene has nothing to
+        # return from, and must not reset itself once a minute for nobody.
+        self._last_input = perf_counter()
+        self._idle_armed = False
+        self._prev_lever = None
+        self._callouts = ()
+        self._callouts_since = None
         self._startup_frame("LAMMPS live", f"building {initial_system_key}")
         self._build_system(initial_system_key)
         # Nothing before this point serviced the event queue, so anything in it
@@ -359,8 +374,7 @@ class App:
             self._sim_idle()
             self.system.close()
 
-        self.system = registry.build(key, mode=self.mode_override,
-                                     preset=self.preset)
+        self.system = self._build_with_loading_screen(key)
         self.system_key = key
         spec = self.system.spec
 
@@ -388,6 +402,20 @@ class App:
             self.remote_panel.attach_system(self.system, key)
         else:
             self.remote_panel.detach_system()
+
+        # WHICH PIECES OF THE INTERFACE THIS SCENE SHOWS (see ui/disclosure.py),
+        # starting with the panel: a scene that shows none of it gives the sim
+        # view the whole window, which changes the viewport the camera and the
+        # mouse mapping are laid out on -- so this goes first.
+        ui = disclosure.shown(spec.lesson)
+        if (self.renderer.set_panel_visible("panel" in ui)
+                and self.input_mode == "mouse"):
+            self.source = self._make_source()
+        # And what is new here compared to the scene before it in the sequence,
+        # for the callouts. Their clock starts on the first frame drawn, not now:
+        # the build can take seconds and the arrows are for someone looking.
+        self._callouts = self._introduced_elements(key)
+        self._callouts_since = None
 
         # Box<->screen mapping and (for 3D systems) the perspective camera. The
         # turntable is dropped first: a new system means a new scene, so it must
@@ -431,13 +459,17 @@ class App:
                                              else modes[0])
             self.color_choice.options = modes
             self.color_choice.index = modes.index(self.renderer.bead_color_mode)
-            choices = (self.color_choice,)
+            # A stop only where the toggle is drawn (see ui/disclosure.py).
+            if "colour" in ui:
+                choices = (self.color_choice,)
         # A stop on a widget that is not drawn is a stop the hand cannot see, so
         # the dial leaves the cycle on a scene that does not offer it -- the same
         # rule the bead-colour toggle follows when a scene offers no colouring.
         stops = [s for s in self._sliders() if not s.advanced]
         if not self._temperature_offered():
             stops = [s for s in stops if s is not self.temp_slider]
+        if "panel" not in ui:
+            stops, choices = [], ()
         self.focus.set_stops(stops, choices)
         self._focus_released_puller = False
         # A different box, and a lever nobody has touched since: start whole again.
@@ -474,6 +506,159 @@ class App:
 
         sim_time_per_frame = spec.sim_time_per_frame or config.SIM_TIME_PER_FRAME
         self.steps_per_frame = max(1, min(STEPS_PER_FRAME_CAP, round(sim_time_per_frame / spec.timestep)))
+
+    # Where the last build time of each playground is kept, so the loading bar
+    # can be a real estimate on the second run rather than a guess.
+    BUILD_TIMES_PATH = os.path.join(os.path.expanduser("~"), ".cache",
+                                    "lammps-live", "build_times.json")
+
+    def _load_build_times(self):
+        try:
+            with open(self.BUILD_TIMES_PATH) as fh:
+                return {k: float(v) for k, v in json.load(fh).items()}
+        except (OSError, ValueError, AttributeError):
+            return {}
+
+    def _save_build_times(self, times):
+        try:
+            os.makedirs(os.path.dirname(self.BUILD_TIMES_PATH), exist_ok=True)
+            with open(self.BUILD_TIMES_PATH, "w") as fh:
+                json.dump(times, fh)
+        except OSError:
+            pass
+
+    def _build_with_loading_screen(self, key):
+        """Build `key`'s system on a worker thread while this one keeps the
+        window alive with a loading screen.
+
+        A big scene (the rod's 3600 beads and its settle, a remote scene's local
+        mirror) takes seconds to build, and the build used to run right here, on
+        the thread that draws: the old scene froze mid-frame and nothing said
+        anything was happening. Now the window shows WHERE IT IS GOING -- the
+        scene's number, its title and what to do there -- over a progress bar,
+        so the wait is spent reading about the next scene instead of wondering
+        whether the app has hung. The bar is an estimate from how long this scene
+        took last time (remembered across runs); the first time, it is an
+        indeterminate sweep.
+
+        LAMMPS running off the main thread is nothing new -- every step already
+        does (see stepper.py). A close request during the build is remembered and
+        honoured when the build returns, since a LAMMPS instance mid-construction
+        cannot be abandoned safely.
+        """
+        result = {}
+
+        def work():
+            try:
+                result["system"] = registry.build(key, mode=self.mode_override,
+                                                  preset=self.preset)
+            except BaseException as exc:            # noqa: BLE001 -- re-raised
+                result["error"] = exc
+
+        spec = dict(self.systems).get(key)
+        times = self._load_build_times()
+        expected = times.get(key)
+        started = perf_counter()
+        worker = threading.Thread(target=work, name=f"build-{key}", daemon=True)
+        worker.start()
+        position = registry.lesson_position(key)
+        print(f"[lammps-live] building {key} ...")
+        while worker.is_alive():
+            worker.join(timeout=1 / 30)
+            if not worker.is_alive():
+                break
+            pygame.event.pump()
+            if pygame.event.get(pygame.QUIT):
+                self._quit_requested = True
+            pygame.event.clear()
+            elapsed = perf_counter() - started
+            progress = None
+            if expected:
+                # Eased so it never quite arrives before the build does.
+                progress = min(0.97, 1.0 - math.exp(-2.2 * elapsed / expected))
+            if spec is not None:
+                self.renderer.draw_loading(spec, position, elapsed, progress)
+        if "error" in result:
+            raise result["error"]
+        took = perf_counter() - started
+        print(f"[lammps-live] built {key} in {took:.1f} s")
+        times[key] = took
+        self._save_build_times(times)
+        return result["system"]
+
+    # ---- going back to the start when nobody is there -----------------------
+
+    # A minute with no input returns the demo to its first scene, counting the
+    # last ten seconds down on screen; any input cancels it.
+    IDLE_SECONDS = 60.0
+    IDLE_COUNTDOWN = 10.0
+    # Stick deflection that counts as a hand on it -- above the device's own
+    # rest jitter, below any deliberate push.
+    IDLE_STICK_THRESHOLD = 0.2
+    ACTIVITY_EVENTS = (pygame.KEYDOWN, pygame.MOUSEBUTTONDOWN, pygame.MOUSEWHEEL,
+                       pygame.MOUSEMOTION)
+
+    def _note_input(self):
+        self._last_input = perf_counter()
+        self._idle_armed = True
+
+    def _idle_seconds_left(self):
+        """Seconds until the idle return fires, or None when none is pending:
+        nothing has been touched since the last return, or the connect card is
+        up (somebody may be in the middle of logging in to the cluster, and a
+        queue wait is exactly the kind of minute in which nobody touches
+        anything)."""
+        if not self._idle_armed or self.remote_panel.visible:
+            return None
+        return self.IDLE_SECONDS - (perf_counter() - self._last_input)
+
+    def _check_idle(self):
+        """Fire the idle return when its minute is up: back to the first scene,
+        or -- already on it -- a Reset, so the next visitor finds it fresh."""
+        left = self._idle_seconds_left()
+        if left is None or left > 0.0:
+            return
+        self._idle_armed = False
+        first = self.systems[0][0] if self.systems else None
+        print("[lammps-live] no input for a minute -- back to the start")
+        if first is not None and self.system_key != first:
+            self._build_system(first)
+        else:
+            self._reset_simulation()
+        self._last_input = perf_counter()
+
+    def _draw_idle_countdown(self, renderer):
+        """10, 9, ... 0 over the last eleven seconds: each number is up for one
+        full second, and the return fires as 0 runs out."""
+        left = self._idle_seconds_left()
+        if left is None or left > self.IDLE_COUNTDOWN + 1.0:
+            return
+        renderer.draw_idle_countdown(min(int(self.IDLE_COUNTDOWN), int(left)))
+
+    def _introduced_elements(self, key):
+        """The interface elements `key` shows that the scene before it in the
+        offered order does not (see ui/disclosure.py)."""
+        keys = [k for k, _ in self.systems]
+        if key not in keys or keys.index(key) == 0:
+            return ()
+        specs = dict(self.systems)
+        prev = specs[keys[keys.index(key) - 1]]
+        return disclosure.introduced(specs[key].lesson, prev.lesson)
+
+    def _current_callouts(self):
+        """[(element name, alpha), ...] for this frame."""
+        if not self._callouts:
+            return ()
+        now = perf_counter()
+        if self._callouts_since is None:
+            self._callouts_since = now
+        age = now - self._callouts_since
+        left = disclosure.CALLOUT_SECONDS - age
+        if left <= 0.0:
+            self._callouts = ()
+            return ()
+        alpha = min(1.0, left / disclosure.CALLOUT_FADE)
+        return tuple((name, alpha) for name in self._callouts)
 
     def _cycle_system(self, step=1):
         """Next / previous playground. NO ROLLOVER: the sequence is a talk with a
@@ -665,6 +850,7 @@ class App:
         try:
             while running:
                 running = self._handle_events(dt)
+                self._check_idle()
                 dt = self._tick(dt)
         finally:
             self._shutdown()
@@ -781,7 +967,11 @@ class App:
             s.dragging = False
 
     def _handle_events(self, dt):
+        if self._quit_requested:
+            return False
         for event in pygame.event.get():
+            if event.type in self.ACTIVITY_EVENTS:
+                self._note_input()
             self._drop_lost_drags(event)
             if event.type == pygame.QUIT:
                 return False
@@ -1112,6 +1302,8 @@ class App:
         hat = self.source.poll_hat()
         fired = buttons - self._prev_buttons
         hat_moved = hat != self._prev_hat
+        if fired or hat_moved or buttons:
+            self._note_input()
         self._prev_buttons = buttons
         self._prev_hat = hat
         if self.remote_panel.visible:
@@ -1317,6 +1509,14 @@ class App:
         # memory read like the rest of the cached device state.
         lever = self.source.poll_throttle()
         read_seconds += perf_counter() - t_in
+        # A hand on the stick or the lever is somebody using the demo, even with
+        # no button pressed (see _check_idle).
+        if (max(abs(jx), abs(jy), abs(yaw)) > self.IDLE_STICK_THRESHOLD
+                or (lever is not None and self._prev_lever is not None
+                    and abs(lever - self._prev_lever) > 0.02)):
+            self._note_input()
+        if lever is not None:
+            self._prev_lever = lever
         # Whatever holds the joystick's focus takes the stick first; jx/jy/yaw
         # come back zeroed if the camera or a slider took it.
         jx, jy, yaw = self._route_stick(jx, jy, yaw, dt)
@@ -1531,6 +1731,8 @@ class App:
             acts=self.acts,
             hero_engaged=frozenset(self.hero_engaged),
             toast=self._current_toast(),
+            callouts=self._current_callouts(),
+            overlay_top=self._draw_idle_countdown,
             # Drawn last, inside the renderer, so it lands on top of the 3D scene
             # rather than under the composited frame.
             overlay=self._draw_overlays,

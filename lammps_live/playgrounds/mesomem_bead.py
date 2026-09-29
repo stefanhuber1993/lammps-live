@@ -361,7 +361,8 @@ PLAYGROUND = Playground(
     # and the arithmetic behind it, in one press, before any membrane exists to
     # confuse it with.
     lesson=Lesson(
-        title="One interaction",
+        title="Two coarse-grained membrane beads: attraction, tilt and splay between one pair",
+        ui=(),
         claim="Each bead is a patch of lipid membrane. The arrow is the way it faces.",
         instruction="Drive the beads together and read the three terms between them.",
         hook="That was one pair. What do six neighbours do?",

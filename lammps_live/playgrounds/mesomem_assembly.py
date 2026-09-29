@@ -94,9 +94,10 @@ PLAYGROUND = Playground(
     # orientation away un-builds it into droplets while everything else about the
     # run stays the same.
     lesson=Lesson(
-        title="It builds itself",
+        title="Spontaneous self-assembly of randomly dispersed membrane beads into fluid sheets",
+        ui=("panel", "energy", "colour", "plots", "readings", "status"),
         claim="The same beads, poured in at random. They find the sheet on their own.",
-        instruction="Press Play and watch. Colours mark separate clusters as they merge.",
+        instruction="Press Start (the trigger) and watch. Colours mark separate clusters as they merge.",
         hook="So the beads make a membrane. What is a membrane for?",
         hero_knobs=(VDW_ONLY,),
     ),

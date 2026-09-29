@@ -98,7 +98,8 @@ PLAYGROUND = Playground(
     # the physics of a run somebody is waiting on a queue for is a button pressed
     # by accident.
     lesson=Lesson(
-        title="At scale",
+        title=f"Self-assembly of {N_BEADS:,} membrane beads, computed live on a cluster GPU",
+        ui=("panel", "energy", "colour", "plots", "readings", "status", "snellius"),
         claim="Fifty thousand beads on a cluster GPU, computed there and drawn here.",
         instruction="Drag to orbit. This is running now, not a recording.",
         hook="This sheet has no edges, but it is not closed. What if it closes?",

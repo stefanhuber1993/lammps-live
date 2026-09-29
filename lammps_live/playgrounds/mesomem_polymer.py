@@ -207,7 +207,8 @@ PLAYGROUND = Playground(
     # Interpolated from N_*_RUN, never typed: raise the bead counts above and this
     # line follows, where a hardcoded "55k" would quietly start lying.
     lesson=Lesson(
-        title=f"A vesicle, {_k(N_TOTAL_RUN)} beads",
+        title="A closed membrane vesicle enclosing a dense melt of ring polymers",
+        ui=("panel", "energy", "colour", "plots", "readings", "status", "snellius"),
         claim=f"{_k(N_MEMBRANE_RUN)} of membrane closed around "
               f"{_k(N_POLYMER_RUN)} of polymer. Still the same three terms.",
         instruction="Cut the vesicle open with the lever to see inside it.",
