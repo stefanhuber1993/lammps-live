@@ -67,6 +67,7 @@ flat on the screen cannot do.
 Units are the paper's LJ-reduced units (sigma = eps = m = 1).
 """
 from ..playground import Control, Lesson, Playground, hex_patch
+from ._knobs import VDW_ONLY
 from .mesomem_patch import STYLE
 
 PLAYGROUND = Playground(
@@ -112,9 +113,9 @@ PLAYGROUND = Playground(
     # the same force field, and Tab between them is the experiment). A panel that
     # rearranged itself between the two would hide the one thing that changed.
     #
-    # No hero knob, for the same reason: the patch next door has one, and a button
-    # appearing on only one of two scenes that are meant to be read as identical is
-    # a difference the eye has to rule out.
+    # The same hero knob, for the same reason: the patch next door has one, and a
+    # button appearing on only one of two scenes that are meant to be read as
+    # identical is a difference the eye has to rule out.
     lesson=Lesson(
         title="Twist",
         claim="Turn one arrow far enough and it flips over to face the other way.",
@@ -124,6 +125,7 @@ PLAYGROUND = Playground(
         plots=False,
         system_energy=False,
         panel_readouts=False,
+        hero_knobs=(VDW_ONLY,),
     ),
     presets={
         # mesomem_patch's, verbatim: the same four settings mean the same four

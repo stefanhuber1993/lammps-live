@@ -680,7 +680,17 @@ def test_the_cell_shrinks_as_the_wrap_grows_and_the_runtime_notices():
     cell shrink, and the runtime re-reads it so everything downstream (the pair
     list's minimum-imaging, the drawn box) is talking about the cell that exists.
     """
-    system = registry.build("mesomem_rod")
+    # The reference deck's conditions, not the demo's opening ones: the scene
+    # now opens warm (T = 0.2, where the cell's own thermal expansion swamps the
+    # area a wrap takes) and at eps_rod = 1, and this is a claim about the wrap at
+    # eps_rod = 3, cold. Built that way from the start, so no cooling transient
+    # is mistaken for the wrap.
+    import dataclasses
+    from lammps_live.playground.system import PlaygroundSystem
+    pg = registry.load("mesomem_rod")
+    pg = dataclasses.replace(pg, temperature_default=0.001,
+                             params={**pg.params, "eps_rod": 3.0})
+    system = PlaygroundSystem(pg)
     try:
         before = system.box.lengths[0]
         for _ in range(60):

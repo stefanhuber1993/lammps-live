@@ -124,7 +124,6 @@ original LAMMPS deck is kept beside the pair style, at
 """
 from ..mdsystem import ForceFeedbackProfile
 from ..playground import Control, Lesson, Playground, rod_on_sheet
-from ._knobs import HEAT
 from ..render_style import DEFAULT_STYLE
 
 # The sheet's look, with the two depth effects pulled back. The subject here is a
@@ -448,7 +447,10 @@ PLAYGROUND = Playground(
     # The membrane is one sheet and the rod is one body, so cluster colouring has
     # two colours to give and the species colours already say which is which.
     bead_colors=("director", "energy"),
-    params={"rod_length": ROD_LENGTH, "rod_radius": ROD_RADIUS},
+    # eps_rod starts at 1, not the reference deck's 3: at 1 the rod rests on the
+    # membrane and has to be PRESSED in, so the wrap is something the hand does and
+    # watches happen, rather than something that snaps shut on first contact.
+    params={"rod_length": ROD_LENGTH, "rod_radius": ROD_RADIUS, "eps_rod": 1.0},
     param_ranges={
         # The wrapping transition is the thing worth finding, and it sits well
         # below the membrane's own default stiffness -- a floppy membrane wraps a
@@ -459,15 +461,14 @@ PLAYGROUND = Playground(
     # this is the material doing the thing it exists to do, and the claim says so
     # in the audience's own words rather than in the model's.
     #
-    # HEAT AGAIN, and it earns its place here more than anywhere: a wrap is the
-    # membrane FLOWING around the rod, and a cold membrane deforms like a sheet of
-    # foil instead. Same numbers as the sheet's, from the same dial.
+    # NO HERO KNOB, AND IT STARTS WARM. A wrap is the membrane FLOWING around the
+    # rod, and a cold membrane deforms like a sheet of foil instead -- so rather
+    # than a Heat button the scene simply opens at the sheet's warm T = 0.2.
     lesson=Lesson(
         title="It wraps",
         claim="The membrane sticks to the rod and bends around it. Cells eat this way.",
         instruction="Steer the rod into the sheet. Cut it open with the lever to look.",
         hook="Three thousand beads on a laptop. Does it hold at ten times that?",
-        hero_knobs=(HEAT,),
     ),
     presets={
         # The reference deck's conditions: eps = 3, L = 5, D = 3, paper moduli.
@@ -499,7 +500,7 @@ PLAYGROUND = Playground(
         "stubby": {"rod_length": 1.5},
     },
     temperature=(0.0, 0.5),
-    temperature_default=0.001,
+    temperature_default=0.2,
     melt_temp=0.3,
     particle_radius=0.5,
     reduced_units=True,

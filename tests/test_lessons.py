@@ -221,13 +221,10 @@ def test_the_hero_knobs_are_where_the_move_is_worth_making():
     "van der Waals only" is on the three scenes where taking the orientation away
     shows something: the two-bead pair, where two of the three rows in the callout
     go to exactly zero while the reader is looking at the numbers; the seven-bead
-    patch, which is flat because of its arrows; and the assembly box, which has
-    just built a sheet out of nothing. "Heat" is on the two scenes about a membrane
-    being a LIQUID, which need one big enough to flow.
-
-    The torque patch has none deliberately: it is meant to read as identical to the
-    force patch next door, and a button on only one of them is a difference the eye
-    has to rule out. The two remote scenes have none because the one thing to do
+    patches (force and torque alike -- they are meant to read as identical, and a
+    button on only one of them is a difference the eye has to rule out); and the
+    assembly box, which has just built a sheet out of nothing. "Heat" is on the
+    sheet; the rod scene simply starts warm instead. The two remote scenes have none because the one thing to do
     there is watch, and a button that changes the physics of a run somebody queued
     for is a button pressed by accident.
     """
@@ -235,10 +232,10 @@ def test_the_hero_knobs_are_where_the_move_is_worth_making():
     assert knobs == {
         "mesomem_bead": ["van der Waals only"],
         "mesomem_patch": ["van der Waals only"],
-        "mesomem_patch_torque": [],
+        "mesomem_patch_torque": ["van der Waals only"],
         "mesomem_sheet": ["Heat"],
         "mesomem_assembly": ["van der Waals only"],
-        "mesomem_rod": ["Heat"],
+        "mesomem_rod": [],
         "mesomem_remote": [],
         "mesomem_polymer": [],
     }, knobs

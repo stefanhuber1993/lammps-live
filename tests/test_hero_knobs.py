@@ -215,9 +215,9 @@ def test_the_click_the_key_and_the_device_button_are_one_state(patch):
 
 def test_a_scene_with_no_knobs_ignores_the_toggle(patch):
     """Every key that does not apply to a playground does nothing on it, and these
-    are three of them. Not an error and not a crash. The torque patch is the cheap
-    scene that declares none (deliberately -- see test_lessons)."""
-    patch._build_system("mesomem_patch_torque")
+    are three of them. Not an error and not a crash. The rod is the local scene
+    that declares none (it starts warm instead -- see test_lessons)."""
+    patch._build_system("mesomem_rod")
     assert patch.system.spec.lesson.hero_knobs == ()
     patch._toggle_hero(0)
     patch._toggle_hero(3)
