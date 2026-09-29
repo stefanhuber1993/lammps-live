@@ -874,6 +874,11 @@ class App:
                 running = self._handle_events(dt)
                 self._check_idle()
                 dt = self._tick(dt)
+            # An ordinary close (the window's X, Esc, the password prompt): say
+            # so on screen at once and keep the window alive while the GPU is
+            # given back, instead of freezing on the last frame for as long as
+            # the scancel takes.
+            self._close_with_progress()
         finally:
             self._shutdown()
 
@@ -913,6 +918,32 @@ class App:
                 # the atexit hook still cover everything that unwinds.
                 pass
 
+    def _close_with_progress(self):
+        """Start the remote release on its worker and draw its steps until it is
+        done. Instant, one frame, when no remote session is held."""
+        print("[lammps-live] closing down ...")
+        started = perf_counter()
+        lines = ["closing down"]
+        try:
+            self.renderer.draw_shutdown(lines, 0.0)
+        except Exception:                               # noqa: BLE001
+            return
+        if not self.remote_panel.release_async():
+            return
+        while self.remote_panel.releasing:
+            if self._watchdog is not None:
+                self._watchdog.tick()
+            pygame.event.pump()
+            pygame.event.clear()
+            status = self.remote_panel.shutdown_status
+            if status is not None:
+                lines = list(status.lines) or [status.step]
+            try:
+                self.renderer.draw_shutdown(lines, perf_counter() - started)
+            except Exception:                           # noqa: BLE001
+                break
+            self.clock.tick(20)
+
     def _shutdown(self):
         """Give everything back, once, however the app is ending.
 
@@ -934,12 +965,19 @@ class App:
         self._shut_down = True
         # Ordered by what it costs to skip. `release` is a no-op for a local
         # playground; for a remote one it cancels the job and closes the tunnel.
-        if self._watchdog is not None:
+        if getattr(self, "_watchdog", None) is not None:
             self._watchdog.stop()
-        if self.lock is not None:
+        if getattr(self, "lock", None) is not None:
             self.lock.release_platform_lockdown()
-        for step in (self.remote_panel.release, self._sim_idle, self.source.close,
-                     self.system.close, pygame.quit):
+        # Each step reported with its time, so a slow exit says which part of it
+        # was slow.
+        started = perf_counter()
+        for name, step in (("remote session", self.remote_panel.release),
+                           ("simulation thread", self._sim_idle),
+                           ("input device", self.source.close),
+                           ("simulation", self.system.close),
+                           ("window", pygame.quit)):
+            t0 = perf_counter()
             try:
                 step()
             except BaseException as exc:               # noqa: BLE001 -- reported
@@ -947,6 +985,11 @@ class App:
                 # is running must not take the rest of the teardown with it.
                 print(f"[lammps-live] while closing down: "
                       f"{type(exc).__name__}: {exc}")
+            took = perf_counter() - t0
+            if took > 0.05:
+                print(f"[lammps-live] shutdown: {name} closed in {took:.1f} s")
+        print(f"[lammps-live] shutdown complete in "
+              f"{perf_counter() - started:.1f} s")
 
     def _sliders(self):
         """Every slider that can be dragged, whatever system is loaded.

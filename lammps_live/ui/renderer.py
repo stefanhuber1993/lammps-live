@@ -3831,6 +3831,32 @@ class Renderer:
             self.compositor.present(self.screen)
         pygame.display.flip()
 
+    def draw_shutdown(self, lines, elapsed):
+        """Closing down: what is being done right now, with the steps so far, so
+        a close that has to wait for a GPU to be given back is visibly working."""
+        if self.gl_enabled:
+            self.gl.screen.use()
+            self.gl.clear(*(c / 255.0 for c in BG))
+            self.screen.fill((0, 0, 0, 0))
+        else:
+            self.screen.fill(BG)
+        W, H = self.window_size
+        head = self.lesson_font.render("Closing down", True, TEXT_COLOR)
+        y = H // 2 - UI(80)
+        self.screen.blit(head, head.get_rect(midtop=(W // 2, y)))
+        y += head.get_height() + UI(18)
+        for i, line in enumerate(list(lines)[-6:]):
+            last = i == len(list(lines)[-6:]) - 1
+            surf = self.font.render(line, True, TEXT_COLOR if last
+                                    else DIM_TEXT_COLOR)
+            self.screen.blit(surf, surf.get_rect(midtop=(W // 2, y)))
+            y += surf.get_height() + UI(4)
+        note = self.small_font.render(f"{elapsed:4.1f} s", True, DIM_TEXT_COLOR)
+        self.screen.blit(note, note.get_rect(midtop=(W // 2, y + UI(10))))
+        if self.gl_enabled:
+            self.compositor.present(self.screen)
+        pygame.display.flip()
+
     def draw_splash(self, message, detail=None):
         """One frame saying the app is still coming up.
 
