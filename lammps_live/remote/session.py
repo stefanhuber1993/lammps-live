@@ -70,6 +70,11 @@ nobody is using is the one failure with a bill attached:
                   --exit-when-idle, so a hard-killed app costs minutes not hours
     Slurm         --time ends it regardless
 
+The idle timeout counts only while nothing of ours is alive: a held session with
+no link open (the app showing its local playgrounds) sends a small keepalive once a
+minute (`keepalive`), so a demo day can leave the GPU parked for hours, and an app
+that died hard stops sending and loses it fifteen minutes later.
+
 Run this file directly to test the whole flow without the GUI, which is the way to
 debug the SSH leg:
 
@@ -142,6 +147,27 @@ sys.stdout.write(answer.decode("utf-8", "replace").rstrip("\\n"))
 
 class SessionError(Exception):
     """A step failed, with a message worth showing the user."""
+
+
+# EVERY CHILD IN A SESSION OF ITS OWN, so that Ctrl-C reaches this process and
+# nothing else. A terminal delivers SIGINT to the whole FOREGROUND PROCESS GROUP,
+# and a child started plainly is in ours: the one-shot ssh commands (a probe, a
+# squeue, the deploy's `tar | ssh` pair, the scancel itself) would all die in the
+# same instant as the keypress, before the app's handler had even begun the
+# teardown -- and a teardown that finds its scancel already killed, or a deploy
+# killed half-way through an unpack, is how an allocation got left behind. The
+# long-lived ones (the master, salloc, the srun, the tunnel) were already started
+# this way; these two wrappers make it the rule rather than a flag to remember.
+# Nothing here relies on a child receiving the signal: every one of them is ended
+# explicitly by `_teardown`, or by its own timeout.
+def _run_detached(argv, **kwargs):
+    kwargs.setdefault("start_new_session", True)
+    return subprocess.run(argv, **kwargs)
+
+
+def _popen_detached(argv, **kwargs):
+    kwargs.setdefault("start_new_session", True)
+    return subprocess.Popen(argv, **kwargs)
 
 
 def _indented(text, width):
@@ -313,6 +339,9 @@ class RemoteSession:
         # and empties each field before acting on it. Without that, the second
         # caller finds a half-cleared session and trips over a None.
         self._teardown_lock = threading.Lock()
+        # The keepalive for an allocation nobody is watching (see `keepalive`).
+        self._keepalive_stop = None
+        self._keepalive_thread = None
 
     # ---- reporting ----------------------------------------------------------
 
@@ -512,6 +541,7 @@ class RemoteSession:
             self._tunnel()
             self._connect()
             self._say(f"streaming from {self.node} (job {self.job_id})", READY)
+            self._start_keepalive()
         except SessionError as exc:
             self.error = str(exc)
             self._say(f"FAILED: {exc}", FAILED)
@@ -729,7 +759,7 @@ class RemoteSession:
                "-o", "ServerAliveInterval=30",
                "-o", "ServerAliveCountMax=4",
                self.target.destination]
-        self._master = subprocess.Popen(
+        self._master = _popen_detached(
             cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, text=True, env=self._bridge.env(),
             start_new_session=True)
@@ -745,7 +775,7 @@ class RemoteSession:
                 raise SessionError(
                     "the SSH connection closed before it was ready -- see the log "
                     "above (a wrong password or code is the usual reason)")
-            check = subprocess.run(self._ssh_base() + ["-O", "check",
+            check = _run_detached(self._ssh_base() + ["-O", "check",
                                                        self.target.destination],
                                    capture_output=True, text=True)
             if check.returncode == 0:
@@ -790,7 +820,7 @@ class RemoteSession:
         argv = self._ssh_base() + [self.target.destination]
         argv += [self._login_shell(command)] if login_shell else [command]
         try:
-            proc = subprocess.run(argv, capture_output=True, text=True,
+            proc = _run_detached(argv, capture_output=True, text=True,
                                   timeout=timeout)
         except subprocess.TimeoutExpired:
             raise SessionError(f"remote command timed out after {timeout}s: "
@@ -815,6 +845,15 @@ class RemoteSession:
 
     # ---- 2. deploy -----------------------------------------------------------
 
+    # How long the unpack may take before it is called a stall: a fixed allowance
+    # for the login shell and the round trip, plus a generous per-megabyte one (the
+    # package is about half a megabyte, so this is a minute and a bit). A deploy that
+    # used to sit on `communicate(timeout=300)` said nothing for five minutes.
+    DEPLOY_TIMEOUT = 60.0
+    DEPLOY_SECONDS_PER_MB = 30.0
+    # How often a slow deploy says it is still going.
+    DEPLOY_HEARTBEAT = 10.0
+
     def _deploy(self):
         """Ship this package to the cluster.
 
@@ -823,35 +862,140 @@ class RemoteSession:
         PYTHONPATH pointing at the unpacked directory. Compiled artifacts are
         excluded -- a macOS .dylib is no use there, and the cluster's pair style is
         in its own LAMMPS build anyway.
+
+        WHAT IS ALREADY THERE MUST NOT MATTER. The deploy used to be `mkdir -p dir
+        && tar xzf - -C dir`, i.e. this package unpacked OVER whatever the last
+        session left: a half-written tree from a deploy killed mid-stream, a module
+        this revision has deleted (still importable there), a `__pycache__` the far
+        side compiled that the tar never touches. So it unpacks into a fresh
+        staging directory next to the old copy and swaps it in only once the whole
+        archive is out, removing the old tree -- any leftovers from an earlier
+        interrupted deploy included (see `_unpack_script`). A leftover directory,
+        whole or half, is then simply deleted rather than built on.
+
+        The archive is made HERE first, in memory, rather than streamed from a
+        `tar` process: it is about half a megabyte, it gives the progress line a
+        size, and it leaves the ssh as the one process that can stall -- which is
+        then timed and reported ("still shipping ... 20 s") rather than sat on in
+        silence.
         """
         package_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         parent = os.path.dirname(package_dir)
         name = os.path.basename(package_dir)
-        self._say(f"shipping {name} to {self.target.deploy_dir}", DEPLOY)
-        tar = subprocess.Popen(
+        self._say(f"packing {name}", DEPLOY)
+        packed = _run_detached(
             ["tar", "czf", "-", "-C", parent,
              "--exclude", "__pycache__", "--exclude", "*.pyc",
              "--exclude", "*.so", "--exclude", "*.dylib", "--exclude", "*.dll",
              "--exclude", "*.o", "--exclude", "*.build.json",
              "--exclude", "_mpi_stub", "--exclude", "_obj",
              name],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        unpack = (f"mkdir -p {self.target.deploy_dir} && "
-                  f"tar xzf - -C {self.target.deploy_dir}")
-        remote = subprocess.Popen(
+            capture_output=True, timeout=60,
+            # No AppleDouble `._*` files in the archive: macOS tar adds one per
+            # file carrying extended attributes unless told not to.
+            env=dict(os.environ, COPYFILE_DISABLE="1"))
+        if packed.returncode != 0 or not packed.stdout:
+            raise SessionError("could not pack the package: "
+                               + (packed.stderr or b"").decode("utf-8", "replace")
+                               .strip()[-200:])
+        archive = packed.stdout
+        megabytes = len(archive) / 1e6
+        self._say(f"shipping {name} to {self.target.deploy_dir} "
+                  f"({megabytes:.1f} MB)")
+        unpack = self._unpack_script(name)
+        remote = _popen_detached(
             self._ssh_base() + [self.target.destination,
                                 self._login_shell(unpack)],
-            stdin=tar.stdout, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True)
-        tar.stdout.close()
-        out, _ = remote.communicate(timeout=300)
-        tar.wait(timeout=10)
-        if remote.returncode != 0:
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        out = self._await_deploy(remote, archive, megabytes)
+        text = out.decode("utf-8", "replace")
+        for line in text.splitlines():
+            if line.startswith("@@stale "):
+                # A job of ours by the same name, still in the queue -- which on a
+                # fresh start means one an earlier app did not give back. Said, and
+                # left alone: it may be somebody's second laptop on purpose, and the
+                # server on it cancels itself once it has been idle long enough.
+                job, _, state = line[len("@@stale "):].partition(" ")
+                self._say(f"note: an older {self.target.job_name} job {job} is "
+                          f"still {state or 'queued'} -- left behind by a session "
+                          f"that did not shut down? `scancel {job}` gives it back")
+        if remote.returncode != 0 or "@@deployed" not in text:
             raise SessionError("could not unpack the package on the cluster: "
-                               + ((out or "").strip()[-300:] or "no output")
-                               + f"  [{unpack}]")
+                               + (text.replace("@@deployed", "").strip()[-300:]
+                                  or "no output")
+                               + f"  [deploy to {self.target.deploy_dir}]")
         self._deploy_playground_file()
         self._say("package in place")
+
+    def _unpack_script(self, name):
+        """The far side's half of the deploy: stage, check, swap, clean.
+
+        Every name is under `deploy_dir`, so both moves are renames within one
+        directory -- on the same filesystem, never a copy -- and the window in
+        which `<deploy_dir>/<name>` does not exist is two renames long. `$$` keeps
+        two stages apart; the `rm -rf` of the `.incoming.*` / `.outgoing.*`
+        patterns is what clears the leftovers of a deploy that was killed between
+        steps, which is exactly the directory that used to be built on.
+        `deploy_dir` is left unquoted on purpose so a leading `~` expands.
+        """
+        job = shlex.quote(self.target.job_name)
+        return "\n".join([
+            "set -e",
+            f"d={self.target.deploy_dir}",
+            'mkdir -p "$d"',
+            'cd "$d"',
+            "rm -rf .incoming.* .outgoing.*",
+            "stage=.incoming.$$",
+            'mkdir "$stage"',
+            'tar xzf - -C "$stage"',
+            f'test -d "$stage/{name}"',
+            f"if [ -e {name} ]; then mv {name} .outgoing.$$; fi",
+            f'mv "$stage/{name}" {name}',
+            'rm -rf "$stage" .outgoing.$$',
+            "echo @@deployed",
+            # Advisory, and never allowed to fail the deploy.
+            f'(squeue -h -u "$USER" -n {job} -o "@@stale %i %T" 2>/dev/null'
+            f" || true)",
+        ])
+
+    def _await_deploy(self, proc, archive, megabytes):
+        """Feed `archive` to the unpacking ssh and wait for it, out loud.
+
+        Retrying `communicate` after a timeout loses nothing (the documented
+        pattern), so the wait is a loop of short ones -- which is what lets it
+        notice a Cancel and say "still shipping" while it is at it, instead of
+        one silent five-minute block.
+        """
+        limit = self.DEPLOY_TIMEOUT + self.DEPLOY_SECONDS_PER_MB * megabytes
+        started = time.monotonic()
+        data = archive
+        while True:
+            try:
+                out, _ = proc.communicate(input=data, timeout=self.DEPLOY_HEARTBEAT)
+                return out or b""
+            except subprocess.TimeoutExpired:
+                data = None               # sent once; a retry must not resend it
+            waited = time.monotonic() - started
+            if self._cancel.is_set() or waited > limit:
+                # The whole group, which is the ssh's own (see _popen_detached):
+                # anything it started that still holds the pipe goes with it, so
+                # the drain below cannot wait on a straggler.
+                try:
+                    os.killpg(proc.pid, 9)
+                except OSError:
+                    proc.kill()
+                try:
+                    proc.communicate(timeout=5)
+                except subprocess.TimeoutExpired:
+                    pass
+                if self._cancel.is_set():
+                    raise SessionError("cancelled")
+                raise SessionError(
+                    f"the deploy stalled: {megabytes:.1f} MB not unpacked on the "
+                    f"cluster after {waited:.0f}s -- is the login node or its "
+                    f"filesystem slow? (target: {self.target.deploy_dir})")
+            self._say(f"still shipping to {self.target.deploy_dir} "
+                      f"({waited:.0f}s, {megabytes:.1f} MB)")
 
     def _deploy_playground_file(self):
         """Ship a playground given as a PATH, and point the server at the copy.
@@ -877,7 +1021,7 @@ class RemoteSession:
             raise SessionError(f"no playground file at {local}")
         remote_path = f"{self.target.deploy_dir}/{os.path.basename(local)}"
         with open(local, "rb") as fh:
-            proc = subprocess.run(
+            proc = _run_detached(
                 self._ssh_base() + [self.target.destination,
                                     self._login_shell(f"cat > {remote_path}")],
                 stdin=fh, capture_output=True, text=True, timeout=120)
@@ -1008,7 +1152,7 @@ class RemoteSession:
         argv = self._ssh_base() + [
             self.target.destination,
             self._login_shell(" ".join(self.target.salloc_args()))]
-        proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL,
+        proc = _popen_detached(argv, stdin=subprocess.DEVNULL,
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 text=True, start_new_session=True)
         self._salloc_proc = proc
@@ -1159,7 +1303,7 @@ class RemoteSession:
             # The srun flags are plain words and survive being joined; the command
             # itself has to be one quoted word (see _login_shell).
             self._login_shell(self._server_command())]
-        self._server_proc = subprocess.Popen(
+        self._server_proc = _popen_detached(
             argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, text=True, start_new_session=True)
         # The token goes down stdin, which srun forwards to the task, so it never
@@ -1243,7 +1387,8 @@ class RemoteSession:
         are already listening -- a second app, or a forward left over from a session
         that did not shut down cleanly."""
         wanted = self.target.local_port
-        return [p for p in range(wanted, wanted + 20) if not self._port_in_use(p)]
+        return [p for p in range(wanted, min(wanted + 20, 65536))
+                if not self._port_in_use(p)]
 
     def _tunnel_two_hop(self):
         """A second SSH whose session ENDS ON THE COMPUTE NODE (the default).
@@ -1327,7 +1472,7 @@ class RemoteSession:
             # The askpass bridge is passed along even though Snellius does not ask
             # again: a site where the node DOES prompt then shows its question in
             # the panel instead of hanging on a terminal that is not there.
-            proc = subprocess.Popen(
+            proc = _popen_detached(
                 cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT, text=True, env=self._bridge.env(),
                 start_new_session=True)
@@ -1399,7 +1544,7 @@ class RemoteSession:
         last_error = ""
         for candidate in candidates:
             spec = f"{candidate}:{self.node}:{self._remote_port}"
-            proc = subprocess.run(
+            proc = _run_detached(
                 self._ssh_base() + ["-O", "forward", "-L", spec,
                                     self.target.destination],
                 capture_output=True, text=True)
@@ -1500,33 +1645,131 @@ class RemoteSession:
         return ("; ".join(facts) + ". The log has both ends' own output; "
                 "LAMMPS_LIVE_SSH_VERBOSE=1 adds ssh's trace to it.")
 
+    # ---- keeping an unwatched allocation alive --------------------------------
+
+    # How often a held session with nobody connected tells the server it is still
+    # wanted. Well inside `exit_when_idle` (fifteen minutes by default), so a missed
+    # ping or two cannot end the allocation, and cheap enough not to matter: one
+    # connection and two small messages through the tunnel that is already there.
+    KEEPALIVE_EVERY = 60.0
+
+    def _start_keepalive(self):
+        """Start the keepalive thread for this connection. Idempotent per session
+        run; `_teardown` stops it."""
+        if self._keepalive_thread is not None and self._keepalive_thread.is_alive():
+            return
+        stop = self._keepalive_stop = threading.Event()
+        self._keepalive_thread = threading.Thread(
+            target=self._keepalive_loop, args=(stop,), name="remote-keepalive",
+            daemon=True)
+        self._keepalive_thread.start()
+
+    def _keepalive_loop(self, stop):
+        while not stop.wait(self.KEEPALIVE_EVERY):
+            self.keepalive()
+
+    def keepalive(self):
+        """Tell the server this session still wants it, if nothing else is.
+
+        WHY THIS EXISTS. The server gives its allocation back once no client has
+        been connected for `exit_when_idle` -- the backstop for an app that died
+        without a teardown (SIGKILL, a closed lid, a crash). But "no client" is
+        also the ordinary state of a demo day: the app keeps the GPU while it shows
+        the LOCAL playgrounds (see RemotePanel.standby_note), and may sit on them
+        for hours, returning to the remote one only when somebody asks. Without
+        this the GPU quietly went back fifteen minutes into the first long stretch
+        of local demos, and the next visit to the remote one meant a fresh queue
+        wait and a fresh one-time code.
+
+        So while this process is alive and holding the session, it says so: a
+        short authenticated `keepalive` over the tunnel, which the server answers
+        and counts as activity without building, switching or streaming anything
+        (see FrameServer.serve_forever). A dead app sends nothing, and the idle
+        timeout then does exactly what it did before.
+
+        Only while nothing of ours is connected: the server serves one client at a
+        time, so a keepalive behind a live link would sit in its backlog -- and a
+        live link is activity already. Returns True if the server answered, False
+        if it did not, None if there was nothing to do.
+        """
+        link = self.link
+        if link is not None and not link.closed.is_set():
+            return None
+        port = self.local_port
+        if self.busy or not self.holds_allocation or port is None:
+            return None
+        try:
+            FrameLink.keepalive("127.0.0.1", port, self._token, timeout=10.0)
+        except (LinkClosed, OSError) as exc:
+            # Logged, not acted on. One failed ping says nothing the next connect
+            # would not say better, and this must never be what ends a session.
+            self._log_line(f"keepalive: no answer ({exc})")
+            return False
+        return True
+
     # ---- teardown ------------------------------------------------------------
 
-    def shutdown(self):
-        """Give everything back. Safe to call from anywhere, more than once."""
+    @property
+    def holds_anything(self):
+        """Is there anything at all for a teardown to do?
+
+        False for a session that was created and never started -- which is every
+        session on a machine that has only looked at the remote playground's card
+        -- and that is what lets closing the window on a local-only run be
+        instant and silent.
+        """
+        return any(x is not None for x in (
+            self.link, self._server_proc, self._salloc_proc, self._tunnel_proc,
+            self.job_id, self._forwarded, self._master, self._bridge,
+            self._tmpdir))
+
+    def shutdown(self, report=None):
+        """Give everything back. Safe to call from anywhere, more than once.
+
+        `report`, if given, is called with one line per step of the teardown as it
+        starts ("cancelling Slurm job 4242 ...", "job 4242 released (0.8 s)") --
+        which is what the app prints to the terminal and shows on the closing
+        screen. The same lines go into the session log either way.
+        """
         if self.state in (DOWN, CLOSING):
-            self._teardown()
+            self._teardown(report)
             return
         self._say("closing down", CLOSING)
         self._cancel.set()
-        self._teardown()
+        self._teardown(report)
         self.state = DOWN
         self.detail = "not connected"
 
-    def _teardown(self):
+    def _teardown(self, report=None):
         """Undo everything, in the order that leaves nothing stranded.
 
         Stop drawing, stop the job, stop the forward, close the login. The link
         goes first because cancelling underneath it would leave the client blocked
         on a socket that will never answer again; the job goes next, ahead of the
         tunnel and the login, because it is the only one of these that costs
-        anything to still be holding a minute from now -- and the tunnel's kill
-        alone is worth ten seconds of waiting that the GPU should not be behind.
+        anything to still be holding a minute from now.
+
+        NOTHING WAITS IN FRONT OF THE SCANCEL. The local processes (the srun's ssh,
+        a queued salloc, the tunnel) are all SIGNALLED before it and REAPED after
+        it, so they die while the scancel is in flight instead of each being waited
+        on in turn -- the tunnel's `wait(timeout=10)` used to sit in the middle of
+        this, and the master's another ten after it. Killing the tunnel first is
+        safe: it is a connection of its own, and its jump hop is a `-W` channel on
+        the master that simply closes. The master is the one thing that is kept
+        until the scancel has been confirmed, because it is what the scancel rides.
 
         Each field is taken and cleared under the lock before it is used, so two
         threads arriving here at once (the worker abandoning a failed step, the
         window closing) cannot trip over each other's cleanup.
         """
+        def step(text):
+            self._log_line(f"teardown: {text}")
+            if report is not None:
+                try:
+                    report(text)
+                except Exception:                      # noqa: BLE001 -- cosmetic
+                    pass
+
         with self._teardown_lock:
             link, self.link = self.link, None
             server, self._server_proc = self._server_proc, None
@@ -1537,59 +1780,72 @@ class RemoteSession:
             master, self._master = self._master, None
             bridge, self._bridge = self._bridge, None
             tmpdir, self._tmpdir = self._tmpdir, None
+            keepalive, self._keepalive_stop = self._keepalive_stop, None
             control = self._control_path
+            node = self.node
             self.node = None
             self.local_port = None
 
+        if keepalive is not None:
+            keepalive.set()
         if link is not None:
+            step("closing the link")
             try:
                 link.close()
             except Exception:                          # noqa: BLE001 -- best effort
                 pass
-        if server is not None:
-            # Killing the srun ends the step; the remote shell's own `scancel`
-            # then ends the allocation. The explicit scancel below is what
-            # actually guarantees it -- this is just the quick way.
+        # Signalled now, reaped at the end (see the docstring). Killing the srun
+        # ends the step; the remote shell's own `scancel` may then end the
+        # allocation -- the explicit one below is what guarantees it. A salloc
+        # still running is still QUEUED (a granted `--no-shell` has long since
+        # returned), and dropping it gives up the place in the queue; the scancel
+        # is the guarantee there too.
+        doomed = [p for p in (server, salloc, tunnel)
+                  if p is not None and p.poll() is None]
+        for proc in doomed:
             try:
-                server.terminate()
-            except Exception:                          # noqa: BLE001
-                pass
-        if salloc is not None and salloc.poll() is None:
-            # Still queued, then -- a granted salloc --no-shell has long since
-            # exited. Killing it is what gives up the place in the queue: a
-            # pending request that nobody is waiting for would otherwise be
-            # granted later and hold a GPU with nothing on it. Dropping the ssh
-            # hangs up on the far side's salloc, which cancels its own pending
-            # request; the scancel below is the guarantee, this is the immediate
-            # one and it does not need another round trip to be sure of.
-            try:
-                salloc.terminate()
-            except Exception:                          # noqa: BLE001
-                pass
-        if job_id and not self._release_job(job_id, control):
-            # NOT CONFIRMED GONE, so it is still ours: put the id back rather than
-            # forgetting it. A second teardown then tries again, the report the
-            # panel copies names the job that has to be cancelled by hand, and the
-            # one failure with a bill attached stops being silent.
-            self.job_id = job_id
-        if tunnel is not None:
-            # The two-hop tunnel is a process of its own; killing it takes the
-            # forward and the session on the node with it.
-            try:
-                tunnel.terminate()
-                tunnel.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                tunnel.kill()
+                proc.terminate()
             except OSError:
                 pass
+        if job_id:
+            where = f" on {node}" if node else ""
+            step(f"cancelling Slurm job {job_id}{where} ...")
+            t0 = time.monotonic()
+            state = self._release_job(job_id, control)
+            took = time.monotonic() - t0
+            if state is None:
+                # NOT CONFIRMED GONE, so it is still ours: put the id back rather
+                # than forgetting it. A second teardown then tries again, the
+                # report the panel copies names the job that has to be cancelled by
+                # hand, and the one failure with a bill attached stops being silent.
+                self.job_id = job_id
+                step(f"job {job_id} COULD NOT BE CONFIRMED released after "
+                     f"{took:.1f} s -- check `squeue -j {job_id}` and scancel it "
+                     f"by hand")
+            else:
+                step(f"job {job_id} released"
+                     + (f" ({state})" if state else "") + f" in {took:.1f} s")
+        if tunnel is not None or forwarded or master is not None:
+            step("closing the tunnel and the login")
         if forwarded and control and os.path.exists(control):
             self._control_op(control, ["-O", "cancel", "-L", forwarded])
         if master is not None:
             self._control_op(control, ["-O", "exit"])
+            doomed.append(master)
+        # The reaping. `-O exit` ends a healthy master at once and SIGTERM ends
+        # every ssh here promptly, so this is normally instant; the short grace and
+        # then SIGKILL is for one that is wedged on a dead network, which is
+        # precisely the one not worth waiting ten seconds for.
+        deadline = time.monotonic() + 3.0
+        for proc in doomed:
             try:
-                master.wait(timeout=10)
+                proc.wait(timeout=max(0.1, deadline - time.monotonic()))
             except subprocess.TimeoutExpired:
-                master.kill()
+                try:
+                    proc.kill()
+                    proc.wait(timeout=2.0)
+                except (OSError, subprocess.TimeoutExpired):
+                    pass
         if bridge is not None:
             bridge.close()
         if tmpdir:
@@ -1599,7 +1855,8 @@ class RemoteSession:
     # How long the release may spend on any one ssh. Short on purpose: this runs
     # while the window is closing, and a laptop being shut must not sit out a
     # two-minute timeout on a connection that is already gone. Two routes are tried
-    # inside this budget, so the whole release is bounded by about four times it.
+    # inside this budget, the second only if the first could not confirm, so the
+    # whole release is bounded by about twice it.
     RELEASE_TIMEOUT = 15
 
     # What `squeue` prints for a job that still has the GPU. Anything else -- no
@@ -1608,8 +1865,18 @@ class RemoteSession:
     # must NOT be read as a failure, or every clean teardown would report one.
     HOLDING_STATES = ("PENDING", "RUNNING", "CONFIGURING", "SUSPENDED", "RESIZING")
 
+    # How long the far side keeps re-asking `squeue` after the scancel while the job
+    # still reads as holding: Slurm can take a moment to move a RUNNING job on, and
+    # "still RUNNING 50 ms after the scancel" is not a failure to release.
+    RELEASE_POLLS = 10
+    RELEASE_POLL_SECONDS = 0.5
+
     def _release_job(self, job_id, control):
         """Cancel `job_id`, and check with Slurm that it actually went.
+
+        Returns Slurm's last word on the job -- "" if it has left the queue
+        entirely, else the state it is in, never one of HOLDING_STATES -- or None
+        if the release could not be confirmed.
 
         TWO ROUTES, BECAUSE THE CONTROL MASTER IS NOT A GUARANTEE. It is the first
         thing a dropped network takes and the last thing a teardown can lean on,
@@ -1618,7 +1885,7 @@ class RemoteSession:
         thread that got its job id a moment after the window closed, an ssh master
         that died while the allocation lived on. Every one of those used to end in
         the same place -- the `scancel` quietly skipped, and an A100 held until
-        Slurm's own `--time` ran out an hour later.
+        Slurm's own `--time` ran out.
 
         So the master is tried first (it costs nothing and needs no authentication)
         and a connection of its own second. That one is BatchMode: with no
@@ -1627,7 +1894,9 @@ class RemoteSession:
         is there to answer.
 
         FIRING IT IS NOT THE SAME AS IT HAVING WORKED, which is why each route ends
-        with a `squeue`. Returns True only when Slurm agrees the job has stopped.
+        with a `squeue` -- in the SAME ssh as the scancel, since every round trip
+        through a login shell on the far side is a second or so of a window that is
+        trying to close. It used to be two.
         """
         routes = []
         if control and os.path.exists(control):
@@ -1636,56 +1905,76 @@ class RemoteSession:
                        "-o", "StrictHostKeyChecking=accept-new",
                        "-o", f"ConnectTimeout={self.RELEASE_TIMEOUT}"])
         for prefix in routes:
-            self._release_over(prefix, f"scancel {job_id}")
-            state = self._job_state(prefix, job_id)
+            state = self._cancel_and_confirm(prefix, job_id)
             if state is not None and state not in self.HOLDING_STATES:
                 self._log_line(f"scancel {job_id}: released"
                                + (f" ({state})" if state else ""))
-                return True
+                return state
         self._log_line(
             f"scancel {job_id} COULD NOT BE CONFIRMED -- the job may still be "
             f"holding a GPU. Check it with `squeue -j {job_id}` and cancel it by "
             f"hand if it is still there.")
-        return False
+        return None
+
+    def _cancel_and_confirm(self, prefix, job_id):
+        """`scancel`, then `squeue` until the job stops holding, in one ssh.
+
+        Slurm's state for `job_id` afterwards: "" if it is no longer in the queue
+        at all, None if the question could not be asked (which is not an answer,
+        and must not be mistaken for one).
+        """
+        holding = "|".join(f"{s}*" for s in self.HOLDING_STATES)
+        script = (
+            f"scancel {job_id}; i=0; "
+            f"while :; do "
+            f"out=$(squeue -h -j {job_id} -o %T 2>&1); rc=$?; "
+            f"echo \"@@squeue $rc $out\"; "
+            f"case \"$out\" in {holding}) ;; *) break ;; esac; "
+            f"i=$((i+1)); [ $i -ge {self.RELEASE_POLLS} ] && break; "
+            f"sleep {self.RELEASE_POLL_SECONDS}; "
+            f"done")
+        proc = self._release_over(prefix, script)
+        if proc is None:
+            return None
+        last = None
+        for line in (proc.stdout or "").splitlines():
+            if line.startswith("@@squeue "):
+                last = line[len("@@squeue "):]
+        if last is None:
+            return None                      # the ssh itself never got there
+        code, _, text = last.partition(" ")
+        text = text.strip()
+        if code != "0":
+            # `squeue` refuses an id it has never heard of ("Invalid job id
+            # specified"), which is the strongest possible confirmation: Slurm has
+            # forgotten the job entirely. Any other failure says nothing about it.
+            return "" if "invalid job id" in text.lower() else None
+        # The fields are separated for the caller elsewhere; take the first
+        # whatever the separator, so this reads the same output `_await_node` does.
+        return text.replace("|", " ").split()[0] if text else ""
 
     def _release_over(self, prefix, command):
         """One teardown command down one route. Never raises: a route that does not
         work is the reason the next one is tried."""
         try:
-            return subprocess.run(prefix + [self.target.destination,
-                                            self._login_shell(command)],
-                                  capture_output=True, text=True,
-                                  timeout=self.RELEASE_TIMEOUT)
+            return _run_detached(prefix + [self.target.destination,
+                                           self._login_shell(command)],
+                                 capture_output=True, text=True,
+                                 timeout=self.RELEASE_TIMEOUT)
         except (OSError, subprocess.SubprocessError):
             return None
 
-    def _job_state(self, prefix, job_id):
-        """Slurm's state for `job_id`: "" if it is no longer in the queue at all,
-        None if the question could not be asked (which is not an answer, and must
-        not be mistaken for one)."""
-        proc = self._release_over(prefix, f"squeue -h -j {job_id} -o %T")
-        if proc is None:
-            return None
-        text = (proc.stdout or "").strip()
-        if proc.returncode != 0:
-            # `squeue` refuses an id it has never heard of ("Invalid job id
-            # specified"), which is the strongest possible confirmation: Slurm has
-            # forgotten the job entirely. Any other failure is the ssh's, and says
-            # nothing about the job.
-            if "invalid job id" in (proc.stderr or "").lower():
-                return ""
-            return None
-        # The fields are separated for the caller elsewhere; take the first
-        # whatever the separator, so this reads the same output `_await_node` does.
-        return text.replace("|", " ").split()[0] if text else ""
-
     def _control_op(self, control, args):
         """One `ssh -O ...` control operation, ignoring its outcome -- during
-        teardown there is nothing useful to do about a failure."""
+        teardown there is nothing useful to do about a failure. On a short timeout:
+        a control socket whose master has wedged must not hold up the exit."""
         if not control:
             return
-        subprocess.run(["ssh", "-S", control] + args + [self.target.destination],
-                       capture_output=True, text=True)
+        try:
+            _run_detached(["ssh", "-S", control] + args + [self.target.destination],
+                          capture_output=True, text=True, timeout=5)
+        except (OSError, subprocess.SubprocessError):
+            pass
 
 
 # --- driving it from a terminal -----------------------------------------------
@@ -1752,7 +2041,7 @@ def main(argv=None):
         print("\ninterrupted")
     finally:
         print("\ntearing down (this cancels the job)...")
-        session.shutdown()
+        session.shutdown(report=lambda text: print(f"shutdown: {text}", flush=True))
     return 0
 
 

@@ -46,6 +46,7 @@ NOTHING HERE BLOCKS. Every step runs on the session's worker thread, the switch
 included; this reads its state once per frame. The app keeps drawing at 60 fps
 through an SSH login, a queue wait and a LAMMPS build on the far side.
 """
+import threading
 import time
 
 import pygame
@@ -66,6 +67,51 @@ FAIL_COLOR = (255, 110, 90)
 
 CARD_WIDTH = 620
 LOG_LINES = 14
+
+
+class ShutdownStatus:
+    """How far the release of a remote session has got, for the app to show.
+
+    Written by the release worker, read by whoever is drawing; every field is
+    replaced with a finished value, never edited in place, so a reader sees one
+    step or the next and never half of one. Each step is also printed to the
+    terminal as it starts, with the time since the release began -- the closing
+    window may already be gone by the time the slow part runs, and the terminal is
+    where somebody watching a stuck exit looks.
+    """
+
+    PREFIX = "[lammps-live] shutdown:"
+
+    def __init__(self, job_id=None, echo=True):
+        self.job_id = job_id
+        self.started = time.monotonic()
+        self.step = "closing down"
+        self.lines = ()
+        self.done = False
+        self.released = None        # True/False once known; None with no job
+        self.finished_in = None
+        self._echo = echo
+
+    @property
+    def elapsed(self):
+        if self.finished_in is not None:
+            return self.finished_in
+        return time.monotonic() - self.started
+
+    def say(self, text):
+        self.step = str(text)
+        self.lines = self.lines + (self.step,)
+        if self._echo:
+            print(f"{self.PREFIX} {self.step}  [{self.elapsed:.1f} s]", flush=True)
+
+    def finish(self):
+        self.finished_in = time.monotonic() - self.started
+        if self.released is False:
+            self.say(f"FINISHED, BUT JOB {self.job_id} MAY STILL HOLD A GPU -- "
+                     f"`scancel {self.job_id}` on the cluster")
+        else:
+            self.say(f"done in {self.finished_in:.1f} s")
+        self.done = True
 
 
 class RemotePanel:
@@ -108,6 +154,10 @@ class RemotePanel:
         # produces no visible change is a copy the user does again, and again.
         self._notice = None
         self._notice_until = 0.0
+        # The release running on a worker, and what it has said so far (see
+        # `release_async`, `shutdown_status`).
+        self._closer = None
+        self._shutdown_status = None
 
     # ---- lifecycle ----------------------------------------------------------
 
@@ -199,13 +249,107 @@ class RemotePanel:
         self.field.clear()
 
     def release(self):
-        """Drop everything: cancels the job, closes the tunnel and the login."""
-        if self.session is not None:
-            self.session.shutdown()
-            self.session = None
+        """Drop everything: cancels the job, closes the tunnel and the login.
+
+        Blocking: `release_async`, then `wait_released`. What the app's exit path
+        calls last, whether or not it started the release early to keep drawing
+        through it -- in which case this only waits for the one already running.
+        """
+        self.release_async()
+        self.wait_released()
+
+    def release_async(self):
+        """Start giving everything back, on a worker thread, and return at once.
+
+        True if a teardown is now running (or already was); False if there was
+        nothing to give back -- no session, or one that never got as far as a
+        login -- in which case it is already over, `shutdown_status` stays None,
+        and nothing is printed. That is the local-only case, and it is instant.
+
+        The panel lets go of the session immediately (the card goes, `active` is
+        False, `standby_note` is None), so the app can go on drawing frames and
+        polling `shutdown_status` without anything here touching the session the
+        worker is tearing down.
+
+        THE WORKER IS NOT A DAEMON THREAD, and that is deliberate: if the main
+        thread is unwound (a second Ctrl-C, an exception on the way out) the
+        interpreter still waits for the scancel before the process ends, instead
+        of killing it mid-ssh -- which is one way a job used to be left behind.
+        """
+        if self._closer is not None and self._closer.is_alive():
+            return True
+        session, self.session = self.session, None
         self.system = None
         self.visible = False
         self.field.clear()
+        if session is None:
+            return False
+        if not getattr(session, "holds_anything", True):
+            session.shutdown()                  # nothing to do; instant
+            return False
+        status = self._shutdown_status = ShutdownStatus(
+            job_id=getattr(session, "job_id", None))
+        status.say("closing the remote session"
+                   + (f" (job {status.job_id})" if status.job_id else ""))
+
+        def run():
+            try:
+                session.shutdown(report=status.say)
+                status.released = (None if status.job_id is None
+                                   else getattr(session, "job_id", None) is None)
+            except BaseException as exc:            # noqa: BLE001 -- reported
+                status.say(f"teardown failed: {type(exc).__name__}: {exc}")
+                status.released = False if status.job_id else None
+            finally:
+                status.finish()
+
+        self._closer = threading.Thread(target=run, name="remote-release",
+                                        daemon=False)
+        self._closer.start()
+        return True
+
+    @property
+    def shutdown_status(self):
+        """The release in progress, or the last one -- None if there never was one.
+
+        A `ShutdownStatus`: `.step` is the line to show ("cancelling Slurm job
+        4242 on gcn12 ..."), `.done` whether it is over, `.elapsed` the seconds so
+        far, `.released` True/False once the job's release has been confirmed or
+        not (None when there was no job), `.lines` every step so far. Read it once
+        per frame; it is written by the worker and only ever replaced field by
+        field with finished values.
+        """
+        return self._shutdown_status
+
+    @property
+    def releasing(self):
+        """Is a release running on the worker right now?"""
+        return self._closer is not None and self._closer.is_alive()
+
+    def wait_released(self, timeout=None):
+        """Block until the release (if any) is over. True if it is.
+
+        DEAF TO Ctrl-C. The app turns SIGINT into SystemExit on the main thread,
+        wherever it happens to be -- which, during shutdown, is here. Letting that
+        unwind the wait used to be fine for the wait and fatal for the scancel it
+        was waiting on, because the scancel was running ON this thread; it is on
+        the worker now, and this just keeps waiting for it, saying so.
+        """
+        closer = self._closer
+        if closer is None:
+            return True
+        deadline = None if timeout is None else time.monotonic() + timeout
+        while closer.is_alive():
+            if deadline is not None and time.monotonic() >= deadline:
+                return False
+            try:
+                closer.join(0.1)
+            except (KeyboardInterrupt, SystemExit):
+                status = self._shutdown_status
+                job = f" (job {status.job_id})" if status and status.job_id else ""
+                print(f"[lammps-live] shutdown: still giving the GPU back{job} -- "
+                      f"one moment, it has to be confirmed", flush=True)
+        return True
 
     @property
     def active(self):

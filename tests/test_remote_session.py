@@ -669,3 +669,138 @@ def test_a_name_is_not_a_different_machine():
     assert session_mod._same_host("GCN12", "gcn12")
     assert session_mod._same_host("gcn12", None)
     assert not session_mod._same_host("gcn12", "gcn13")
+
+
+# --- Ctrl-C, leftovers, keepalive, and a teardown that is quick about it -----
+
+def test_every_child_is_started_outside_our_process_group(cluster, monkeypatch):
+    """Ctrl-C in the terminal is SIGINT to the whole foreground process group. A
+    child in OUR group dies with the keypress -- a scancel mid-flight, the deploy's
+    ssh half-way through an unpack -- before the app's teardown has even begun. So
+    every process the session starts gets a session of its own, and only this one
+    hears the terminal."""
+    import subprocess
+    seen = []
+    real = subprocess.Popen
+
+    def recording(argv, *args, **kwargs):
+        seen.append((list(argv)[:3], kwargs.get("start_new_session", False)))
+        return real(argv, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "Popen", recording)
+    sess = RemoteSession(cluster["target"], playground_ref=cluster["playground"])
+    try:
+        _drive(sess)
+        assert sess.state == READY, sess.error
+    finally:
+        sess.shutdown()
+    ours = [(argv, detached) for argv, detached in seen
+            if argv and argv[0] in ("ssh", "tar")]
+    assert len(ours) > 8, seen
+    stray = [argv for argv, detached in ours if not detached]
+    assert not stray, f"started in our process group: {stray}"
+
+
+def test_a_leftover_deploy_directory_is_replaced_not_built_on(cluster, monkeypatch):
+    """The symptom from a hard shutdown: `~/.lammps_live_remote` left behind, half
+    written, and the next session stuck on it until it was removed by hand. The
+    package now goes into a fresh staging directory and is swapped in whole, so
+    nothing the last session left can survive into this one."""
+    deployed = cluster["tmp"] / "deployed"
+    stale = deployed / "lammps_live"
+    (stale / "remote").mkdir(parents=True)
+    (stale / "a_module_this_revision_deleted.py").write_text("raise SystemExit\n")
+    (stale / "remote" / "__init__.py").write_text("# half written")
+    (deployed / ".incoming.123").mkdir()
+    (deployed / ".incoming.123" / "junk").write_text("an interrupted unpack")
+    (deployed / ".outgoing.77").mkdir()
+    monkeypatch.setenv("FAKE_STALE_JOBS", "999")
+
+    sess = RemoteSession(cluster["target"], playground_ref=cluster["playground"])
+    try:
+        _drive(sess)
+        assert sess.state == READY, f"{sess.error}\n" + "\n".join(sess.log)
+        log = "\n".join(sess.log)
+        assert "MB)" in log and "shipping lammps_live" in log
+        # A job an earlier session left behind is named, not silently ignored.
+        assert "older mesomem-live job 999 is still RUNNING" in log
+    finally:
+        sess.shutdown()
+    assert not (stale / "a_module_this_revision_deleted.py").exists()
+    assert (stale / "remote" / "session.py").is_file()
+    leftovers = [p.name for p in deployed.iterdir() if p.name.startswith(".")]
+    assert not leftovers, leftovers
+
+
+def test_a_stalled_deploy_is_reported_not_sat_on(cluster, monkeypatch):
+    """A deploy that does not finish says so while it waits, and gives up with a
+    message that names the step -- instead of five silent minutes."""
+    sess = RemoteSession(cluster["target"], playground_ref=cluster["playground"])
+    monkeypatch.setattr(sess, "DEPLOY_HEARTBEAT", 0.3)
+    monkeypatch.setattr(sess, "DEPLOY_TIMEOUT", 1.0)
+    monkeypatch.setattr(sess, "DEPLOY_SECONDS_PER_MB", 0.0)
+    monkeypatch.setattr(sess, "_unpack_script", lambda name: "sleep 30")
+    try:
+        _drive(sess)
+        assert sess.state == FAILED
+        assert "the deploy stalled" in sess.error
+        assert any("still shipping" in line for line in sess.log)
+    finally:
+        sess.shutdown()
+
+
+def test_a_held_session_keeps_the_server_from_its_idle_exit(cluster, monkeypatch):
+    """The demo day: the app shows LOCAL playgrounds for hours with the GPU held and
+    no link open. While it is alive the server must not time out -- and once it is
+    not (SIGKILL, a closed lid: no more keepalives), the server's own idle exit and
+    scancel must still give the GPU back."""
+    monkeypatch.setattr(RemoteSession, "KEEPALIVE_EVERY", 0.5)
+    target = replace(cluster["target"], exit_when_idle=3.0)
+    sess = RemoteSession(target, playground_ref=cluster["playground"])
+    try:
+        _drive(sess)
+        assert sess.state == READY, sess.error
+        sess.link.close()                       # switched to a local playground
+        time.sleep(7.0)                         # over twice the idle timeout
+        assert sess._server_proc.poll() is None, "\n".join(sess.log)
+        assert sess.holds_allocation
+        assert not any("no client for" in line for line in sess.log)
+
+        # The app dies without a teardown: the keepalives stop, nothing else does.
+        sess._keepalive_stop.set()
+        deadline = time.monotonic() + 20.0
+        while sess._server_proc.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.2)
+        assert sess._server_proc.poll() is not None, "the server never gave up"
+        assert any("no client for" in line for line in sess.log)
+        assert "scancel 4242" in cluster["slurm_log"].read_text()
+    finally:
+        sess.shutdown()
+
+
+def test_the_teardown_is_quick_and_says_each_step(session, cluster):
+    """Closing the window used to sit behind the tunnel's and the master's ten-second
+    waits, one after the other. The scancel is still confirmed; nothing else waits
+    for it or in front of it."""
+    _drive(session)
+    assert session.state == READY, session.error
+    said = []
+    t0 = time.monotonic()
+    session.shutdown(report=said.append)
+    took = time.monotonic() - t0
+    assert took < 5.0, f"teardown took {took:.1f}s: {said}"
+    text = "\n".join(said)
+    assert "cancelling Slurm job 4242 on localhost" in text
+    assert "job 4242 released" in text
+    assert text.index("cancelling Slurm job") < text.index("closing the tunnel")
+    assert session.job_id is None and session._master is None
+
+
+def test_a_session_that_never_started_tears_down_instantly():
+    """The local-only case: a card was looked at, nothing was connected."""
+    sess = RemoteSession(RemoteTarget(host="nowhere"), playground_ref="x")
+    assert not sess.holds_anything
+    said = []
+    t0 = time.monotonic()
+    sess.shutdown(report=said.append)
+    assert time.monotonic() - t0 < 0.1 and said == []

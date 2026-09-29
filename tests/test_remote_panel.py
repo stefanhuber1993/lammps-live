@@ -7,6 +7,7 @@ a digit silently switching playgrounds mid-login.
 """
 import os
 import threading
+import time
 
 import pytest
 
@@ -147,8 +148,21 @@ class StubSession:
     def cancel(self):
         self.cancels += 1
 
-    def shutdown(self):
+    # What the release worker is made to wait on, and what it reports -- the
+    # teardown tests set these; everything else gets an instant release.
+    teardown_gate = None
+    release_fails = False
+
+    def shutdown(self, report=None):
         self.shutdowns += 1
+        if report is not None:
+            report(f"cancelling Slurm job {self.job_id} ...")
+        if self.teardown_gate is not None:
+            self.teardown_gate.wait(10.0)
+        if not self.release_fails:
+            if report is not None and self.job_id:
+                report(f"job {self.job_id} released in 0.0 s")
+            self.job_id = None
         self.state = session_mod.DOWN
 
     def answer(self, text):
@@ -600,3 +614,85 @@ def test_disconnect_is_reachable_while_a_gpu_is_held_unstreamed(panel, tmp_path)
     p._act("disconnect")
     assert session.shutdowns == 1
     system2.close()
+
+
+# --- giving it back without freezing the window --------------------------------
+
+def test_a_local_only_release_is_instant_and_silent(capsys):
+    """No remote playground was ever connected: closing the window must not wait
+    for anything, start anything or print anything."""
+    bare = RemotePanel()
+    t0 = time.monotonic()
+    assert bare.release_async() is False
+    bare.release()
+    assert time.monotonic() - t0 < 0.1
+    assert bare.shutdown_status is None and not bare.releasing
+    assert "shutdown" not in capsys.readouterr().out
+
+
+def test_the_release_runs_on_a_worker_and_says_where_it_is(panel, capsys):
+    """The app keeps drawing while the scancel is in flight, and can show the step
+    it is on; the terminal gets every step as it starts."""
+    import threading
+    p, _system, session = panel
+    _connect(panel)
+    session.teardown_gate = threading.Event()
+
+    assert p.release_async() is True
+    status = p.shutdown_status
+    # Returned at once, with the session already let go of by the panel.
+    assert p.releasing and not status.done
+    assert p.session is None and not p.active and not p.visible
+    deadline = time.monotonic() + 5.0
+    while "cancelling" not in status.step and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert status.step == "cancelling Slurm job 4242 ..."
+    # Asking again while it runs does not start a second teardown.
+    assert p.release_async() is True
+    assert session.shutdowns == 1
+
+    session.teardown_gate.set()
+    assert p.wait_released(timeout=5.0)
+    assert status.done and status.released is True
+    assert status.lines[-1].startswith("done in")
+    out = capsys.readouterr().out
+    assert "[lammps-live] shutdown: cancelling Slurm job 4242" in out
+    assert "[lammps-live] shutdown: job 4242 released" in out
+    assert "[lammps-live] shutdown: done in" in out
+
+
+def test_a_release_that_was_not_confirmed_says_so(panel, capsys):
+    p, _system, session = panel
+    _connect(panel)
+    session.release_fails = True
+    p.release()
+    status = p.shutdown_status
+    assert status.done and status.released is False
+    assert "MAY STILL HOLD A GPU" in status.lines[-1]
+    assert "scancel 4242" in capsys.readouterr().out
+
+
+def test_waiting_for_the_release_is_deaf_to_ctrl_c(panel, capsys):
+    """The app's SIGINT handler raises SystemExit on the main thread wherever it
+    is -- during shutdown, inside this wait. That must not end the wait: the
+    scancel it is waiting for is the one step that may not be skipped."""
+    p, _system, session = panel
+    _connect(panel)
+
+    class Interrupted:
+        """A worker whose first two joins are interrupted, as by Ctrl-C twice."""
+        def __init__(self):
+            self.joins = 0
+
+        def is_alive(self):
+            return self.joins < 4
+
+        def join(self, timeout=None):
+            self.joins += 1
+            if self.joins <= 2:
+                raise SystemExit(130)
+
+    p._closer = Interrupted()
+    assert p.wait_released() is True
+    assert p._closer.joins == 4
+    assert "still giving the GPU back" in capsys.readouterr().out

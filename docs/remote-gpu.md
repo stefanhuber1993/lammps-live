@@ -426,7 +426,12 @@ through the same tunnel (`RemoteSession.reopen_link`, `RemotePanel._resume`). Wh
 protects the A100 while nobody is looking at it is the middle row above -- the
 server's own idle timeout, which is exactly the mechanism designed for "the client
 is gone and may not come back". The panel says the GPU is still held, in amber,
-while another playground is on screen.
+while another playground is on screen. While the app is ALIVE and holding the
+session, though, it sends an authenticated `keepalive` through the tunnel once a
+minute (`RemoteSession.keepalive`), which the server counts as activity without
+building or streaming anything -- so a demo day can sit on the local playgrounds for
+hours with the GPU parked, and only an app that has died stops the keepalives and
+lets the idle timeout run.
 
 The middle one is the interesting one: the remote command is
 `... python -m ...server ...; rc=$?; scancel $SLURM_JOB_ID; exit $rc`, so the job cancels

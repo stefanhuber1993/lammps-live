@@ -304,18 +304,23 @@ class FrameServer:
         listener.settimeout(0.5)
         try:
             while not self._stop.is_set():
+                # Checked every time round rather than only when `accept` times
+                # out: a stream of connections that never authenticate would
+                # otherwise keep the timeout from ever firing, and the allocation
+                # from ever being given back.
+                if (self.exit_when_idle
+                        and time.monotonic() - idle_since > self.exit_when_idle):
+                    self.log(f"no client for {self.exit_when_idle:.0f}s -- exiting")
+                    return
                 try:
                     sock, addr = listener.accept()
                 except socket.timeout:
-                    if (self.exit_when_idle
-                            and time.monotonic() - idle_since > self.exit_when_idle):
-                        self.log(f"no client for {self.exit_when_idle:.0f}s -- exiting")
-                        return
                     continue
-                self.log(f"client {addr[0]}:{addr[1]} connected")
+                served = False
                 try:
-                    self.serve_client(sock)
+                    served = self.serve_client(sock, addr)
                 except (OSError, protocol.ProtocolError) as exc:
+                    served = True
                     self.log(f"client dropped: {type(exc).__name__}: {exc}")
                 finally:
                     try:
@@ -326,8 +331,16 @@ class FrameServer:
                     # stopped: nobody is watching it, and an A100 integrating for
                     # an empty socket is the most expensive no-op available.
                     self.playing = False
-                    idle_since = time.monotonic()
-                    self.log("client gone; simulation held")
+                    # Reset for a keepalive too -- that is its whole job: the app
+                    # that holds this allocation is alive and showing something
+                    # else, and the GPU is to be kept for it (see
+                    # RemoteSession.keepalive). Not reset for a connection that
+                    # failed the handshake, so a stranger poking the port cannot
+                    # hold the allocation open either.
+                    if served is not False:
+                        idle_since = time.monotonic()
+                    if served not in (False, "keepalive"):
+                        self.log("client gone; simulation held")
         finally:
             listener.close()
 
@@ -347,7 +360,7 @@ class FrameServer:
             return None
         if header is None:
             return None
-        if header.get("t") != "hello":
+        if header.get("t") not in ("hello", "keepalive"):
             sock.sendall(protocol.pack({"t": "error", "msg": "expected hello"}))
             return None
         if header.get("version") != protocol.VERSION:
@@ -410,11 +423,24 @@ class FrameServer:
         self._fault = None
         return True
 
-    def serve_client(self, sock):
+    def serve_client(self, sock, addr=None):
+        """One connection, start to finish. Returns False if it never got past the
+        handshake, "keepalive" for a keepalive, and anything else for a client
+        that was served -- which is how the serve loop tells the three apart for
+        its idle clock and its log (a keepalive a minute for ten hours would
+        otherwise be six hundred "connected"/"gone" pairs in the log the panel
+        copies)."""
         protocol.set_socket_options(sock)
         header = self._authenticate(sock)
         if header is None:
-            return
+            return False
+        if header.get("t") == "keepalive":
+            # Authenticated, answered, done: nothing is built, switched or sent.
+            sock.sendall(protocol.pack({"t": "alive",
+                                        "playground": self.playground_ref}))
+            return "keepalive"
+        if addr is not None:
+            self.log(f"client {addr[0]}:{addr[1]} connected")
         sock.settimeout(None)
         # Asked for before anything is said about building, so the message below
         # names the playground that is actually about to be built.

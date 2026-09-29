@@ -158,6 +158,35 @@ class FrameLink:
         sock.settimeout(None)
         return cls(sock, header)
 
+    @staticmethod
+    def keepalive(host, port, token, timeout=10.0):
+        """Tell a server its allocation is still wanted, without becoming its client.
+
+        One authenticated message and one answer on a connection of its own, which
+        the server counts against its idle timeout and nothing else: it builds
+        nothing, switches nothing and streams nothing (see
+        FrameServer.serve_client). Raises LinkClosed if it was not answered.
+        What sends it, and why, is RemoteSession.keepalive.
+        """
+        try:
+            sock = socket.create_connection((host, int(port)), timeout=timeout)
+        except OSError as exc:
+            raise LinkClosed(f"could not reach {host}:{port} -- "
+                             f"{exc.strerror or exc}") from exc
+        try:
+            sock.settimeout(timeout)
+            sock.sendall(protocol.pack({"t": "keepalive", "version": protocol.VERSION,
+                                        "token": token}))
+            header, _payload = protocol.recv_message(sock)
+        except (OSError, protocol.ProtocolError) as exc:
+            raise LinkClosed(f"keepalive failed: {exc}") from exc
+        finally:
+            sock.close()
+        if header is None or header.get("t") != "alive":
+            raise LinkClosed(str((header or {}).get("msg")
+                                 or "the server did not acknowledge the keepalive"))
+        return header
+
     # ---- reading ------------------------------------------------------------
 
     def _read_loop(self):
@@ -980,6 +1009,14 @@ class RemoteSystem(MDSystem3D):
         """
         if self._playing or not self.connected:
             return
+        # AND THE ENERGY REQUEST GOES OUT FROM HERE TOO. It used to be made only
+        # in `step()` -- which a paused run never calls -- so switching the
+        # colouring to energy while paused asked for nothing: the server kept
+        # sending frames without energies, `get_bead_energies` kept answering None,
+        # and the scene stayed on the director banding until Play was pressed.
+        # (The same is true the other way round: switching away while paused never
+        # told the server to stop gathering them.) Playing, `step()` does it.
+        self._sync_energy_request()
         frame = self.link.take_frame(timeout=0.0)
         if frame is not None:
             self._ingest(frame)
@@ -1138,7 +1175,18 @@ class RemoteSystem(MDSystem3D):
         already handles by keeping the director banding, rather than a labelling
         applied to the wrong beads.
         """
+        newly_asked = (self._frame - self._clusters_asked_frame
+                       >= self.ENERGY_REQUEST_HOLD)
         self._clusters_asked_frame = self._frame
+        if newly_asked and not self._playing and self._state is not None:
+            # The colouring has just been switched to clusters while PAUSED. The
+            # labelling is scheduled by the frames that arrive after the ask, and
+            # a paused server still sends them -- but nothing guarantees one soon
+            # (a stalled link, a server between frames), and the frame already in
+            # hand is exactly the configuration being looked at. So it is measured
+            # once more, now, with the labelling on. Only on the edge and only
+            # paused: playing, the next frame is at most a wire period away.
+            self._frame_analysis.submit(self._state, self._frame, True)
         slots = self._frame_analysis.cluster_slots
         if slots is None or self._state is None:
             return None

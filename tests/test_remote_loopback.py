@@ -849,3 +849,129 @@ def test_a_rebuild_that_fails_is_reported_and_the_server_survives(system, server
     _advance(system, frames=4)
     assert srv.system.get_sim_time() >= before
     assert system.take_fault() is None       # shown once, then gone
+
+
+# --- a colouring changed while paused ------------------------------------------
+
+def _draw_paused(system, until, timeout=15.0, read=None):
+    """What the app does for a paused remote scene: draw, never step. `read` is the
+    colouring's readout, called after the positions as the renderer does."""
+    deadline = time.monotonic() + timeout
+    value = None
+    while time.monotonic() < deadline:
+        system.get_positions_3d()
+        value = read()
+        if until(value):
+            return value
+        time.sleep(0.02)
+    return value
+
+
+def test_energy_colouring_applies_while_paused(system, server):
+    """The bug: on a paused remote scene, switching the colouring to energy did
+    nothing until Play. The request for per-bead energies was only ever made from
+    `step()`, which a paused app does not call."""
+    srv, _port = server
+    system.set_playing(False)
+    _draw_paused(system, until=lambda _v: system._state is not None,
+                 read=lambda: None)
+    assert srv.want_energies is False
+
+    energies = _draw_paused(system, until=lambda e: e is not None,
+                            read=system.get_bead_energies)
+    assert energies is not None and len(energies) == 900
+    assert srv.want_energies is True
+
+    # And switching away while still paused stops the far side gathering them.
+    deadline = time.monotonic() + 10.0
+    while srv.want_energies and time.monotonic() < deadline:
+        system.get_positions_3d()
+        time.sleep(0.02)
+    assert srv.want_energies is False
+
+
+def test_cluster_colouring_applies_while_paused(system):
+    system.set_playing(False)
+    _draw_paused(system, until=lambda _v: system._state is not None,
+                 read=lambda: None)
+    slots = _draw_paused(system, until=lambda s: s is not None,
+                         read=system.get_bead_clusters)
+    assert slots is not None and len(slots) == 900
+
+
+def test_the_labelling_is_asked_of_the_frame_in_hand_when_paused(system):
+    """The edge case behind the fix: a paused scene whose link has gone quiet still
+    gets its labelling, from the frame it is already showing."""
+    system.set_playing(False)
+    _draw_paused(system, until=lambda _v: system._state is not None,
+                 read=lambda: None)
+    submitted = []
+    real_submit = system._frame_analysis.submit
+    system._frame_analysis.submit = lambda *a: (submitted.append(a),
+                                                real_submit(*a))
+    system._clusters_asked_frame = -999          # colouring just switched on
+    system.get_bead_clusters()
+    assert submitted and submitted[0][2] is True
+    assert submitted[0][0] is system._state
+
+
+# --- keeping an unwatched allocation alive -------------------------------------
+
+def _idle_server(playground_file, exit_when_idle):
+    port = _free_port()
+    srv = FrameServer(playground=playground_file, profile="local", port=port,
+                      bind="127.0.0.1", token=TOKEN, fps=0.0, verbose=False,
+                      exit_when_idle=exit_when_idle)
+    thread = threading.Thread(target=srv.serve_forever, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline:
+        try:
+            FrameLink.keepalive("127.0.0.1", port, TOKEN, timeout=1.0)
+            break
+        except LinkClosed:
+            time.sleep(0.05)
+    return srv, port, thread
+
+
+def test_a_keepalive_holds_off_the_idle_exit_and_its_absence_does_not(
+        playground_file):
+    """The demo-day case: the app sits on LOCAL playgrounds for hours with the GPU
+    held. The server must not give it back while the app keeps saying it is there
+    -- and must still give it back once the app has died and gone quiet."""
+    srv, port, thread = _idle_server(playground_file, exit_when_idle=1.0)
+    try:
+        t_end = time.monotonic() + 3.0          # three idle timeouts' worth
+        while time.monotonic() < t_end:
+            answer = FrameLink.keepalive("127.0.0.1", port, TOKEN, timeout=2.0)
+            assert answer["t"] == "alive"
+            time.sleep(0.3)
+        assert thread.is_alive(), "the server exited while being kept alive"
+        # Nothing was built for it: a keepalive is not a client.
+        assert srv.system is None
+
+        # The app dies: nothing more arrives, and the idle timeout does its job.
+        thread.join(timeout=5.0)
+        assert not thread.is_alive(), "the server outlived its idle timeout"
+    finally:
+        srv.stop()
+        thread.join(timeout=5.0)
+
+
+def test_a_keepalive_needs_the_token(playground_file):
+    """Otherwise anybody who can reach the port could hold the allocation open."""
+    srv, port, thread = _idle_server(playground_file, exit_when_idle=1.0)
+    try:
+        with pytest.raises(LinkClosed, match="bad token"):
+            FrameLink.keepalive("127.0.0.1", port, "wrong", timeout=2.0)
+        t_end = time.monotonic() + 2.5
+        while time.monotonic() < t_end and thread.is_alive():
+            try:
+                FrameLink.keepalive("127.0.0.1", port, "wrong", timeout=1.0)
+            except LinkClosed:
+                pass
+            time.sleep(0.2)
+        assert not thread.is_alive(), "bad-token keepalives held the server open"
+    finally:
+        srv.stop()
+        thread.join(timeout=5.0)

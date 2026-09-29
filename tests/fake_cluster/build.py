@@ -49,6 +49,13 @@ if "-M" in argv:
         note("bad answers", answers)
         sys.exit(255)
     note("authenticated", answers)
+    # `-O exit` has to be able to end us, as it ends a real master -- a fake that
+    # ignored it made every teardown sit out the full reaping grace, which hid how
+    # long the real one takes. SIGTERM unwinds through the `finally`, so the
+    # control socket goes with the process exactly as ssh removes its own.
+    import signal
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+    open(control + ".pid", "w").write(str(os.getpid()))
     open(control, "w").write("up\n")
     print("fake ssh: master connected", flush=True)
     try:
@@ -131,6 +138,10 @@ if "-O" in argv:
             os.unlink(pid_path)
         sys.exit(0)
     if action == "exit":
+        try:
+            os.kill(int(open(control + ".pid").read()), 15)
+        except (OSError, ValueError):
+            pass
         sys.exit(0)
     sys.exit(1)
 
@@ -246,6 +257,16 @@ import os, sys
 log = os.environ["FAKE_SLURM_LOG"]
 argv = sys.argv[1:]
 job = argv[argv.index("-j") + 1] if "-j" in argv else ""
+if not job:
+    # A listing (`squeue -u me -n name`), which the deploy makes to spot a job an
+    # earlier session left behind. Answered from FAKE_STALE_JOBS, in the format it
+    # asked for, and WITHOUT touching the call counter below: that counter is the
+    # queue simulation for the job this session submits, and a listing is not a
+    # question about it.
+    fmt = argv[argv.index("-o") + 1] if "-o" in argv else "%i %T"
+    for stale in os.environ.get("FAKE_STALE_JOBS", "").split():
+        print(fmt.replace("%i", stale).replace("%T", "RUNNING"))
+    sys.exit(0)
 cancelled = set()
 if os.path.exists(log + ".cancelled"):
     cancelled = set(open(log + ".cancelled").read().split())
