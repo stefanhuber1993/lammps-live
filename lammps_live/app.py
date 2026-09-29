@@ -474,9 +474,17 @@ class App:
         self.steps_per_frame = max(1, min(STEPS_PER_FRAME_CAP, round(sim_time_per_frame / spec.timestep)))
 
     def _cycle_system(self, step=1):
+        """Next / previous playground. NO ROLLOVER: the sequence is a talk with a
+        beginning and an end, so "next" on the last scene does nothing rather
+        than jumping back to the two-bead opener in front of the room. Returns
+        whether it moved."""
         keys = [key for key, _ in self.systems]
         idx = keys.index(self.system_key)
-        self._build_system(keys[(idx + step) % len(keys)])
+        target = idx + step
+        if not 0 <= target < len(keys):
+            return False
+        self._build_system(keys[target])
+        return True
 
     def _reset_simulation(self, restore_params=True):
         """Put everything back to how the playground starts: a fresh initial state,
