@@ -55,8 +55,17 @@ _TEMP_KEY = "@temperature"
 class App:
     def __init__(self, input_mode, initial_system_key, fullscreen=False, debug=False,
                  mode=None, preset=None, remote_address=None, remote_token="",
-                 ui_scale=None):
+                 ui_scale=None, lock=None):
         self.input_mode = input_mode
+        # THE KIOSK LOCK (see kiosk.py), or None. While `self.locked`, closing,
+        # minimising, hiding or leaving fullscreen asks for the password first
+        # (`self._unlock` is that prompt while it is up). A correct password does
+        # what was asked and leaves the app UNLOCKED for the operator; Ctrl-L, or
+        # a minute with nobody touching it, locks it again.
+        self.lock = lock
+        self.locked = lock is not None
+        self._unlock = None
+        self._watchdog = None
         self.debug = debug
         # Whether `_shutdown` has run. It is reachable from the loop's `finally`,
         # from an atexit hook and from a signal that unwinds through both, and
@@ -125,6 +134,14 @@ class App:
         # ui_scale=None lets the renderer pick from the screen (see ui/scale.py).
         self.renderer = Renderer(config.WINDOW_SIZE, fullscreen=fullscreen,
                                  ui_scale=ui_scale)
+        if self.lock is not None:
+            from .kiosk import Watchdog
+            took = self.lock.apply_platform_lockdown()
+            print("[lammps-live] kiosk lock on"
+                  + (" (Dock, menu bar, Cmd-Tab and Force Quit disabled)"
+                     if took else ""))
+            if took:
+                self._watchdog = Watchdog()
         self.clock = pygame.time.Clock()
 
         # Opening the joystick is a run of blocking HID handshakes (one per
@@ -619,6 +636,8 @@ class App:
         if left is None or left > 0.0:
             return
         self._idle_armed = False
+        self._unlock = None
+        self._relock()
         first = self.systems[0][0] if self.systems else None
         print("[lammps-live] no input for a minute -- back to the start")
         if first is not None and self.system_key != first:
@@ -829,6 +848,9 @@ class App:
         """
         self.remote_panel.draw(renderer)
         self.alert.draw(renderer)
+        # The password prompt over everything: it is the one thing on screen that
+        # has to be answered before anything else happens.
+        self._draw_unlock_prompt(renderer)
 
     def _playback_action(self, name):
         """Apply a Play/Pause/Reset button (or its keyboard shortcut)."""
@@ -912,6 +934,10 @@ class App:
         self._shut_down = True
         # Ordered by what it costs to skip. `release` is a no-op for a local
         # playground; for a remote one it cancels the job and closes the tunnel.
+        if self._watchdog is not None:
+            self._watchdog.stop()
+        if self.lock is not None:
+            self.lock.release_platform_lockdown()
         for step in (self.remote_panel.release, self._sim_idle, self.source.close,
                      self.system.close, pygame.quit):
             try:
@@ -968,13 +994,33 @@ class App:
 
     def _handle_events(self, dt):
         if self._quit_requested:
-            return False
+            self._quit_requested = False
+            if not self.locked:
+                return False
+            self._ask_password("quit")
+        if self._watchdog is not None:
+            self._watchdog.tick()
         for event in pygame.event.get():
             if event.type in self.ACTIVITY_EVENTS:
                 self._note_input()
+            if self._guard_window_event(event):
+                continue
+            if self._unlock is not None:
+                verdict = self._unlock_event(event)
+                if verdict == "quit":
+                    return False
+                continue
             self._drop_lost_drags(event)
             if event.type == pygame.QUIT:
+                if self.locked:
+                    self._ask_password("quit")
+                    continue
                 return False
+            if (event.type == pygame.KEYDOWN and event.key == pygame.K_l
+                    and event.mod & (pygame.KMOD_CTRL | pygame.KMOD_META)
+                    and self.lock is not None):
+                self._relock()
+                continue
             # The connect panel is modal while it is waiting for a login answer:
             # that answer can be all digits, which are otherwise the playground
             # shortcuts, so it takes the keystrokes before anything else sees them.
@@ -985,11 +1031,19 @@ class App:
                     # Escape leaves fullscreen (ours or a macOS-native space)
                     # first; only quits when already windowed.
                     if self.renderer.is_fullscreen():
-                        self._exit_fullscreen()
+                        if self.locked:
+                            self._ask_password("windowed")
+                        else:
+                            self._exit_fullscreen()
+                    elif self.locked:
+                        self._ask_password("quit")
                     else:
                         return False
                 elif event.key == pygame.K_F11:
-                    self._toggle_fullscreen()
+                    if self.locked and self.renderer.is_fullscreen():
+                        self._ask_password("windowed")
+                    else:
+                        self._toggle_fullscreen()
                 elif event.key == pygame.K_TAB:
                     # Shift-Tab walks the picker backwards, Tab forwards.
                     back = event.mod & pygame.KMOD_SHIFT
@@ -1078,6 +1132,10 @@ class App:
                         continue
                     s.handle_event(event)
 
+        if self._unlock is not None:
+            # The prompt is modal: the stick and its buttons wait behind it.
+            self.source.poll_buttons()
+            return True
         # The joystick's buttons and hat are polled here, with the keyboard
         # shortcuts they mirror, rather than in _tick: switching playground
         # rebuilds the system, and _tick reads the spec it is drawing at the top
@@ -1093,6 +1151,101 @@ class App:
             if keys[pygame.K_DOWN]:
                 self.temp_slider.nudge(-rate * dt)
         return True
+
+    # ---- the kiosk lock -------------------------------------------------------
+
+    UNLOCK_TITLES = {
+        "quit": "Enter the password to close the demo",
+        "windowed": "Enter the password to leave fullscreen",
+        "minimize": "Enter the password to minimise the demo",
+    }
+
+    def _ask_password(self, action):
+        if self._unlock is None:
+            self._unlock = {"action": action, "text": "", "error": ""}
+
+    def _relock(self):
+        if self.lock is None or self.locked:
+            return
+        self.locked = True
+        if not self.lock.platform_locked:
+            self.lock.apply_platform_lockdown()
+        print("[lammps-live] kiosk lock on again")
+        self._toast("Locked")
+
+    def _unlock_event(self, event):
+        """One event into the password prompt. Returns "quit" when the app should
+        close, else None. Everything is swallowed while the prompt is up."""
+        prompt = self._unlock
+        if event.type == pygame.QUIT:
+            return None
+        if event.type != pygame.KEYDOWN:
+            return None
+        if event.key == pygame.K_ESCAPE:
+            self._unlock = None
+        elif event.key == pygame.K_BACKSPACE:
+            prompt["text"] = prompt["text"][:-1]
+        elif event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+            wait = self.lock.locked_out_for()
+            if wait > 0.0:
+                prompt["error"] = f"Too many tries -- wait {wait:.0f} s"
+                prompt["text"] = ""
+            elif self.lock.check(prompt["text"]):
+                self._unlock = None
+                self.locked = False
+                self.lock.release_platform_lockdown()
+                print(f"[lammps-live] kiosk unlocked ({prompt['action']})")
+                action = prompt["action"]
+                if action == "quit":
+                    return "quit"
+                if action == "windowed":
+                    self._exit_fullscreen()
+                elif action == "minimize":
+                    self._window_call("minimize")
+                self._toast("Unlocked -- Ctrl-L locks again")
+            else:
+                wait = self.lock.locked_out_for()
+                prompt["error"] = (f"Too many tries -- wait {wait:.0f} s" if wait
+                                   else "Wrong password")
+                prompt["text"] = ""
+        elif event.unicode and event.unicode.isprintable():
+            prompt["text"] = (prompt["text"] + event.unicode)[:64]
+        return None
+
+    def _window_call(self, name):
+        """Call a method of the SDL window (restore, focus, minimize), if pygame
+        exposes it. Best effort: the lock must never crash the demo."""
+        try:
+            from pygame._sdl2.video import Window
+            getattr(Window.from_display_module(), name)()
+        except Exception:                              # noqa: BLE001
+            pass
+
+    def _guard_window_event(self, event):
+        """While locked, undo a minimise, a hide or a lost focus the moment it
+        happens, and ask for the password for the first two. Returns whether the
+        event was consumed."""
+        if not self.locked:
+            return False
+        kind = event.type
+        if kind in (getattr(pygame, "WINDOWMINIMIZED", -1),
+                    getattr(pygame, "WINDOWHIDDEN", -1)):
+            self._window_call("restore")
+            self._window_call("show")
+            self._window_call("focus")
+            self._ask_password("minimize")
+            return True
+        if kind == getattr(pygame, "WINDOWFOCUSLOST", -1):
+            self._window_call("focus")
+            return True
+        return False
+
+    def _draw_unlock_prompt(self, renderer):
+        if self._unlock is None:
+            return
+        prompt = self._unlock
+        renderer.draw_password_prompt(self.UNLOCK_TITLES[prompt["action"]],
+                                      len(prompt["text"]), prompt["error"])
 
     def _on_color_chosen(self, index):
         """The bead colouring changed, from the mouse toggle or the stick -- both

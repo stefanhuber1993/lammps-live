@@ -55,6 +55,12 @@ def build_parser():
                              "are rasterized at that size, so the UI is sharp "
                              "rather than magnified. Default: 2 on a screen taller "
                              "than 1800 px, else 1")
+    parser.add_argument("--lock", action="store_true",
+                        help="kiosk mode for an unattended machine: closing, "
+                             "minimising or leaving fullscreen needs a password "
+                             "(from LAMMPS_LIVE_LOCK_PASSWORD, or asked for at "
+                             "startup); on macOS also hides the Dock and menu bar "
+                             "and disables Cmd-Tab and Force Quit")
     parser.add_argument("--debug", action="store_true",
                         help="show a per-frame timing breakdown (sim vs. analysis "
                              "vs. render vs. device I/O) in the GUI header")
@@ -324,12 +330,21 @@ def main(argv=None):
             parser.error("--remote wants HOST:PORT, e.g. 127.0.0.1:5723")
         remote_address = (host, int(port))
 
+    lock = None
+    if args.lock:
+        from .kiosk import KioskLock, password_from_environment_or_terminal
+        password = password_from_environment_or_terminal()
+        if not password:
+            parser.error("--lock needs a password: set LAMMPS_LIVE_LOCK_PASSWORD "
+                         "or run it from a terminal to be asked for one")
+        lock = KioskLock(password)
+
     from .app import App
     app = App(input_mode=args.input, initial_system_key=initial_key,
               fullscreen=args.fullscreen, debug=args.debug,
               mode=args.mode, preset=args.preset,
               remote_address=remote_address, remote_token=args.token,
-              ui_scale=args.ui_scale)
+              ui_scale=args.ui_scale, lock=lock)
     app.run()
     return 0
 

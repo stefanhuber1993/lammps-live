@@ -3717,6 +3717,35 @@ class Renderer:
         plate.blit(msg, msg.get_rect(midtop=(w // 2, num.get_height() + UI(14))))
         self.screen.blit(plate, ((W - w) // 2, (H - h) // 2))
 
+    def draw_password_prompt(self, title, n_chars, error=""):
+        """The kiosk lock's modal: the whole window washed dark, a card with what
+        the password is for, one dot per character typed, and the last error."""
+        W, H = self.window_size
+        wash = pygame.Surface((W, H), pygame.SRCALPHA)
+        wash.fill((8, 10, 16, 200))
+        self.screen.blit(wash, (0, 0))
+        cw, ch = UI(560), UI(210)
+        card = pygame.Rect((W - cw) // 2, (H - ch) // 2, cw, ch)
+        pygame.draw.rect(self.screen, (32, 36, 48), card, border_radius=UI(14))
+        pygame.draw.rect(self.screen, self.CALLOUT_COLOR, card, width=UI.w(2),
+                         border_radius=UI(14))
+        head = self.header_font.render(title, True, (240, 240, 240))
+        self.screen.blit(head, head.get_rect(midtop=(card.centerx,
+                                                     card.y + UI(24))))
+        field = pygame.Rect(card.x + UI(40), card.y + UI(80), cw - UI(80), UI(44))
+        pygame.draw.rect(self.screen, (18, 20, 28), field, border_radius=UI(8))
+        pygame.draw.rect(self.screen, (90, 96, 116), field, width=UI.w(1),
+                         border_radius=UI(8))
+        r = UI(6)
+        for i in range(min(n_chars, 30)):
+            pygame.draw.circle(self.screen, (230, 230, 230),
+                               (field.x + UI(20) + i * UI(18), field.centery), r)
+        hint = error or "Enter to confirm, Esc to cancel"
+        col = (255, 110, 100) if error else DIM_TEXT_COLOR
+        sub = self.small_font.render(hint, True, col)
+        self.screen.blit(sub, sub.get_rect(midtop=(card.centerx,
+                                                   field.bottom + UI(18))))
+
     def draw_toast(self, text, alpha=1.0):
         """A short note centred in the sim view, on a dark pill, fading out over
         its last half second (`alpha` 1 -> 0)."""
