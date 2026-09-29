@@ -195,18 +195,23 @@ class App:
         self.color_choice = Choice(
             "bead colour", BEAD_COLOR_MODES,
             on_change=self._on_color_chosen)
-        # Whether the VIEWER has picked a colouring this session, as opposed to
-        # sitting on whatever each scene opened in.
+        # THE COLOURING EACH SCENE WAS LAST LEFT IN, by playground key.
         #
-        # It decides who wins on a playground switch, and both halves matter. A
-        # scene's first declared colouring is its default because it is the one
-        # that tells that scene's story -- the assembly boxes open in CLUSTER,
-        # since what is happening there is aggregates finding each other. But a
-        # colouring somebody deliberately switched to is their preference, and
-        # having it silently undone by every Tab would be worse than never
-        # defaulting at all. So: the scene's default until someone chooses, their
-        # choice afterwards, wherever the next scene offers it.
-        self._color_user_chosen = False
+        # Per scene rather than one global preference, because the colourings do
+        # not mean the same thing everywhere: cluster colouring is the story of the
+        # 50k assembly box and a joke on the vesicle, and a choice made on one of
+        # them following the viewer onto the other changed the picture of a scene
+        # nobody had touched. So a scene opens in its own first declared colouring
+        # (its default -- the one that tells its story) until somebody picks
+        # another ON IT, and then it keeps that pick for the rest of the session,
+        # however often the demo leaves and comes back. Reset forgets it: R means
+        # the beginning, and the beginning is the scene's own default.
+        self._color_by_key = {}
+        # A one-line note over the scene that fades after a couple of seconds --
+        # "Reset: colour back to director" -- for the things that change the
+        # picture without the viewer having asked for that change directly.
+        self._toast_text = None
+        self._toast_until = 0.0
         # Whether the puller was released BY moving the focus off the viewport, so
         # coming back re-grabs it -- and a bead the user let go of with the trigger
         # is left alone (see _cycle_focus).
@@ -415,18 +420,15 @@ class App:
         # which is not a choice), and it follows whatever the toggle is set to
         # rather than resetting it -- the colouring is the viewer's preference, not
         # the playground's.
-        # THE COLOURING FOLLOWS THE SCENE, and only within what the scene offers
-        # (see Playground.bead_colors). Each scene's FIRST declared colouring is
-        # its default and wins on arrival, which is what "the assembly boxes open
-        # in cluster" is; once the viewer has picked one themselves it is their
-        # preference and follows them, except onto a scene that does not offer it.
-        # A scene offering nothing (the two-bead pair) is not a focus stop at all.
+        # THE COLOURING IS REMEMBERED PER SCENE (see `_color_by_key`), and only
+        # within what the scene offers (see Playground.bead_colors). A scene
+        # offering nothing (the two-bead pair) is not a focus stop at all.
         choices = ()
         modes = bead_color_modes(spec) if spec.render_3d else ()
         if modes:
-            if (not self._color_user_chosen
-                    or self.renderer.bead_color_mode not in modes):
-                self.renderer.bead_color_mode = modes[0]
+            remembered = self._color_by_key.get(key)
+            self.renderer.bead_color_mode = (remembered if remembered in modes
+                                             else modes[0])
             self.color_choice.options = modes
             self.color_choice.index = modes.index(self.renderer.bead_color_mode)
             choices = (self.color_choice,)
@@ -535,6 +537,12 @@ class App:
             # back later would restore a state nobody was in.
             self.hero_engaged = set()
             self._hero_saved = {}
+            # And the colouring goes back to the scene's own default, which is what
+            # "the beginning" looks like -- announced, so the jump reads as the
+            # Reset rather than as the picture glitching.
+            if self._reset_colouring():
+                self._toast(f"Reset -- colour back to "
+                            f"{self.renderer.bead_color_mode}")
         self.history.reset()
         self.atom_trails.reset()
         self._trail_frame_counter = 0
@@ -552,10 +560,9 @@ class App:
         being dragged when R was pressed must not carry the drag over onto the
         value that just replaced it, which `reset` does for us.
 
-        The bead colouring and the view slab are deliberately NOT touched. They are
-        how the viewer is looking at the scene rather than what the scene is, and
-        resetting the physics should not also throw away the angle it was being
-        watched from.
+        The view slab is deliberately NOT touched: it is how the viewer is looking
+        at the scene rather than what the scene is. (The bead colouring IS reset,
+        by `_reset_simulation` -- see `_color_by_key`.)
         """
         spec = self.system.spec
         self.temp_slider.reset(spec.temperature)
@@ -899,10 +906,41 @@ class App:
 
     def _on_color_chosen(self, index):
         """The bead colouring changed, from the mouse toggle or the stick -- both
-        go through the Choice, so both land here (see `_color_user_chosen` for what
-        this flag then decides)."""
-        self.renderer.bead_color_mode = self.color_choice.options[index]
-        self._color_user_chosen = True
+        go through the Choice, so both land here. Remembered for THIS scene (see
+        `_color_by_key`)."""
+        mode = self.color_choice.options[index]
+        self.renderer.bead_color_mode = mode
+        self._color_by_key[self.system_key] = mode
+
+    def _toast(self, text, seconds=2.5):
+        """Put `text` over the scene for `seconds`."""
+        self._toast_text = text
+        self._toast_until = perf_counter() + seconds
+
+    def _current_toast(self):
+        """(text, fraction of its life left) or None."""
+        if self._toast_text is None:
+            return None
+        left = self._toast_until - perf_counter()
+        if left <= 0.0:
+            self._toast_text = None
+            return None
+        return self._toast_text, min(1.0, left / 0.5)
+
+    def _reset_colouring(self):
+        """Back to this scene's own default colouring, forgetting the viewer's pick
+        on it. Part of Reset. Returns whether anything changed, so the caller can
+        say so on screen -- a colouring that silently jumps back looks like a
+        glitch, one that is announced looks like the Reset it was."""
+        self._color_by_key.pop(self.system_key, None)
+        modes = self.color_choice.options
+        spec = self.system.spec
+        if not (spec.render_3d and bead_color_modes(spec)) or not modes:
+            return False
+        changed = self.renderer.bead_color_mode != modes[0]
+        self.renderer.bead_color_mode = modes[0]
+        self.color_choice.index = 0
+        return changed
 
     def _hero_knobs(self):
         """This playground's hero knobs, in declared order. From the spec, which is
@@ -1492,6 +1530,7 @@ class App:
             lesson_position=self.lesson_position,
             acts=self.acts,
             hero_engaged=frozenset(self.hero_engaged),
+            toast=self._current_toast(),
             # Drawn last, inside the renderer, so it lands on top of the 3D scene
             # rather than under the composited frame.
             overlay=self._draw_overlays,

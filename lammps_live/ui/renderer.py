@@ -3552,6 +3552,21 @@ class Renderer:
                 ref_lines=[(1.0, DIM_TEXT_COLOR, "gas")],
             )
 
+    def draw_toast(self, text, alpha=1.0):
+        """A short note centred in the sim view, on a dark pill, fading out over
+        its last half second (`alpha` 1 -> 0)."""
+        surf = self.font.render(text, True, (245, 245, 245))
+        pad_x, pad_y = UI(16), UI(9)
+        w, h = surf.get_width() + 2 * pad_x, surf.get_height() + 2 * pad_y
+        pill = pygame.Surface((w, h), pygame.SRCALPHA)
+        pygame.draw.rect(pill, (20, 24, 32, int(215 * alpha)), pill.get_rect(),
+                         border_radius=h // 2)
+        surf.set_alpha(int(255 * alpha))
+        pill.blit(surf, (pad_x, pad_y))
+        x = (self.sim_width - w) // 2
+        y = int(self.window_size[1] * 0.30)
+        self.screen.blit(pill, (x, y))
+
     def draw_splash(self, message, detail=None):
         """One frame saying the app is still coming up.
 
@@ -3584,7 +3599,8 @@ class Renderer:
               hud_lines=None, scene_3d=None, total_steps=0, steps_per_frame=1,
               debug_line=None, playback_playing=None, puller_attached=True,
               overlay=None, control_focus=None, remote_note=None,
-              lesson_position=None, acts=(), hero_engaged=frozenset()):
+              lesson_position=None, acts=(), hero_engaged=frozenset(),
+              toast=None):
         # In GL mode the default framebuffer is cleared first; the 3D scene (if
         # any) is drawn straight into its sim viewport, and every 2D surface is
         # composited over it at the end. In CPU mode self.screen IS the display
@@ -3647,6 +3663,8 @@ class Renderer:
         # HeroKnob) -- on the playgrounds that declare any.
         self.draw_hero_knobs(spec.lesson.hero_knobs if spec.lesson else (),
                              hero_engaged or frozenset())
+        if toast is not None:
+            self.draw_toast(*toast)
         # A modal card over the sim view (the remote connect panel). Drawn here
         # rather than by the caller after draw() returns, because in GL mode every
         # 2D surface has to be on self.screen before it is composited -- and

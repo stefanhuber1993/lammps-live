@@ -239,22 +239,39 @@ def test_the_assembly_box_opens_in_cluster_colouring(patch):
     assert patch.renderer.bead_color_mode == "cluster"
 
 
-def test_a_colouring_the_viewer_picked_follows_them(patch):
-    """Once somebody has chosen, it is their preference: a scene's default must not
-    silently undo it on every Tab."""
-    patch.color_choice.step(1)                              # director -> energy
-    assert patch.renderer.bead_color_mode == "energy"
-    assert patch._color_user_chosen
+def test_each_scene_remembers_its_own_colouring(patch):
+    """A pick is remembered for the scene it was made on, and only there: going
+    elsewhere and coming back finds it again, and the other scenes keep their own
+    defaults."""
+    patch._build_system("mesomem_assembly")
+    assert patch.renderer.bead_color_mode == "cluster"
+    patch.color_choice.step(1)                              # cluster -> director
+    picked = patch.renderer.bead_color_mode
+    assert picked != "cluster"
+
+    patch._build_system("mesomem_sheet")
+    assert patch.renderer.bead_color_mode == "director", "the sheet's own default"
+    patch.color_choice.step(1)
+    sheet_pick = patch.renderer.bead_color_mode
 
     patch._build_system("mesomem_assembly")
-    assert patch.renderer.bead_color_mode == "energy", "their choice survived"
-
-    # ...except onto a scene that does not offer it, where there is no preference
-    # to honour and the scene's own first is the only answer.
-    patch.color_choice.step(1)                              # -> cluster
-    assert patch.renderer.bead_color_mode == "cluster"
+    assert patch.renderer.bead_color_mode == picked, "remembered for this scene"
     patch._build_system("mesomem_sheet")
-    assert patch.renderer.bead_color_mode == "director"
+    assert patch.renderer.bead_color_mode == sheet_pick
+
+
+def test_reset_puts_the_colouring_back_to_the_scene_default(patch):
+    patch._build_system("mesomem_assembly")
+    patch.color_choice.step(1)
+    assert patch.renderer.bead_color_mode != "cluster"
+    patch._reset_simulation()
+    assert patch.renderer.bead_color_mode == "cluster"
+    assert patch.color_choice.index == 0
+    assert patch._current_toast() is not None, "the jump is announced"
+    # ...and forgotten: leaving and coming back finds the default too.
+    patch._build_system("mesomem_sheet")
+    patch._build_system("mesomem_assembly")
+    assert patch.renderer.bead_color_mode == "cluster"
 
 
 def test_the_two_bead_scene_is_not_a_colour_stop_at_all(patch):
