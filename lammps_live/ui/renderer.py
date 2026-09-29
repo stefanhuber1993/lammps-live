@@ -1993,6 +1993,12 @@ class Renderer:
         # crossing a seam slides across continuously with no transparency; the soft
         # edge is a screen-space vignette in the composite, not a per-bead fade.
         style = spec.render_style
+        # NO DEPTH OF FIELD WHILE THE SCENE IS SLICED. A slab is a section a few
+        # per cent of the box thick, looked at face-on: there is no depth in it to
+        # separate, and a focus plane placed on the whole box's depth span leaves
+        # the section itself out of focus.
+        if view_slice is not None and style.dof:
+            style = style.varied(dof=False)
         # The cluster colours are resolved -- slot to palette entry, crossfaded --
         # on the REAL beads, before any copying: a ghost or a periodic image is
         # the same bead seen through a wall, so it rides along with whatever

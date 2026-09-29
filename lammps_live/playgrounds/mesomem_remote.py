@@ -59,10 +59,18 @@ N_BEADS = 50_000
 PHI = 0.04
 BOX = (N_BEADS * (math.pi / 6.0) / PHI) ** (1.0 / 3.0)
 
-# The visual style is imported, not copied: this is the same scene as the local
-# assembly box and should look identical. It survives the change of scale because
-# every parameter in it is a fraction -- of the scene's depth span, of a bead
-# radius -- rather than an absolute length (see render_style.py).
+# The visual style is the local assembly box's, imported rather than copied, with
+# ONE change: the depth of field. Every parameter in it is a fraction of the
+# scene's depth span, so it survives the change of scale -- but what it is FOR
+# does not. On 1500 beads a shallow focus picks a few aggregates out of the box;
+# on 50,000 it left most of the cell a smear, and the point of this scene is the
+# whole thing at once. So the sharp band sits mid-cell and covers nearly all of
+# it, and what blur is left is a hint of depth rather than a veil.
+STYLE = STYLE.varied(
+    dof_focus=0.45,
+    dof_range=1.20,
+    dof_bokeh_px=2.0,
+)
 
 PLAYGROUND = Playground(
     name="MesoMem self-assembly, remote GPU (3D)",
