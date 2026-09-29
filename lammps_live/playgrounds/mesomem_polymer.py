@@ -240,9 +240,7 @@ PLAYGROUND = Playground(
     render_style=STYLE,
     # Nothing is steered and the subject is a closed 3D object, so the camera
     # turns: drag to orbit, wheel to dolly, C to hand it back. Slower than the
-    # assembly box's, because the slicing plane re-aims itself when the view swings
-    # far enough off it (view_slice.REAIM_DEGREES) and a brisk orbit would keep
-    # doing that under you.
+    # assembly box's, so a sliced section can be followed round as it turns.
     camera_orbit=CameraOrbit(autostart=True, speed=0.10),
     # As mesomem_remote: the energy panels are a pass over every pair and their
     # aggregate barely moves between frames, so halving their cadence is free.

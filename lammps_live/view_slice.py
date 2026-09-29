@@ -8,9 +8,10 @@ one playground file.
 
 The cut is a SLAB: keep only the beads within `THICKNESS_FRACTION` of the box's
 width of a plane, and slide that plane through the box with the lever. The slab's
-normal is the CARDINAL world axis the camera is closest to looking along, so the
-face you are left looking at is a clean section through the cell rather than an
-oblique one, and it is re-picked as the camera moves (see `_cardinal`).
+normal is the CARDINAL world axis the camera is closest to looking along when the
+cut engages, so the face you are left looking at is a clean section through the
+cell rather than an oblique one -- and it then STAYS that axis while the camera
+moves round it (see `_cardinal` and REAIM_DEGREES).
 
     RenderStyle.section_min is the other cut in this codebase and a different
     thing: a fixed half-space in a fixed world axis, declared by a playground
@@ -77,12 +78,17 @@ TOUCH_EPSILON = 0.02
 # RenderStyle.periodic_images).
 OPEN_FACTOR = 3.0
 # How far off the view direction the cutting axis is allowed to drift before it is
-# re-picked, in degrees. Pure "nearest cardinal" would flip the cut at exactly 45
-# degrees and so chatter there; this is the hysteresis that stops it, and it also
-# means a camera nudged a few degrees does not re-aim the cut under you. Past it,
-# the axis really is no longer the one you are looking along -- the section would
-# be foreshortening away to an edge-on line -- so it flips.
-REAIM_DEGREES = 55.0
+# re-picked, in degrees. 180 means NEVER: the axis is picked once, from the view,
+# when the cut engages, and then held for as long as the slab is on screen
+# (it is only forgotten once the lever has opened the box all the way back up).
+#
+# It used to be 55, which re-aimed the cut whenever the camera swung that far off
+# it. On the orbiting cube scenes that meant the plane you had chosen to look at
+# was replaced under you by the turntable -- the section you were studying turned
+# into a different section with nobody touching the lever. A cut is something the
+# viewer set; the camera moving round it should show it from another side, not
+# change it. The mechanism is kept (a smaller value restores the old re-aiming).
+REAIM_DEGREES = 180.0
 
 _AXES = (np.array([1.0, 0.0, 0.0]), np.array([0.0, 1.0, 0.0]),
          np.array([0.0, 0.0, 1.0]))

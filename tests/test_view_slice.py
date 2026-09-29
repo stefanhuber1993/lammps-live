@@ -142,22 +142,26 @@ def test_the_cut_axis_is_cardinal_and_faces_the_camera():
         assert plane.normal == want
 
 
-def test_the_axis_is_sticky_until_the_view_has_really_swung_off_it():
-    """An orbiting camera must not flip the cut back and forth as it crosses the
-    halfway angle between two axes."""
+def test_the_axis_is_held_while_the_camera_moves_round_it():
+    """The cut is the viewer's: an orbiting camera shows the chosen section from
+    another side, it does not swap it for a different one. Only opening the box
+    all the way back up lets the next cut pick a new axis."""
     vs = ViewSlice()
     step(vs, 0.5, 0.1)
     step(vs, 0.8, 1.0)
     assert vs.plane.normal == (0.0, 1.0, 0.0)
-    # 50 degrees round: past the halfway point between +y and +x, inside the
-    # re-aim angle, so the cut stays where it is.
-    swung = np.array([np.sin(np.radians(50.0)), np.cos(np.radians(50.0)), 0.0])
-    assert vs.update(0.8, 1 / 60.0, forward=swung,
-                     box_bounds=BOX).normal == (0.0, 1.0, 0.0)
-    # 70 degrees, and the section would be foreshortening away: it re-aims.
-    swung = np.array([np.sin(np.radians(70.0)), np.cos(np.radians(70.0)), 0.0])
-    assert vs.update(0.8, 1 / 60.0, forward=swung,
-                     box_bounds=BOX).normal == (1.0, 0.0, 0.0)
+    for deg in (50.0, 70.0, 90.0, 180.0):
+        swung = np.array([np.sin(np.radians(deg)), np.cos(np.radians(deg)), 0.0])
+        assert vs.update(0.8, 1 / 60.0, forward=swung,
+                         box_bounds=BOX).normal == (0.0, 1.0, 0.0), deg
+    # Lever to a stop: the box closes, and the next cut aims from the new view.
+    side = np.array([1.0, 0.0, 0.0])
+    for _ in range(120):
+        vs.update(1.0, 1 / 60.0, forward=side, box_bounds=BOX)
+    assert vs.plane is None
+    for _ in range(120):
+        vs.update(0.5, 1 / 60.0, forward=side, box_bounds=BOX)
+    assert vs.plane.normal == (1.0, 0.0, 0.0)
 
 
 def test_a_device_with_no_lever_opens_the_box_back_up():
