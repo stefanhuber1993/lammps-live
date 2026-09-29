@@ -1355,3 +1355,29 @@ of trouble:
    ```
    python -m lammps_live.remote.session --playground mesomem_remote --play
    ```
+
+## Running the demo machine unattended
+
+`lammps-live --lock` (see the README) keeps visitors from closing, minimising or
+switching away from the app. It is not a security boundary, and on a booth
+machine the thing worth protecting is not the app but the credentials behind it:
+
+- **The SSH multiplexing is the real exposure.** This machine's `~/.ssh/config`
+  keeps a `ControlMaster` to Snellius alive for 4 h (`ControlPersist 4h`). Anyone
+  who reaches a shell as this user during that time -- a terminal left open
+  behind the app, a second login -- can `ssh snellius` with no password and no
+  one-time code. The app's own connections do not need it (they all pass
+  `ControlPath=none`), so for demo days either remove `ControlMaster`/
+  `ControlPersist` for `snellius` and the compute nodes, or shorten it to minutes.
+- **Run the demo as a separate, non-admin macOS user** with auto-login into the
+  app, no sudo, and no VPN profile it can edit. Close every other terminal and
+  app before locking; `--lock` hides the Dock and disables Cmd-Tab and Force Quit,
+  but a window already open behind the app is still there to be found after a
+  restart.
+- **Turn on a hot-corner screen lock and a firmware password**, so a restart or a
+  single-user boot does not bypass the account.
+- **The Slurm job is bounded**: 10 h wall clock, the server's own idle timeout
+  once the app stops sending keepalives, and `scancel` on every clean exit. A
+  hard power-off leaves the job to the idle timeout (15 min).
+- If the laptop has to be walked away from mid-session, Disconnect first: it ends
+  the job and the tunnel, and nothing on the machine then holds a way in.

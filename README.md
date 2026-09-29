@@ -40,24 +40,31 @@ The eight of them are a sequence rather than a menu, in three acts, and the app
 says where you are: **Rules** (what one interaction is, 1 to 3), **Material**
 (what a lot of them make, and that nobody had to arrange it, 4 and 5), and
 **Life** (what such a material is for, at the size the science is done at, 6 to
-8). Each scene puts three lines over the picture (its title, one sentence of
-physics, and what to do with your hands) and leaves the panel a note asking the
-question the next one answers.
+8). Each scene opens with its number and a descriptive title in large type across
+the top, and one line saying what to do with your hands. While a scene builds,
+that title is shown over a progress bar. `Tab` and buttons 3/4 stop at the ends:
+there is nothing after 8 and nothing before 1.
 
-The dials, the plots and the colourings arrive as they become worth looking at.
-The two-bead scene has no dials, no plots and no colour toggle; the two
-seven-bead scenes have exactly two dials each and the same two, because switching
-between them with `Tab` is the experiment; the plots start at the sheet, which is
-the first scene big enough for a statistic to mean anything; and cluster colouring
-is only offered on the two assembly boxes, which open in it. Everything hidden is
-one click away under "Advanced".
+The interface itself arrives as it becomes worth looking at (`Lesson.ui`, see
+`lammps_live/ui/disclosure.py`). The two-bead scene has no side panel and no
+status line at all -- two beads and the readout between them; the seven-bead
+scenes add the panel with two dials and the pulled bead's energy; the sheet adds
+the colour toggle and the plots; the assembly box the clock; the two cluster
+scenes a SURF / Snellius badge. Whatever is new on a scene gets an amber arrow
+and one line of explanation for its first few seconds. Everything hidden is one
+click away under "Advanced".
+
+A minute with nobody touching anything takes the demo back to scene 1, counting
+down the last ten seconds on screen; any input cancels it. The bead colouring is
+remembered per scene, and Reset puts it back to that scene's default.
 
 Under each scene are its **hero knobs**: the one or two things worth doing to it,
 on the input device's buttons `5` upward (`F1`-`F4` on the keyboard) with the
 number printed on the button. `van der Waals only`, on the two-bead pair, the
 seven-bead patch and the assembly box, sets `k_tilt` and `k_splay` to zero and
-leaves the plain attraction: the same beads, and no membrane. `Heat`, on the sheet
-and the rod, takes the temperature to 0.2 against a melting point of 0.3, which is
+leaves the plain attraction: the same beads, and no membrane (it is on the
+twist patch too). `Stiff chain`, on the vesicle, takes the chain's bending
+stiffness from 0 to 10. `Heat`, on the sheet, takes the temperature to 0.2 against a melting point of 0.3, which is
 where the membrane stops sitting still and behaves like the liquid it is. Both
 toggle, both put back the settings they found rather than the defaults, and both
 say in numbers what they changed.
@@ -74,9 +81,12 @@ belongs on a card next to the display rather than in a fifth of it.
 | `mesomem_patch_torque` | the same seven, twisted instead of pulled: the stick turns the middle bead's director and the ring splays after it |
 | `mesomem_sheet` | ~900 beads, periodic, so a piece of an endless membrane. Watch a deformation spread |
 | `mesomem_assembly` | 1500 beads from a random start, assembling. Play / Pause / Reset |
-| `mesomem_rod` | 3600 beads at constant tension. Steer a rod-shaped "bacterium" in and watch the membrane engulf it -- sideways first, then a neck, then the rod standing up inside the pit. Cut it open with the thrust lever to read the profile |
-| `mesomem_remote` | same thing at 10,000 beads, running on a cluster A100 |
-| `mesomem_polymer` | a closed vesicle with 32,000 beads of ring polymer sealed inside, on the same A100. Slice it open with the thrust lever to see in |
+| `mesomem_rod` | 3600 beads at constant tension, opening warm (T = 0.2) at eps_rod = 1. Steer a rod-shaped "bacterium" in and watch the membrane engulf it -- sideways first, then a neck, then the rod standing up inside the pit. Cut it open with the thrust lever to read the profile |
+| `mesomem_remote` | same thing at 50,000 beads, running on a cluster A100 |
+| `mesomem_vesicle_chain` | a closed vesicle round ONE 32,768-bead polymer laid along a 3D Moore curve, coloured as a rainbow along its length, on the same A100. Slice it open with the thrust lever to see in |
+
+(`mesomem_polymer`, the collaborator's ring-polymer melt that used to be scene 8,
+is shelved but still runs by name.)
 
 `1`-`9` or `Tab` switches between them, `lammps-live --list` prints them.
 
@@ -260,6 +270,25 @@ echo 'SUBSYSTEM=="hidraw", ATTRS{idVendor}=="045e", ATTRS{idProduct}=="001b", TA
   | sudo tee /etc/udev/rules.d/99-sidewinder-ff2.rules
 sudo udevadm control --reload-rules && sudo udevadm trigger
 ```
+
+### Unattended: `--lock`
+
+```bash
+LAMMPS_LIVE_LOCK_PASSWORD=... lammps-live --input joystick --fullscreen --lock
+```
+
+Closing the window, Cmd-Q, Esc, minimising, hiding and leaving fullscreen all
+ask for the password (without the variable it is asked for on the terminal at
+startup). On macOS it also hides the Dock and the menu bar and disables Cmd-Tab,
+Force Quit and logout for as long as the app runs; a watchdog exits the app if
+its main loop ever hangs for 90 s, so a frozen demo cannot take the machine with
+it. The right password does what was asked and leaves the app unlocked;
+`Ctrl-L`, or a minute with nobody touching it, locks it again. Five wrong answers
+lock the prompt for 30 s.
+
+It is a lock for visitors, not a security boundary: see the notes on running the
+machine unattended below the scene list in `docs/remote-gpu.md`, and use a
+separate macOS account and screen lock as well.
 
 ## Adding a scene
 
