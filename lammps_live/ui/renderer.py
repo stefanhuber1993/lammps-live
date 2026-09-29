@@ -3018,7 +3018,7 @@ class Renderer:
         # at the right for the Snellius badge on the scenes that carry one.
         room = self.sim_width - x - UI(16)
         if "snellius" in disclosure.shown(lesson):
-            room -= UI(260)
+            room -= self._snellius_badge_size()[0] + UI(24)
         index = position[0] if position else 0
         head = f"{index}.  {lesson.title}" if index else lesson.title
         font, rows = self._fit_title(head, room)
@@ -3049,25 +3049,37 @@ class Renderer:
                 return font, rows
         return fonts[-1], rows
 
-    def _draw_snellius_badge(self, spec):
-        """Top-right of the sim view on the scenes that run on the cluster: SURF's
-        logo and "Snellius" in SURF's own face, so nobody has to be told that this
-        one is not running on the laptop in front of them."""
-        text_col = spec.render_style.text_color
-        dim_col = spec.render_style.dim_text_color
-        right, top = self.sim_width - UI(18), UI(14)
+    def _snellius_badge_parts(self, spec=None):
+        """(logo, name, sub) surfaces for the badge, the logo scaled to the text."""
+        text_col = spec.render_style.text_color if spec else TEXT_COLOR
+        dim_col = spec.render_style.dim_text_color if spec else DIM_TEXT_COLOR
         name = self.brand_big_font.render("Snellius", True, text_col)
         sub = self.brand_small_font.render("live on the national supercomputer",
                                            True, dim_col)
         logo = None
         if self._surf_logo is not None:
-            lh = name.get_height() + sub.get_height()
+            lh = name.get_height() + sub.get_height() - UI(6)
             logo = self._surf_logo_scaled.get(lh)
             if logo is None:
                 lw = int(self._surf_logo.get_width() * lh
                          / self._surf_logo.get_height())
                 logo = pygame.transform.smoothscale(self._surf_logo, (lw, lh))
                 self._surf_logo_scaled[lh] = logo
+        return logo, name, sub
+
+    def _snellius_badge_size(self):
+        logo, name, sub = self._snellius_badge_parts()
+        w = max(name.get_width(), sub.get_width())
+        if logo is not None:
+            w += logo.get_width() + UI(12)
+        return w, name.get_height() + sub.get_height()
+
+    def _draw_snellius_badge(self, spec):
+        """Top-right of the sim view on the scenes that run on the cluster: SURF's
+        logo and "Snellius" in SURF's own face, so nobody has to be told that this
+        one is not running on the laptop in front of them."""
+        right, top = self.sim_width - UI(18), UI(14)
+        logo, name, sub = self._snellius_badge_parts(spec)
         text_w = max(name.get_width(), sub.get_width())
         gap = UI(12)
         total_w = text_w + (logo.get_width() + gap if logo is not None else 0)
