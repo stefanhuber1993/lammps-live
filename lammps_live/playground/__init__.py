@@ -39,8 +39,9 @@ from .observables import observable
 from .params import Param, ParamSet, Tier, structural
 from .scenario import (
     BeadAndPartner, Composite, HexPatch, HexSheet, RandomFill, RodOnSheet,
-    Scenario, ScenarioBuild, VesiclePolymer, bead_and_partner, compose,
-    hex_patch, hex_sheet, random_fill, rod_on_sheet, vesicle_polymer,
+    Scenario, ScenarioBuild, VesicleChain, VesiclePolymer, bead_and_partner,
+    compose, hex_patch, hex_sheet, random_fill, rod_on_sheet, vesicle_chain,
+    vesicle_polymer,
 )
 from ..mdsystem import ForceFeedbackProfile
 from .deposition import Deposition2D, IonicSlab2D, deposition_2d, ionic_slab_2d
@@ -54,8 +55,9 @@ __all__ = [
     "Deposition2D", "deposition_2d", "IonicSlab2D", "ionic_slab_2d",
     "Thermostat", "Langevin", "CSVR",
     "Scenario", "ScenarioBuild", "HexPatch", "HexSheet", "RandomFill",
-    "RodOnSheet", "VesiclePolymer", "BeadAndPartner", "Composite",
-    "hex_patch", "hex_sheet", "random_fill", "rod_on_sheet", "vesicle_polymer",
+    "RodOnSheet", "VesiclePolymer", "VesicleChain", "BeadAndPartner",
+    "Composite", "hex_patch", "hex_sheet", "random_fill", "rod_on_sheet",
+    "vesicle_polymer", "vesicle_chain",
     "bead_and_partner", "compose",
     "ForceField", "register",
     "Param", "ParamSet", "Tier", "structural",

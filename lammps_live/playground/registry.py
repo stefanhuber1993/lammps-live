@@ -62,7 +62,7 @@ def _playground_of(module, fallback_key):
 #   mesomem_assembly      a box that finds the monolayer for itself
 #   mesomem_rod           a second species: something for the membrane to wrap
 #   mesomem_remote        the assembly box scaled up on a cluster GPU
-#   mesomem_polymer       and closed into a vesicle with a polymer inside it
+#   mesomem_vesicle_chain and closed into a vesicle round one space-filling chain
 #
 # The two force/torque patches are adjacent deliberately: they are the same seven
 # beads and the same force field, and switching between them with Tab is the
@@ -71,7 +71,7 @@ def _playground_of(module, fallback_key):
 # between them is a thing the connect panel has to handle (see ui/remote_panel.py).
 _ORDER = ("mesomem_bead", "mesomem_patch", "mesomem_patch_torque",
           "mesomem_sheet", "mesomem_assembly", "mesomem_rod",
-          "mesomem_remote", "mesomem_polymer")
+          "mesomem_remote", "mesomem_vesicle_chain")
 
 # THE SAME SEQUENCE, GROUPED INTO THE THREE PARTS OF THE ARGUMENT. Eight scenes
 # is more than an audience can hold as a list, and a bare "4 of 8" says only how
@@ -95,7 +95,7 @@ _ORDER = ("mesomem_bead", "mesomem_patch", "mesomem_patch_torque",
 _ACTS = (
     ("Rules", ("mesomem_bead", "mesomem_patch", "mesomem_patch_torque")),
     ("Material", ("mesomem_sheet", "mesomem_assembly")),
-    ("Life", ("mesomem_rod", "mesomem_remote", "mesomem_polymer")),
+    ("Life", ("mesomem_rod", "mesomem_remote", "mesomem_vesicle_chain")),
 )
 
 
@@ -137,7 +137,11 @@ def lesson_position(key):
 # name, and `--playground lj_argon` still loads one -- `resolve` below accepts any
 # module in the package, so a name that is off the demo is still a valid answer to
 # "which playground", it is just not offered.
-_SHELVED = ("lj_argon", "cu_deposition", "nacl")
+#
+# mesomem_polymer is shelved for a different reason: it is the collaborator's
+# ring-polymer melt, which the single Moore-curve chain of mesomem_vesicle_chain
+# replaced as the last scene. Kept, runnable by name, and still verified.
+_SHELVED = ("lj_argon", "cu_deposition", "nacl", "mesomem_polymer")
 
 
 def package_keys():

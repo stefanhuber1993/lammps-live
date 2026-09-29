@@ -30,8 +30,8 @@ import numpy as np
 
 from .params import ParamSet, structural
 from .state import (Box, hex_lattice_2d, hex_ring_2d, icosphere_faces,
-                    icosphere_spacing, lattice_ring, principal_normal,
-                    random_points_min_separation)
+                    icosphere_spacing, lattice_ring, moore_curve,
+                    principal_normal, random_points_min_separation)
 
 # The polymer's two-stop ramp, in display-space bytes (see
 # VesiclePolymer.render_tints). Deliberately nothing like the membrane's own
@@ -1571,6 +1571,12 @@ class VesiclePolymer(Scenario):
         _, n_mem = self.subdivision(params)
         return n_mem + self.ring_count(params) * int(params["ring_side"]) ** 3
 
+    def loop_lengths(self, params):
+        """The closed loops the polymer half is made of, as bead counts in the
+        order they are laid down -- what the molecule template bonds up. Here one
+        entry per ring; a subclass with other topology says so by overriding it."""
+        return [int(params["ring_side"]) ** 3] * self.ring_count(params)
+
     # --- LAMMPS side ----------------------------------------------------------
 
     def create_commands(self, params, build, seed):
@@ -1627,12 +1633,14 @@ class VesiclePolymer(Scenario):
         if self._tmpdir is None:
             self._tmpdir = tempfile.TemporaryDirectory(prefix="lammps-live-poly-")
         path = os.path.join(self._tmpdir.name, "polymer.mol")
-        side = int(params["ring_side"])
-        per_ring = side ** 3
+        loops = self.loop_lengths(params)
         n = len(polymer)
-        n_rings = n // per_ring
+        if sum(loops) != n:
+            raise ValueError(f"{sum(loops)} beads of loops for {n} of polymer")
+        starts = np.concatenate([[0], np.cumsum(loops)[:-1]]).astype(int)
         with open(path, "w") as f:
-            f.write("ring-polymer melt, written by VesiclePolymer\n\n")
+            kind = "ring-polymer melt" if len(loops) > 1 else "ring polymer"
+            f.write(f"{kind}, written by {type(self).__name__}\n\n")
             # A ring of L beads has L bonds and L angles: the walk closes, so
             # the last bead is bonded to the first: there is no free end anywhere.
             f.write(f"{n} atoms\n{n} bonds\n{n} angles\n\n")
@@ -1646,25 +1654,23 @@ class VesiclePolymer(Scenario):
             f.write("\nMasses\n\n")
             f.write("".join(f"{i} 1.0\n" for i in range(1, n + 1)))
             f.write("\nMolecules\n\n")
-            f.write("".join(f"{i} {1 + (i - 1) // per_ring}\n"
-                            for i in range(1, n + 1)))
+            for mol, (base, length) in enumerate(zip(starts, loops), 1):
+                f.write("".join(f"{base + k + 1} {mol}\n" for k in range(length)))
             f.write("\nBonds\n\n")
             bid = 0
-            for r in range(n_rings):
-                base = r * per_ring
-                for k in range(per_ring):
+            for base, length in zip(starts, loops):
+                for k in range(length):
                     bid += 1
                     f.write(f"{bid} 1 {base + k + 1} "
-                            f"{base + (k + 1) % per_ring + 1}\n")
+                            f"{base + (k + 1) % length + 1}\n")
             f.write("\nAngles\n\n")
             aid = 0
-            for r in range(n_rings):
-                base = r * per_ring
-                for k in range(per_ring):
+            for base, length in zip(starts, loops):
+                for k in range(length):
                     aid += 1
                     f.write(f"{aid} 1 {base + k + 1} "
-                            f"{base + (k + 1) % per_ring + 1} "
-                            f"{base + (k + 2) % per_ring + 1}\n")
+                            f"{base + (k + 1) % length + 1} "
+                            f"{base + (k + 2) % length + 1}\n")
         return path
 
     def group_commands(self, params, controlled_id):
@@ -1751,6 +1757,122 @@ class VesiclePolymer(Scenario):
         # does -- which is the life of the process, since a playground file is a
         # module-level constant. Rebuilt on every Reset, into the same directory.
         self._tmpdir = None
+
+
+class VesicleChain(VesiclePolymer):
+    """The same closed vesicle with ONE polymer inside it, laid on a Moore curve.
+
+    Everything about the envelope is VesiclePolymer's -- the icosphere, the radius
+    that follows from the bead count and spacing, the free cell, the directors, the
+    two integrators, the molecule template. What changes is the lumen: instead of a
+    melt of small lattice rings it holds a single closed chain of 8**chain_order
+    beads, laid on a 3D Moore curve (see state.moore_curve) through a cube of
+    2**chain_order sites a side at the centre of the vesicle.
+
+    WHY A MOORE CURVE. It is a Hamiltonian cycle of the cube like `lattice_ring`,
+    so it inherits the guarantee the no-push-off construction needs -- every bond
+    one lattice step, no two beads closer than one -- and, being closed, it drops
+    into the ring machinery unchanged: L beads, L bonds, L angles, no free ends.
+    What it adds is that it is SPACE-FILLING: it folds at every scale, so any
+    stretch of the chain starts spatially compact (a "fractal globule", the
+    crumpled-globule picture of interphase chromatin), where one big serpentine
+    ring would start as a stack of long straight runs.
+
+    ONE CUBE, NOT A SPHERE-FILLING PACKING. The curve only exists on a 2**k cube,
+    so the chain starts as a dense block (lattice density 1) in the middle of the
+    lumen, with the space between its corners and the membrane empty; the first
+    thing the run shows is that block swelling out to fill the vesicle. The block
+    has to fit, corners and all, whatever rigid rotation `create_atoms ... mol`
+    gives it, so the build checks its half-diagonal against the lumen and refuses
+    rather than start a chain inside the membrane.
+    """
+
+    name = "vesicle_chain"
+
+    params = tuple(p for p in VesiclePolymer.params
+                   if p.name not in ("n_polymer", "ring_side", "fill_fraction")) + (
+        structural("chain_order", 5,
+                   "order of the Moore curve the chain is laid on: 8**order beads "
+                   "on a cube of 2**order sites a side (5 -> 32,768)"),
+    )
+
+    # --- geometry -------------------------------------------------------------
+
+    def chain_length(self, params):
+        return 8 ** int(params["chain_order"])
+
+    def chain_half_diagonal(self, params):
+        """Centre-to-corner distance of the block the chain starts as, in sigma --
+        the furthest out any bead can be put, whatever the block's orientation."""
+        side = 2 ** int(params["chain_order"])
+        return 0.5 * math.sqrt(3.0) * (side - 1) * float(params["bond_length"])
+
+    def ring_count(self, params):
+        return 1
+
+    def particle_count(self, params):
+        _, n_mem = self.subdivision(params)
+        return n_mem + self.chain_length(params)
+
+    def loop_lengths(self, params):
+        return [self.chain_length(params)]
+
+    def _polymer(self, params, rng, radius):
+        b = float(params["bond_length"])
+        jitter = float(params["jitter"]) * b
+        # One bead radius of the membrane, one of the chain, and the jitter's
+        # worst case along the diagonal: closer than that and a corner bead starts
+        # inside the shell.
+        reach = self.chain_half_diagonal(params) + math.sqrt(3.0) * jitter
+        if reach > radius - 1.0:
+            raise ValueError(
+                f"a chain of order {int(params['chain_order'])} reaches "
+                f"{reach:.1f} sigma from the centre and the lumen is {radius:.1f}: "
+                f"lower chain_order or raise n_membrane")
+        side = 2 ** int(params["chain_order"])
+        chain = (moore_curve(int(params["chain_order"])).astype(float)
+                 - (side - 1) / 2.0) * b
+        if jitter > 0.0:
+            chain = chain + rng.uniform(-jitter, jitter, size=chain.shape)
+        return chain
+
+    # --- rendering ------------------------------------------------------------
+
+    def render_tints(self, params):
+        """A full rainbow along the chain, once round.
+
+        One chain, so one ramp over the whole of it rather than one per ring, and
+        a HUE ramp because hue is cyclic: the loop closes, and red running through
+        the spectrum back to red has no seam where the two ends meet. What it
+        shows is the thing a Moore curve is about -- neighbours along the chain are
+        neighbours in space -- so at the start the block is a set of clean colour
+        domains, and how those domains blur and interpenetrate as it swells is the
+        chain's own relaxation, readable by eye. The membrane keeps its banding.
+
+        Saturation and value short of 1 so the yellow and cyan stretches still
+        read against the light background these scenes are drawn on.
+        """
+        _, n_mem = self.subdivision(params)
+        n = self.chain_length(params)
+        tints = np.zeros((n_mem + n, 4))
+        hue = np.arange(n) / n
+        tints[n_mem:, :3] = 255.0 * _hsv_to_rgb(hue, 0.85, 0.88)
+        tints[n_mem:, 3] = 1.0
+        return tints
+
+
+def _hsv_to_rgb(h, s, v):
+    """Vectorised HSV -> RGB in [0, 1], for an array of hues and scalar s, v."""
+    h = np.asarray(h, dtype=float) % 1.0
+    i = np.floor(h * 6.0).astype(int) % 6
+    f = h * 6.0 - np.floor(h * 6.0)
+    p, q, t = v * (1.0 - s), v * (1.0 - s * f), v * (1.0 - s * (1.0 - f))
+    v = np.full_like(h, v)
+    p = np.full_like(h, p)
+    table = np.stack([np.stack(c, axis=1) for c in
+                      ((v, t, p), (q, v, p), (p, v, t),
+                       (p, q, v), (t, p, v), (v, p, q))])
+    return table[i, np.arange(len(h))]
 
 
 class Composite(Scenario):
@@ -1859,3 +1981,7 @@ def random_fill(at=None, **overrides):
 
 def vesicle_polymer(at=None, **overrides):
     return _configured(VesiclePolymer, at, overrides)
+
+
+def vesicle_chain(at=None, **overrides):
+    return _configured(VesicleChain, at, overrides)

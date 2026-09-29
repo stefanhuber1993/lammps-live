@@ -599,3 +599,111 @@ def lattice_ring(nx, ny, nz):
         zs = range(nz) if k % 2 == 0 else range(nz - 1, -1, -1)
         out += [(x, y, z) for z in zs]
     return np.array(out, dtype=int)
+
+
+def hilbert_curve(order):
+    """The 3D Hilbert curve of the given order, as (8**order, 3) integer
+    coordinates in walk order on a 2**order cube.
+
+    An OPEN self-avoiding walk through every site of the cube: consecutive sites
+    are one lattice step apart and no site is visited twice, which is the same
+    guarantee `lattice_ring` gives and for the same reason (a chain laid on it can
+    go straight to FENE plus a repulsive core). It starts at (0, 0, 0) and ends at
+    (2**order - 1, 0, 0), one edge of the cube away -- which is what lets eight of
+    them be joined into a closed loop (see `moore_curve`).
+
+    Skilling's transpose construction ("Programming the Hilbert curve", AIP Conf.
+    Proc. 707, 2004), vectorised over every index at once: each index is spread into
+    its "transposed" per-axis bits, Gray-decoded, and then the per-level rotations
+    and reflections the curve is defined by are undone from the coarsest level down.
+    """
+    order = int(order)
+    if order < 0:
+        raise ValueError(f"a Hilbert curve needs order >= 0, got {order}")
+    if order == 0:
+        return np.zeros((1, 3), dtype=int)
+    h = np.arange(1 << (3 * order), dtype=np.int64)
+    # Bit k of axis i is bit (3k + 2 - i) of the index.
+    x = [np.zeros_like(h) for _ in range(3)]
+    for k in range(order):
+        for i in range(3):
+            x[i] |= ((h >> (3 * k + 2 - i)) & 1) << k
+    # Gray decode.
+    t = x[2] >> 1
+    x[2] ^= x[1]
+    x[1] ^= x[0]
+    x[0] ^= t
+    # Undo the excess work, level by level.
+    q = 2
+    while q != (1 << order):
+        p = q - 1
+        for i in (2, 1, 0):
+            hit = (x[i] & q) != 0
+            swap = (x[0] ^ x[i]) & p
+            if i:
+                x[i] = np.where(hit, x[i], x[i] ^ swap)
+            x[0] = np.where(hit, x[0] ^ p, x[0] ^ swap)
+        q <<= 1
+    return np.stack(x, axis=1).astype(int)
+
+
+def moore_curve(order):
+    """The 3D Moore curve: a Hilbert curve closed into a loop, as (8**order, 3)
+    integer coordinates in walk order on a 2**order cube.
+
+    A Hamiltonian CYCLE of the cube, like `lattice_ring`, but a space-filling one:
+    where the ring snakes back and forth in long straight runs, this folds at every
+    scale, so any stretch of the chain stays spatially compact and the whole thing
+    is a fractal globule rather than a serpentine. Every step (including the one
+    from the last site back to the first) is one lattice step and no site repeats.
+
+    Built from eight Hilbert curves one order smaller, one per octant, the octants
+    visited in a closed Gray-code tour (each one face-adjacent to the next). Each
+    octant's curve is placed by one of the cube's 48 symmetries, chosen so that it
+    starts next to where the previous one ended; a Hilbert curve's two ends are one
+    cube edge apart, which is what makes such a choice exist. The choice is found by
+    a small backtracking search rather than written down as a table, so it cannot
+    be subtly wrong -- and the search itself insists the tour closes.
+    """
+    order = int(order)
+    if order < 1:
+        raise ValueError(f"a Moore curve needs order >= 1, got {order}")
+    m = 1 << (order - 1)
+    sub = hilbert_curve(order - 1)
+    tour = np.array([(0, 0, 0), (0, 0, 1), (0, 1, 1), (0, 1, 0),
+                     (1, 1, 0), (1, 1, 1), (1, 0, 1), (1, 0, 0)]) * m
+    symmetries = [(perm, np.array(flips, dtype=bool))
+                  for perm in itertools.permutations(range(3))
+                  for flips in itertools.product((False, True), repeat=3)]
+
+    def place(points, sym, corner):
+        perm, flips = sym
+        q = points[:, list(perm)]
+        return np.where(flips, (m - 1) - q, q) + corner
+
+    # Only the two ends matter for the search, as plain tuples: it visits a few
+    # thousand candidates and numpy per comparison is most of its cost.
+    ends = [[tuple(map(tuple, place(sub[[0, -1]], sym, corner).tolist()))
+             for sym in symmetries] for corner in tour]
+
+    def adjacent(a, b):
+        return sum(abs(u - v) for u, v in zip(a, b)) == 1
+
+    chosen = []
+
+    def search(k):
+        if k == len(tour):
+            return adjacent(ends[-1][chosen[-1]][1], ends[0][chosen[0]][0])
+        for j in range(len(symmetries)):
+            if k and not adjacent(ends[k - 1][chosen[-1]][1], ends[k][j][0]):
+                continue
+            chosen.append(j)
+            if search(k + 1):
+                return True
+            chosen.pop()
+        return False
+
+    if not search(0):
+        raise RuntimeError("no closed Moore tour found")    # cannot happen
+    return np.vstack([place(sub, symmetries[j], corner)
+                      for j, corner in zip(chosen, tour)]).astype(int)

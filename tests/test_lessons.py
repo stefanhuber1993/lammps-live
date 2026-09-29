@@ -231,9 +231,9 @@ def test_the_hero_knobs_are_where_the_move_is_worth_making():
     patches (force and torque alike -- they are meant to read as identical, and a
     button on only one of them is a difference the eye has to rule out); and the
     assembly box, which has just built a sheet out of nothing. "Heat" is on the
-    sheet; the rod scene simply starts warm instead. The two remote scenes have none because the one thing to do
-    there is watch, and a button that changes the physics of a run somebody queued
-    for is a button pressed by accident.
+    sheet; the rod scene simply starts warm instead. The 50k assembly box has none
+    because the one thing to do there is watch; the vesicle's one move is
+    stiffening its single chain, "Stiff chain".
     """
     knobs = {key: [k.label for k in pg.lesson.hero_knobs] for key, pg in _offered()}
     assert knobs == {
@@ -244,7 +244,7 @@ def test_the_hero_knobs_are_where_the_move_is_worth_making():
         "mesomem_assembly": ["van der Waals only"],
         "mesomem_rod": [],
         "mesomem_remote": [],
-        "mesomem_polymer": [],
+        "mesomem_vesicle_chain": ["Stiff chain"],
     }, knobs
 
 
@@ -399,7 +399,7 @@ def test_the_colourings_are_only_offered_where_they_mean_something():
                for key, spec in registry.list_playgrounds()}
     assert offered["mesomem_bead"] == (), "one pair: nothing to choose between"
     for key in ("mesomem_patch", "mesomem_patch_torque", "mesomem_sheet",
-                "mesomem_rod", "mesomem_polymer"):
+                "mesomem_rod", "mesomem_vesicle_chain"):
         assert "cluster" not in offered[key], key
     for key in ("mesomem_assembly", "mesomem_remote"):
         assert offered[key][0] == "cluster", f"{key} should open in cluster"
