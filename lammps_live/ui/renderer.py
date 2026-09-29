@@ -199,9 +199,7 @@ class Renderer:
         # (hero_hit). Emptied on a playground that declares none, so a click can
         # never land on a stale rect from one that did.
         self._hero_rects = []
-        self.playback_buttons = [Button("play", "Play"),
-                                 Button("pause", "Pause"),
-                                 Button("reset", "Reset")]
+        self.playback_buttons = []
         self._playback_visible = False
 
         # Bead-colouring toggle for the 3D scenes: director bands (which way each
@@ -3053,36 +3051,16 @@ class Renderer:
         w, h, gap = UI(HERO_W), UI(HERO_H), UI(HERO_GAP)
         total = len(knobs) * w + (len(knobs) - 1) * gap
         x0 = (self.sim_width - total) // 2
-        play_h, play_gap = UI(34), UI(16)
+        play_h, play_gap = UI(self.PLAY_H), UI(self.PLAY_BOTTOM)
         y0 = self.window_size[1] - play_h - play_gap - UI(HERO_ROW_GAP) - h
 
         for i, knob in enumerate(knobs):
             on = i in engaged
             rect = pygame.Rect(x0 + i * (w + gap), y0, w, h)
             self._hero_rects.append(rect)
-            bg, fg, border = ((HERO_ENGAGED_BG, HERO_ENGAGED_TEXT,
-                               HERO_ENGAGED_BORDER) if on
-                              else (HERO_BG, HERO_TEXT, HERO_BORDER))
-            pygame.draw.rect(self.screen, bg, rect, border_radius=UI(7))
-            pygame.draw.rect(self.screen, border, rect, width=UI.w(2),
-                             border_radius=UI(7))
-            # The device-button chip, inset on the left, with a hairline separating
-            # it from the label so the number does not read as part of the words.
-            badge_w = UI(HERO_BADGE_W)
-            badge = pygame.Rect(rect.x + UI(4), rect.y + UI(4), badge_w,
-                                rect.height - UI(8))
-            plate = pygame.Surface(badge.size, pygame.SRCALPHA)
-            plate.fill(HERO_BADGE_ENGAGED_BG if on else HERO_BADGE_BG)
-            self.screen.blit(plate, badge.topleft)
-            num = self.small_font.render(
-                str(config.JOYSTICK_HERO_FIRST_BUTTON + i), True,
-                HERO_BADGE_ENGAGED_TEXT if on else HERO_BADGE_TEXT)
-            self.screen.blit(num, num.get_rect(center=badge.center))
-            label = knob.engaged_label if on else knob.label
-            surf = self.font.render(label, True, fg)
-            self.screen.blit(surf, surf.get_rect(
-                center=(badge.right + (rect.right - badge.right) // 2,
-                        rect.centery)))
+            self._draw_chip_button(
+                rect, str(config.JOYSTICK_HERO_FIRST_BUTTON + i),
+                knob.engaged_label if on else knob.label, lit=on)
 
         # The captions of whatever is engaged, stacked above the row. Stacked
         # rather than joined, because each one is a sentence about its own knob and
@@ -3111,20 +3089,57 @@ class Renderer:
                 return i
         return None
 
+    # The playback row's geometry, shared with draw_hero_knobs, which sits on it.
+    PLAY_W, PLAY_H, PLAY_GAP, PLAY_BOTTOM = 230, 42, 14, 16
+
     def draw_playback_controls(self, playing):
-        """Play / Pause / Reset buttons centered along the bottom of the sim view.
-        The button matching the current run state is highlighted: Play while
-        running, Pause while stopped. Reset never latches. Positions the button
-        rects so the app can hit-test clicks (playback_hit)."""
-        bw, bh, gap = UI(96), UI(34), UI(12)
-        total = 3 * bw + 2 * gap
+        """Start/Stop and Reset, centred along the bottom of the sim view.
+
+        TWO BUTTONS, EACH WEARING THE DEVICE BUTTON THAT FIRES IT -- the same chip
+        the hero knobs carry. There used to be three (Play, Pause, Reset) with
+        nothing on them saying the trigger was the run switch, so nobody holding
+        the stick found out. Now the run switch is ONE button whose label is what
+        pressing it will do ("Start" while stopped, "Stop" while running), with
+        "1" in its chip and "trigger" in its label, and Reset carries "2".
+
+        Positions the rects so the app can hit-test clicks (playback_hit): the
+        toggle is named "play" or "pause" after the action it performs.
+        """
+        bw, bh, gap = UI(self.PLAY_W), UI(self.PLAY_H), UI(self.PLAY_GAP)
+        total = 2 * bw + gap
         x0 = (self.sim_width - total) // 2
-        y0 = self.window_size[1] - bh - UI(16)
-        active = {"play": playing, "pause": not playing, "reset": False}
-        for i, btn in enumerate(self.playback_buttons):
+        y0 = self.window_size[1] - bh - UI(self.PLAY_BOTTOM)
+        toggle = (Button("pause", "Stop  (trigger)") if playing
+                  else Button("play", "Start  (trigger)"))
+        self.playback_buttons = [toggle, Button("reset", "Reset")]
+        for i, (btn, chip) in enumerate(zip(self.playback_buttons,
+                                            (config.JOYSTICK_PLAY_PAUSE_BUTTON,
+                                             config.JOYSTICK_RESET_BUTTON))):
             btn.rect = pygame.Rect(x0 + i * (bw + gap), y0, bw, bh)
-            btn.draw(self.screen, self.font, active=active[btn.name])
+            # Lit while stopped: Start is the thing to press next.
+            self._draw_chip_button(btn.rect, str(chip), btn.label,
+                                   lit=(btn.name == "play"))
         self._playback_visible = True
+
+    def _draw_chip_button(self, rect, chip, label, lit=False):
+        """A button with the device-button number in a chip on its left -- the
+        hero knobs' look, shared by the playback row."""
+        bg, fg, border = ((HERO_ENGAGED_BG, HERO_ENGAGED_TEXT, HERO_ENGAGED_BORDER)
+                          if lit else (HERO_BG, HERO_TEXT, HERO_BORDER))
+        pygame.draw.rect(self.screen, bg, rect, border_radius=UI(7))
+        pygame.draw.rect(self.screen, border, rect, width=UI.w(2),
+                         border_radius=UI(7))
+        badge = pygame.Rect(rect.x + UI(4), rect.y + UI(4), UI(HERO_BADGE_W),
+                            rect.height - UI(8))
+        plate = pygame.Surface(badge.size, pygame.SRCALPHA)
+        plate.fill(HERO_BADGE_ENGAGED_BG if lit else HERO_BADGE_BG)
+        self.screen.blit(plate, badge.topleft)
+        num = self.small_font.render(
+            chip, True, HERO_BADGE_ENGAGED_TEXT if lit else HERO_BADGE_TEXT)
+        self.screen.blit(num, num.get_rect(center=badge.center))
+        surf = self.font.render(label, True, fg)
+        self.screen.blit(surf, surf.get_rect(
+            center=(badge.right + (rect.right - badge.right) // 2, rect.centery)))
 
     def playback_hit(self, pos):
         """Name of the playback button under `pos` ("play"/"pause"/"reset"), or
