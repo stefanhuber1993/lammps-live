@@ -52,7 +52,7 @@ class RemoteTarget:
     # Wall clock for the allocation. This is the backstop that releases the GPU if
     # everything else fails to -- a crashed app, a lost network, a closed lid --
     # so it is deliberately not generous.
-    time: str = "01:00:00"
+    time: str = "10:00:00"
     # How long a queued request may sit before the session gives up. A GPU
     # partition that is full is the normal case, not the exceptional one, and a
     # request behind other people's jobs waits however long they take -- so the

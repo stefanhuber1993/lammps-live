@@ -53,7 +53,7 @@ def test_gpu_hours_reaches_the_salloc_line(monkeypatch):
     of them would work in the panel and not in the job."""
     monkeypatch.delenv("LAMMPS_LIVE_REMOTE_TIME", raising=False)
     playground = registry.load("mesomem_remote")
-    assert playground.remote.resolved().time == "01:00:00", "the declared default"
+    assert playground.remote.resolved().time == "10:00:00", "the declared default"
 
     monkeypatch.setenv("LAMMPS_LIVE_REMOTE_TIME", cli._slurm_walltime(3))
     target = playground.remote.resolved()

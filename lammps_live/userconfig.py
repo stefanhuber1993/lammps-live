@@ -461,7 +461,7 @@ gpus = 1
                                  # resource: replaces --gpus=N entirely
 ntasks = 1
 cpus_per_task = 18
-time = "01:00:00"                # wall clock; --gpu-hours overrides it
+time = "10:00:00"                # wall clock; --gpu-hours overrides it
 # Where the cluster's own LAMMPS build lives, and the script that puts it on
 # PATH (sourced in a login shell before the server starts).
 remote_dir = "~/Projects/MesoMemLive/mesomem_gpu"

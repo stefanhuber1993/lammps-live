@@ -172,7 +172,7 @@ lammps-live --hpc othercluster --playground mesomem_remote   # a different one
 | `account` | none | sites that bill against a project |
 | `gpus` / `gres` | 1 / unset | `gres = "gpu:a100:1"` on Slurm older than 20.11, or where GPUs are a generic resource. `gpus = 0` with `profile = "cluster-cpu"` for a CPU-only run |
 | `ntasks`, `cpus_per_task` | 1, 18 | match the node's cores per GPU |
-| `time` | `01:00:00` | the wall clock, and the backstop that gives the GPU back when everything else has failed to. `--gpu-hours` overrides it per run |
+| `time` | `10:00:00` | the wall clock, and the backstop that gives the GPU back when everything else has failed to. `--gpu-hours` overrides it per run |
 | `queue_wait` | 3600 s | how long a queued request may sit before the session gives up |
 | `extra_salloc` | none | anything else your site needs: `["--constraint=a100", "--exclusive"]` |
 | `remote_dir`, `env_script` | Snellius paths | always |
