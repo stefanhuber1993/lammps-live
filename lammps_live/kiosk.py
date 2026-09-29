@@ -96,7 +96,10 @@ class KioskLock:
         """On macOS: hide the Dock and menu bar and disable Cmd-Tab, Force Quit,
         hide and logout for this app's lifetime. Nothing elsewhere. Best effort:
         returns whether it took."""
-        if sys.platform != "darwin":
+        # Not under a headless SDL driver: there is no window to protect, and a
+        # watchdog armed in a test run would end the test process.
+        if (sys.platform != "darwin"
+                or os.environ.get("SDL_VIDEODRIVER") == "dummy"):
             return False
         ok = _set_presentation_options(KIOSK_OPTIONS)
         self._mac_applied = ok

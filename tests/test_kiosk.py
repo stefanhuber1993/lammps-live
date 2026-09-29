@@ -29,7 +29,14 @@ def app():
             lock=kiosk.KioskLock("booth"))
     a._tick(FRAME)
     yield a
+    if a._watchdog is not None:
+        a._watchdog.stop()
     a.system.close()
+
+
+def test_no_lockdown_or_watchdog_under_a_headless_driver(app):
+    assert not app.lock.platform_locked
+    assert app._watchdog is None
 
 
 def _type(text):
