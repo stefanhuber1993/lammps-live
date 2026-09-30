@@ -158,6 +158,71 @@ def test_two_knobs_do_not_forget_each_other(sheet):
     assert sheet.temp_slider.value == pytest.approx(warm), "it stayed warm"
 
 
+# ---- a knob that ramps its parameters in -----------------------------------
+
+def _ramped(app, ramp_time):
+    """The patch's knob, re-declared with a ramp (the shipped ramped knob is on a
+    56k-bead remote scene, and the mechanism is the app's, not the scene's)."""
+    import dataclasses
+    lesson = app.system.spec.lesson
+    knob = dataclasses.replace(lesson.hero_knobs[0], ramp_time=ramp_time)
+    app.system.spec = dataclasses.replace(
+        app.system.spec, lesson=dataclasses.replace(lesson, hero_knobs=(knob,)))
+    return knob
+
+
+def _run_sim_time(app, tau):
+    target = app.system.get_sim_time() + tau
+    app.sim_playing = True
+    while app.system.get_sim_time() < target:
+        app._tick(FRAME)
+
+
+def test_a_ramped_knob_slides_its_sliders_in_simulation_time(patch):
+    """HeroKnob.ramp_time: the value arrives over that much SIMULATION time, not at
+    once, and not over wall-clock time -- the stiff chain's energy has to reach the
+    thermostat as it is released."""
+    knob = _ramped(patch, ramp_time=1.0)
+    start = _slider(patch, "k_tilt").value
+    assert start > 0.0
+
+    patch._toggle_hero(0)
+    assert patch.hero_engaged == {0}
+    assert _slider(patch, "k_tilt").value == pytest.approx(start), "it jumped"
+
+    _run_sim_time(patch, 0.5)
+    halfway = _slider(patch, "k_tilt").value
+    assert knob.params["k_tilt"] < halfway < start
+
+    _run_sim_time(patch, 0.6)
+    assert _slider(patch, "k_tilt").value == pytest.approx(knob.params["k_tilt"])
+    assert patch._hero_ramps == {}
+
+
+def test_a_paused_run_holds_the_ramp_where_it_is(patch):
+    _ramped(patch, ramp_time=1.0)
+    start = _slider(patch, "k_tilt").value
+    patch._toggle_hero(0)
+    patch.sim_playing = False
+    for _ in range(20):
+        patch._tick(FRAME)
+    assert _slider(patch, "k_tilt").value == pytest.approx(start)
+
+
+def test_releasing_mid_ramp_goes_straight_back(patch):
+    """Taking the knob off lowers nothing that stores energy, so it is a jump, and
+    the unfinished ramp must not keep dragging the slider afterwards."""
+    _ramped(patch, ramp_time=1.0)
+    start = _slider(patch, "k_tilt").value
+    patch._toggle_hero(0)
+    _run_sim_time(patch, 0.3)
+    patch._toggle_hero(0)
+    assert _slider(patch, "k_tilt").value == pytest.approx(start)
+    _run_sim_time(patch, 0.3)
+    assert _slider(patch, "k_tilt").value == pytest.approx(start)
+    assert patch._hero_ramps == {}
+
+
 def test_reset_lets_go_of_every_knob(sheet):
     """R means "the beginning", both halves of it (see App._reset_simulation). A
     reset that left a knob engaged would rebuild a fresh scene straight back into
@@ -169,6 +234,7 @@ def test_reset_lets_go_of_every_knob(sheet):
 
     assert sheet.hero_engaged == set()
     assert sheet._hero_saved == {}
+    assert sheet._hero_ramps == {}
     assert sheet.temp_slider.value == pytest.approx(
         sheet.system.spec.temperature.default)
 
@@ -215,9 +281,10 @@ def test_the_click_the_key_and_the_device_button_are_one_state(patch):
 
 def test_a_scene_with_no_knobs_ignores_the_toggle(patch):
     """Every key that does not apply to a playground does nothing on it, and these
-    are three of them. Not an error and not a crash. The rod is the local scene
-    that declares none (it starts warm instead -- see test_lessons)."""
-    patch._build_system("mesomem_rod")
+    are three of them. Not an error and not a crash. The two-bead pair is the
+    scene that declares none (the row arrives on the next one -- see
+    test_lessons)."""
+    patch._build_system("mesomem_bead")
     assert patch.system.spec.lesson.hero_knobs == ()
     patch._toggle_hero(0)
     patch._toggle_hero(3)

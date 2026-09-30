@@ -71,6 +71,12 @@ JOYSTICK_HERO_FIRST_BUTTON = 5
 # this -- they still draw and are still clickable, they just have no device button
 # -- but four is where the Sidewinder's numbered buttons run out.
 JOYSTICK_HERO_BUTTONS = 4
+# On a remote (cluster) scene, the button that brings the connect card back once
+# it has been closed -- and closes it again. The LAST hero slot, which a remote
+# scene never reaches (they declare one knob at most), so no scene's mapping moves.
+# The keyboard twin is N. Drawn on the "Cluster connection" chip (see
+# Renderer.draw_connection_button).
+JOYSTICK_CONNECTION_BUTTON = JOYSTICK_HERO_FIRST_BUTTON + JOYSTICK_HERO_BUTTONS - 1
 # What the stick feels while it is NOT holding a bead -- flying the camera or
 # setting a slider (see app._route_stick). The spring goes to full stiffness and
 # true centre, because both of those controls are rate controls read off the

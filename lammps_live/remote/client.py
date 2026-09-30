@@ -41,8 +41,10 @@ from collections import deque
 
 import numpy as np
 
+from .. import config
 from ..mdsystem import MDSystem3D
 from ..playground import forcefield as ff_registry
+from ..playground.forcefield import with_bonded_energies
 from ..playground.modes import SimMode
 from ..playground.clustering import ClusterTracker, contact_cutoff
 from ..playground.faults import Fault
@@ -574,6 +576,8 @@ class RemoteSystem(MDSystem3D):
         self._frame = 0
         self._state = None
         self._energies = None
+        self._bonded_frame = None
+        self._bonded_cache = None
         self._thermo = (0.0, 0.0, 0.0, 0.0, 0.0)
         self._sim_time = 0.0
         self._last_step_dt = 0.0
@@ -639,6 +643,7 @@ class RemoteSystem(MDSystem3D):
         self._energies = None
         self._energy_cache = None
         self._energy_render_frame = -1
+        self._bonded_frame = None
         # Nothing measured off the last connection's frames belongs to this one:
         # the box may be a different size, and the labelling's colours are a fact
         # about a configuration that has gone. The worker rebuilds around the new
@@ -827,6 +832,7 @@ class RemoteSystem(MDSystem3D):
             self._restore_declared_params()
         self._unstable = None
         self._energies = None          # the old run's colours are not the new box's
+        self._bonded_frame = None
         self._energy_cache = None
         self._energy_render_frame = -1
         self._smoother.reset()
@@ -1146,11 +1152,23 @@ class RemoteSystem(MDSystem3D):
         self._energy_asked_frame = self._frame
         if self._energies is None:
             return None
+        energies = self._energies
+        # The chain's bending energy is not on the wire (it would be clipped to
+        # the membrane's quantisation range); it is recomputed here from the
+        # positions that are, exactly as the local system does it.
+        if (self.spec.render_style.tint_energy_range is not None
+                and self._state is not None):
+            if self._bonded_frame != self._frame:
+                self._bonded_cache = with_bonded_energies(
+                    self.force_field, self.scenario, self.scenario_params,
+                    self.params, self._state.positions, energies)
+                self._bonded_frame = self._frame
+            energies = self._bonded_cache
         if self._smoothing_tau <= 0.0:
-            return self._energies
+            return energies
         if self._energy_render_frame != self._frame:
             self._energy_cache = self._smoother.smooth_scalar(
-                "bead_energy", self._energies, self._smoothing_tau,
+                "bead_energy", energies, self._smoothing_tau,
                 self._last_step_dt)
             self._energy_render_frame = self._frame
         return self._energy_cache
@@ -1266,7 +1284,8 @@ class RemoteSystem(MDSystem3D):
             # Short lines: the HUD sits bottom-left, and the Play/Pause row starts
             # about 240 px in, so anything longer runs under the buttons.
             return ["REMOTE: not connected",
-                    (error[:40] if error else "press N to connect")]
+                    (error[:40] if error else
+                     f"button {config.JOYSTICK_CONNECTION_BUTTON} or N to connect")]
         lines = []
         if self._resetting:
             # WITH THE CLOCK ON IT. A rebuild there is a whole LAMMPS setup -- the

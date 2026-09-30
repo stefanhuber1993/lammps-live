@@ -229,6 +229,16 @@ class HeroKnob:
     # The temperature dial's value while engaged, in the force field's own units,
     # or None to leave the dial alone.
     temperature: float = None
+    # SIMULATION time, in the playground's own units, over which `params` slide
+    # from where they were found to where the knob puts them; 0 is a jump. For a
+    # move whose energy lands all at once otherwise: the stiff chain's thousands
+    # of loaded corners release enough in one step to heat the system fivefold and
+    # blow the membrane apart, where the same k_bend reached over ten tau is taken
+    # away by the thermostat as it arrives. Simulation time, not wall-clock, so a
+    # slow link or a paused run gets the same ramp. Engaging only: taking the knob
+    # back off lowers a coefficient, which releases nothing, and is a jump. The
+    # temperature dial always jumps.
+    ramp_time: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -269,6 +279,12 @@ class Lesson:
     claim: str
     instruction: str
     hook: str = ""
+    # THE INSTRUCTION AGAIN, FOR A JOYSTICK. `instruction` is written for the
+    # mouse and keyboard, and a line that says "drag" or "Q and E" to someone
+    # holding a stick (or "the lever" to someone holding a mouse) is an
+    # instruction they cannot follow. Empty -> the same line serves both. Pick
+    # with `instruction_for`.
+    joystick_instruction: str = ""
     # WHICH LIVE PARAMETERS ARE EVERYDAY HERE, by name -- the rest drop behind the
     # panel's collapsible "Advanced" group. None leaves every playground's dials
     # exactly as the force field declared them.
@@ -285,6 +301,12 @@ class Lesson:
     # opening slide is one click from it, and nothing about the force field has
     # been quietly redefined.
     everyday_params: tuple = None
+    # THE ONE EXCEPTION TO "NARROW ONLY" (see Playground.is_everyday): force-field
+    # dials that are advanced everywhere else and belong on THIS scene's everyday
+    # panel, by name. For a dial that is the scene's subject -- c0 on the 50k
+    # box, where the hero knob turns it on and the slider is how far to take it.
+    # Named one at a time, so a cutoff can still never arrive by accident.
+    promoted_params: tuple = ()
     # Whether the panel's four stacked plots (temperature, pressure, energy, g(r))
     # are drawn at all.
     #
@@ -350,6 +372,12 @@ class Lesson:
     # them -- and each later scene adds what it needs; an element that appears
     # for the first time gets an arrow saying what it is.
     ui: tuple = None
+
+
+    def instruction_for(self, joystick):
+        """The instruction line for the input device in hand."""
+        return (self.joystick_instruction or self.instruction) if joystick \
+            else self.instruction
 
 
 @dataclass(frozen=True)
@@ -450,6 +478,16 @@ class Playground:
     # integrate. See remote/session.py for the connection it describes.
     remote: object = None
 
+    # THE PANEL PLOTS' Y RANGES, {"press": (lo, hi), "energy": (lo, hi)}, in the
+    # force field's units (energy per bead). FIXED, not fitted: an axis that
+    # rescales to the data makes a steady trace look jumpy and a spike look like
+    # the new normal. Chosen to hold this scene at rest over its whole
+    # temperature dial and with its hero knob on; a spike past the edge is drawn
+    # pinned to it, and the trace comes back into the frame when the system
+    # re-equilibrates. A plot not named here falls back to an axis that only
+    # widens (RollingHistory.axis_range).
+    plot_ranges: dict = field(default_factory=dict)
+
     # WHICH BEAD COLOURINGS THIS SCENE OFFERS, in cycle order, the first being the
     # one it comes up in. None -> all of them (renderer.BEAD_COLOR_MODES); an empty
     # tuple -> no colouring toggle at all, because there is no choice to make.
@@ -506,6 +544,8 @@ class Playground:
         group, never drag one out of it, so `everyday_params` cannot accidentally
         promote a cutoff onto the opening slide of a talk.
         """
+        if self.lesson is not None and name in self.lesson.promoted_params:
+            return True
         if declared_advanced:
             return False
         if self.lesson is None or self.lesson.everyday_params is None:

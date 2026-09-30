@@ -125,6 +125,7 @@ JOYSTICK_HINTS = (
     "picks a control, stick L/R drives it (a colour steps per push)   "
     "twist: zoom   1: play/pause   2: reset   3/4: playground   "
     "5+: the buttons under the scene   "
+    f"{config.JOYSTICK_CONNECTION_BUTTON}: cluster connection (remote scenes)   "
     "lever: slice (ends = off)"
 )
 
@@ -200,6 +201,10 @@ class Renderer:
         # Where each disclosable element (ui/disclosure.py) was drawn this frame,
         # for the callouts that point at them. Refilled every frame.
         self._ui_rects = {}
+        # Whether the person at the controls holds a joystick. Set by the app;
+        # it picks the wording of every line that names a control (the lesson's
+        # instruction, the callouts, the Start/Stop label).
+        self.joystick = False
 
         # Collapsible "Advanced" slider group: the app owns the open/closed state
         # (self.show_advanced, set before each draw) and reads back the clickable
@@ -1266,9 +1271,10 @@ class Renderer:
         # table, and it made people ask what the rings were rather than watch the
         # pair.
         #
-        # So: sigma and rc, both fixed for the whole scene, drawn once and never
-        # moving. What the numbers do between them is the callout's job, and the
-        # faded rows are what says which term is asleep.
+        # So: the fixed landmarks only, drawn once and never moving -- which on
+        # MesoMem is now sigma alone (rc went too; see MesoMem.pair_landmarks).
+        # What the numbers do around it is the callout's job, and the faded rows
+        # are what says which term is asleep.
         if not ann.shells:
             return
         if ann.plane_normal is not None:
@@ -2053,7 +2059,11 @@ class Renderer:
         color_mode = 2
         if tints is None:
             color_mode = 1 if energies is not None else 0
+            # In the energy colouring the species tints go along too when the
+            # style puts that species on its own scale (tint_energy_range): the
+            # shader reads their mix weight as "this bead is on the second ramp".
             tints = (None if energies is not None
+                     and style.tint_energy_range is None
                      else self._static_tints(bead_tints, len(pts), style))
         # The four per-bead channels, materialized once, so the copying paths
         # below can be handed a SUBSET of the beads. (Their own None-handling
@@ -3027,7 +3037,8 @@ class Renderer:
             self.screen.blit(surf, (x, y))
             y += surf.get_height()
         y += UI(LESSON_TITLE_GAP)
-        instr = self.font.render(lesson.instruction, True, dim_col)
+        instr = self.font.render(lesson.instruction_for(self.joystick), True,
+                                 dim_col)
         self.screen.blit(instr, (x, y))
         # Callouts keep below this, so an arrow never covers the title.
         self._title_bottom = y + instr.get_height()
@@ -3174,6 +3185,7 @@ class Renderer:
         play_h, play_gap = UI(self.PLAY_H), UI(self.PLAY_BOTTOM)
         y0 = self.window_size[1] - play_h - play_gap - UI(HERO_ROW_GAP) - h
 
+        self._ui_rects["hero"] = pygame.Rect(x0, y0, total, h)
         for i, knob in enumerate(knobs):
             on = i in engaged
             rect = pygame.Rect(x0 + i * (w + gap), y0, w, h)
@@ -3199,6 +3211,84 @@ class Renderer:
             self.screen.blit(plate, (cx, cy))
             self.screen.blit(cap, (cx + pad, cy + pad))
             cy -= UI(4)
+
+    def draw_connection_button(self):
+        """"Cluster connection": the way back to the connect card on a remote
+        scene, once the card has been closed. Top-right, under the Snellius badge
+        it belongs with, wearing the device button that fires it like every other
+        chip button (config.JOYSTICK_CONNECTION_BUTTON; N on the keyboard)."""
+        badge = self._ui_rects.get("snellius")
+        w, h = UI(236), UI(34)
+        top = (badge.bottom if badge is not None else UI(14)) + UI(12)
+        rect = pygame.Rect(self.sim_width - UI(18) - w, top, w, h)
+        self._connection_rect = rect
+        self._draw_chip_button(rect, str(config.JOYSTICK_CONNECTION_BUTTON),
+                               "Cluster connection")
+
+    def connection_hit(self, pos):
+        """True if `pos` is on the "Cluster connection" chip (and it is drawn)."""
+        rect = getattr(self, "_connection_rect", None)
+        return rect is not None and rect.collidepoint(pos)
+
+    SLICE_GAUGE_W, SLICE_GAUGE_TRACK = 58, 150
+
+    def draw_slice_gauge(self, lever, progress):
+        """The thrust lever, drawn: a small upright gauge at the scene's right edge.
+
+        The cut is the one control with nothing on screen to say it exists -- it
+        lives on a lever under the presenter's left hand -- and "push the lever"
+        is not something anyone discovers by looking. So it gets a picture of
+        itself, shaped like what it stands for: a vertical track, forward at the
+        top, with the two "off" ends shaded and the cutting band between them,
+        and a knob where the lever actually is. Lit while it is cutting.
+
+        `lever` is the raw reading 0..1 (None before the device has reported),
+        `progress` how far the cut is in (see ViewSlice.progress).
+        """
+        from ..view_slice import EDGE_FRACTION
+        w, th = UI(self.SLICE_GAUGE_W), UI(self.SLICE_GAUGE_TRACK)
+        label_h = self.small_font.get_height()
+        h = th + 2 * label_h + UI(24)
+        x = self.sim_width - w - UI(16)
+        y = int(self.window_size[1] * 0.42) - h // 2
+        rect = pygame.Rect(x, y, w, h)
+        self._ui_rects["slice"] = rect
+        # Dark plate either way, so the knob always reads; cutting lights the
+        # border and the band, in the hero buttons' engaged amber.
+        cutting = progress > 0.0
+        bg, fg = HERO_BG, HERO_TEXT
+        border = HERO_ENGAGED_BORDER if cutting else HERO_BORDER
+        pygame.draw.rect(self.screen, bg, rect, border_radius=UI(7))
+        pygame.draw.rect(self.screen, border, rect, width=UI.w(2),
+                         border_radius=UI(7))
+        title = self.small_font.render("Slicing" if cutting else "Slice", True,
+                                       fg)
+        self.screen.blit(title, title.get_rect(midtop=(rect.centerx, y + UI(6))))
+        hint = self.small_font.render("lever", True, fg)
+        self.screen.blit(hint, hint.get_rect(midbottom=(rect.centerx,
+                                                        rect.bottom - UI(6))))
+        # The track: forward (1) at the top, like the lever itself.
+        top = y + UI(12) + label_h
+        track = pygame.Rect(rect.centerx - UI(5), top, UI(10), th)
+        edge = int(round(EDGE_FRACTION * th))
+        off = HERO_BADGE_BG
+        pygame.draw.rect(self.screen, off, (track.x, track.y, track.w, edge),
+                         border_radius=UI(3))
+        pygame.draw.rect(self.screen, off, (track.x, track.bottom - edge,
+                                            track.w, edge), border_radius=UI(3))
+        band = pygame.Rect(track.x, track.y + edge, track.w, th - 2 * edge)
+        pygame.draw.rect(self.screen, HERO_ENGAGED_BG if cutting else HERO_BORDER,
+                         band)
+        for yy in (track.y + edge, track.bottom - edge):
+            pygame.draw.line(self.screen, fg, (track.x - UI(6), yy),
+                             (track.right + UI(6), yy), UI.w(1))
+        if lever is not None:
+            ky = track.bottom - float(min(max(lever, 0.0), 1.0)) * th
+            knob = pygame.Rect(0, 0, UI(26), UI(10))
+            knob.center = (track.centerx, int(ky))
+            pygame.draw.rect(self.screen, fg, knob, border_radius=UI(4))
+            pygame.draw.rect(self.screen, HERO_BADGE_BG[:3], knob, width=UI.w(2),
+                             border_radius=UI(4))
 
     def hero_hit(self, pos):
         """Index of the hero knob under `pos`, or None. Empty while none are
@@ -3229,8 +3319,10 @@ class Renderer:
         total = 2 * bw + gap
         x0 = (self.sim_width - total) // 2
         y0 = self.window_size[1] - bh - UI(self.PLAY_BOTTOM)
-        toggle = (Button("pause", "Stop  (trigger)") if playing
-                  else Button("play", "Start  (trigger)"))
+        # Named after the control in the hand: "trigger" means nothing to a mouse.
+        how = "trigger" if self.joystick else "Space"
+        toggle = (Button("pause", f"Stop  ({how})") if playing
+                  else Button("play", f"Start  ({how})"))
         self.playback_buttons = [toggle, Button("reset", "Reset")]
         for i, (btn, chip) in enumerate(zip(self.playback_buttons,
                                             (config.JOYSTICK_PLAY_PAUSE_BUTTON,
@@ -3300,8 +3392,14 @@ class Renderer:
         # nobody can read is decoration.
         lo, hi = spec.render_style.energy_range
         # One line: what the colours mean. (It was four; the rest is a talk.)
+        energy_lines = ["potential energy per bead: dark = bound, bright = free"]
+        if spec.render_style.tint_energy_range is not None:
+            # The second scale (RenderStyle.tint_energy_range): the chain.
+            energy_lines = ["membrane: binding energy, dark = bound, bright = free",
+                            "chain: bending energy, dark blue = straight, "
+                            "pale = sharply bent"]
         caption = {
-            "energy": [f"potential energy per bead: dark = bound, bright = free"],
+            "energy": energy_lines,
             "cluster": ["one colour per connected aggregate; grey = loose beads"],
         }.get(mode, ["yellow = the oily equator, blue = the poles"])
         cy = y + UI(29)
@@ -3607,24 +3705,37 @@ class Renderer:
         # reading. Trends (rising under compression/heating) are still
         # physically meaningful, which is why it's kept and labeled
         # "quasi-2D" rather than dropped.
+        # FIXED AXES THAT ONLY WIDEN (RollingHistory.axis_range), not a fit to
+        # whatever is on screen: re-fitting every frame made these two plots
+        # jitter with the noise. The floors are a span each quantity is expected
+        # to move within at rest; a run that leaves it widens it, in round steps.
+        # The scene's declared range where it has one (Playground.plot_ranges).
+        declared = getattr(spec, "plot_ranges", None) or {}
+        press = list(history.series["press"])
         draw_plot(
             self.screen, self.small_font, pygame.Rect(x, y, w, plot_h),
-            "Pressure -- quasi-2D box (reduced P*)" if reduced else "Pressure -- quasi-2D box (bar)",
+            "Pressure (reduced P*)" if reduced else "Pressure -- quasi-2D box (bar)",
             "P*" if reduced else "bar",
-            list(history.t), [("P", PLOT_COLORS["press"], list(history.series["press"]))],
+            list(history.t), [("P", PLOT_COLORS["press"], press)],
+            y_range=declared.get("press") or history.axis_range(
+                "press", press, (-0.5, 0.5) if reduced else (-500.0, 500.0)),
         )
         y += plot_h + UI(10)
 
+        energy = [
+            ("KE", PLOT_COLORS["ke"], list(history.series["ke"])),
+            ("PE", PLOT_COLORS["pe"], list(history.series["pe"])),
+            ("E_tot", PLOT_COLORS["etotal"], list(history.series["etotal"])),
+        ]
         draw_plot(
             self.screen, self.small_font, pygame.Rect(x, y, w, plot_h),
-            "Energy, relative to t=0 this session " + ("(reduced eps)" if reduced else "(eV)"),
+            "Energy per bead (reduced eps)" if reduced
+            else "Energy, relative to t=0 this session (eV)",
             "eps" if reduced else "eV",
-            list(history.t),
-            [
-                ("KE", PLOT_COLORS["ke"], list(history.series["ke"])),
-                ("PE", PLOT_COLORS["pe"], list(history.series["pe"])),
-                ("E_tot", PLOT_COLORS["etotal"], list(history.series["etotal"])),
-            ],
+            list(history.t), energy,
+            y_range=declared.get("energy") or history.axis_range(
+                "energy", [v for _, _, vals in energy for v in vals],
+                (-1.0, 1.0)),
         )
         y += plot_h + UI(10)
 
@@ -3642,7 +3753,8 @@ class Renderer:
                 self.screen, self.small_font, rdf_rect,
                 "Radial distribution g(r), r in " + ("sigma" if reduced else "Angstrom"), "g(r)",
                 list(r), [("g(r)", PLOT_COLORS["rdf"], list(g))],
-                y_range=(0.0, max(2.0, float(max(g)) * 1.1) if len(g) else 2.0),
+                y_range=(0.0, history.axis_range(
+                    "rdf", [float(v) for v in g], (0.0, 2.0))[1]),
                 ref_lines=[(1.0, DIM_TEXT_COLOR, "gas")],
             )
 
@@ -3655,7 +3767,7 @@ class Renderer:
         that faces the middle of the scene, so it does not cover what it points at
         and does not run off the window."""
         rect = self._ui_rects.get(name)
-        text = disclosure.ELEMENTS.get(name, "")
+        text = disclosure.text(name, self.joystick)
         if rect is None or not text:
             return
         pulse = 0.5 + 0.5 * math.sin(time.monotonic() * 5.0)
@@ -3671,8 +3783,17 @@ class Renderer:
         bw, bh = surf.get_width() + 2 * pad_x, surf.get_height() + 2 * pad_y
         W, H = self.window_size
         gap = UI(46)
-        if rect.left >= self.sim_width - UI(8):
-            # In the panel: bubble to its left, in the scene.
+        if rect.left < self.sim_width - UI(8) and rect.top > H * 0.6:
+            # Along the foot of the scene (the hero row, the slice gauge): bubble
+            # above it, over the scene, where there is room.
+            bx = rect.centerx - bw // 2
+            by = rect.top - gap - bh
+            tip = (rect.centerx, rect.top - UI(8))
+            tail = (rect.centerx, by + bh)
+        elif rect.left >= self.sim_width - UI(8) or (
+                rect.height > rect.width and rect.centerx > self.sim_width // 2):
+            # In the panel, or upright against the scene's right edge (the slice
+            # gauge): bubble to its left, in the scene.
             bx = rect.left - gap - bw
             by = rect.centery - bh // 2
             tip = (rect.left - UI(8), rect.centery)
@@ -3708,6 +3829,17 @@ class Renderer:
         text_surf.set_alpha(a)
         frame.blit(text_surf, (bx + pad_x, by + pad_y))
         self.screen.blit(frame, (0, 0))
+
+    def draw_idle_clock(self, text):
+        """The idle timer's own reading, tiny, in the window's bottom-left
+        corner. A diagnostic rather than a display: dim, and small enough that
+        nobody in the audience reads it."""
+        font = getattr(self, "_tiny_font", None)
+        if font is None:
+            font = self._tiny_font = UI.font(10)
+        surf = font.render(text, True, DIM_TEXT_COLOR)
+        self.screen.blit(surf, (UI(4), self.window_size[1] - surf.get_height()
+                                - UI(2)))
 
     def draw_idle_countdown(self, number):
         """The last ten seconds before the idle return: a big number in the middle
@@ -3797,7 +3929,7 @@ class Renderer:
         lines = [(self.lesson_font, r, fg) for r in rows]
         if lesson is not None:
             lines.append((self.font, "", dim))
-            lines.append((self.font, lesson.instruction, dim))
+            lines.append((self.font, lesson.instruction_for(self.joystick), dim))
         total_h = sum(f.get_height() for f, _, _ in lines)
         y = H // 2 - total_h - UI(20)
         for font, text, col in lines:
@@ -3890,7 +4022,8 @@ class Renderer:
               debug_line=None, playback_playing=None, puller_attached=True,
               overlay=None, control_focus=None, remote_note=None,
               lesson_position=None, acts=(), hero_engaged=frozenset(),
-              toast=None, callouts=(), overlay_top=None):
+              toast=None, callouts=(), overlay_top=None,
+              connection_button=False):
         # In GL mode the default framebuffer is cleared first; the 3D scene (if
         # any) is drawn straight into its sim viewport, and every 2D surface is
         # composited over it at the end. In CPU mode self.screen IS the display
@@ -3962,6 +4095,12 @@ class Renderer:
         # HeroKnob) -- on the playgrounds that declare any.
         self.draw_hero_knobs(spec.lesson.hero_knobs if spec.lesson else (),
                              hero_engaged or frozenset())
+        self._connection_rect = None
+        if connection_button:
+            self.draw_connection_button()
+        gauge = (scene_3d or {}).get("slice_gauge") if spec.render_3d else None
+        if gauge is not None:
+            self.draw_slice_gauge(*gauge)
         for name, alpha in callouts or ():
             self.draw_callout(name, alpha)
         if toast is not None:

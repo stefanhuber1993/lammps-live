@@ -12,22 +12,51 @@ the demo got there.
 
 `Lesson.ui = None` means everything, which is what a scene without a lesson (the
 shelved atomistic classics, anyone's own file) has always had.
+
+TWO NAMES ARE NOT DRAWN AS PANEL PIECES:
+
+  hero   the row of big-move buttons under the scene. Not listed in `Lesson.ui`:
+         a scene shows it exactly when it declares hero knobs, so it is derived
+         from `Lesson.hero_knobs` -- two places saying the same thing would drift.
+  slice  the thrust lever's view cut, and the small gauge in the corner of the
+         scene that says it is there. Listed in `Lesson.ui` like the rest, and
+         HIDDEN MEANS NOT OFFERED: on a scene without it the lever cuts nothing.
+         A slab through two beads or a flat sheet shows less, not more.
 """
 
-# name -> the callout's one line. Ordered as the sequence introduces them.
+from .. import config
+
+# name -> the callout's one line, or (mouse line, joystick line) where the two
+# devices reach it differently -- telling someone with a stick to "drag", or
+# someone with a mouse to use "the hat", is a line they cannot act on. Ordered as
+# the sequence introduces them. Read through `text`.
 ELEMENTS = {
-    "panel": "Controls: drag a slider to change the physics live "
-             "(joystick: hat right, then the stick)",
+    "panel": ("Controls: drag a slider to change the physics live",
+              "Controls: hat right to get here, then the stick changes the "
+              "physics live"),
     "energy": "The energy of the bead you hold, split into its three terms",
     "colour": "Change what the colours show: orientation, energy or cluster",
     "plots": "Live measurements of the whole system",
     "readings": "",                  # the observables HUD -- no callout of its own
+    "hero": ("The big move on this scene: click it, and click again to undo",
+             f"The big move on this scene: button "
+             f"{config.JOYSTICK_HERO_FIRST_BUTTON} on the back of the stick. "
+             f"Press again to undo"),
     "status": "Simulated time since the start",
+    "slice": "Thrust lever: slice the box open (either end = whole box)",
     "snellius": "This one runs live on Snellius, the Dutch national "
                 "supercomputer at SURF",
 }
 
 ALL = frozenset(ELEMENTS)
+
+
+def text(name, joystick=False):
+    """The callout line for `name`, worded for the device in hand."""
+    line = ELEMENTS.get(name, "")
+    if isinstance(line, tuple):
+        return line[1] if joystick else line[0]
+    return line
 
 # How long a callout stays up, and how much of that is its fade-out, in seconds.
 CALLOUT_SECONDS = 9.0
@@ -38,7 +67,8 @@ def shown(lesson):
     """The set of element names `lesson` shows."""
     if lesson is None or getattr(lesson, "ui", None) is None:
         return ALL
-    return frozenset(lesson.ui)
+    names = frozenset(lesson.ui) - {"hero"}
+    return names | {"hero"} if getattr(lesson, "hero_knobs", ()) else names
 
 
 def introduced(lesson, previous_lesson):

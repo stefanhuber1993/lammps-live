@@ -18,6 +18,7 @@ from lammps import lammps
 
 from ..mdsystem import MDSystem3D, SliderSpec, SystemSpec
 from . import forcefield as ff_registry
+from .forcefield import with_bonded_energies
 from .modes import GameMode, SimMode, select_controlled
 from .faults import Fault
 from . import jitter
@@ -89,6 +90,7 @@ def make_spec(playground, mode_name=None, preset=None):
         render_3d=playground.render_3d,
         render_style=playground.render_style,
         camera_orbit=playground.camera_orbit,
+        plot_ranges=dict(playground.plot_ranges),
         reduced_units=playground.reduced_units,
         director_arrows=scenario.director_arrows,
         wrap_fade_fraction=scenario.wrap_fade_fraction,
@@ -121,9 +123,10 @@ def _disclose(playground, slider_specs):
     skips the advanced group -- see control_focus.py) and the Advanced toggle all
     follow with no changes of their own.
     """
+    # Both ways: a lesson's `promoted_params` can bring an advanced dial forward.
     return tuple(
-        ss if playground.is_everyday(ss.key, ss.advanced)
-        else dataclasses.replace(ss, advanced=True)
+        dataclasses.replace(ss, advanced=not playground.is_everyday(ss.key,
+                                                                    ss.advanced))
         for ss in slider_specs
     )
 
@@ -1354,6 +1357,13 @@ class PlaygroundSystem(MDSystem3D):
         pe = np.array(self.lmp.numpy.extract_compute("pe_atom", 1, 1)[:self.natoms],
                       dtype=float)[order]
         energies = 2.0 * pe if self.force_field.energy_terms_labels else pe
+        # A bonded chain is painted by its own BENDING energy instead, on a scale
+        # of its own (see forcefield.with_bonded_energies). Only where the style
+        # draws that second scale: elsewhere every bead stays on the one.
+        if self.playground.render_style.tint_energy_range is not None:
+            energies = with_bonded_energies(
+                self.force_field, self.scenario, self.scenario_params,
+                self.params, self._read_positions_by_id(), energies)
         return self._smooth_energies(energies)
 
     def get_bead_clusters(self):

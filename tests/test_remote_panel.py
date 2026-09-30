@@ -696,3 +696,34 @@ def test_waiting_for_the_release_is_deaf_to_ctrl_c(panel, capsys):
     assert p.wait_released() is True
     assert p._closer.joins == 4
     assert "still giving the GPU back" in capsys.readouterr().out
+
+
+def test_the_card_comes_back_from_the_stick_and_from_a_click():
+    """Closing the card with the stick used to be one-way (only N brought it back).
+    Its own device button toggles it on a remote scene, and the chip drawn on the
+    scene does the same for a click."""
+    import types
+    from lammps_live import config
+    from lammps_live.app import App
+
+    app = App(input_mode="mouse", initial_system_key="mesomem_patch")
+    try:
+        app._tick(1 / 60)
+        calls = []
+        app.remote_panel = types.SimpleNamespace(
+            active=True, visible=False, toggle=lambda: calls.append("toggle"),
+            standby_note=lambda: None)
+        app.source.poll_buttons = lambda: {config.JOYSTICK_CONNECTION_BUTTON}
+        app.source.poll_hat = lambda: (0, 0)
+        app._poll_device_buttons()
+        assert calls == ["toggle"]
+        # Not also a hero knob, whatever the scene declares at that slot.
+        assert app.hero_engaged == set()
+
+        renderer = app.renderer
+        renderer.draw_connection_button()
+        rect = renderer._connection_rect
+        assert renderer.connection_hit(rect.center)
+        assert not renderer.connection_hit((0, 0))
+    finally:
+        app.system.close()

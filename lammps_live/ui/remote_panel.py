@@ -51,6 +51,7 @@ import time
 
 import pygame
 
+from .. import config
 from . import clipboard
 from .scale import UI
 from .theme import (
@@ -135,7 +136,10 @@ class RemotePanel:
             "cancel": Button("cancel", "Cancel"),
             "disconnect": Button("disconnect", "Disconnect"),
             "copy": Button("copy", "Copy report (C)"),
-            "close": Button("close", "Close (N)"),
+            # Says how to get it back: the scene's "Cluster connection" chip, the
+            # same device button, or N.
+            "close": Button("close",
+                            f"Close ({config.JOYSTICK_CONNECTION_BUTTON} / N)"),
         }
         self._shown = ()               # which buttons are on screen right now
         # WHICH BUTTON THE JOYSTICK IS ON. The card is modal and it is the one place
@@ -409,7 +413,8 @@ class RemotePanel:
             elif session.state == READY and session.link is not None:
                 self.system.attach(session.link)
                 # Out of the way: the scene is what matters now, and the link's own
-                # readouts are on the HUD. N brings it back.
+                # readouts are on the HUD. N, the scene's "Cluster connection"
+                # chip or its device button brings it back.
                 self.visible = False
             elif session.state == FAILED:
                 self.visible = True
@@ -720,11 +725,13 @@ class RemotePanel:
             hint, tint = "Enter sends the answer. C copies the report.", BUTTON_BORDER
         elif self._is_switch():
             hint = (f"The run on {session.playground_asked} is thrown away; the "
-                    f"allocation is not. N hides this panel.")
+                    f"allocation is not. {config.JOYSTICK_CONNECTION_BUTTON} or N hides "
+                    f"this panel.")
             tint = BUTTON_BORDER
         else:
             hint = ("Stick or hat left/right picks a button, trigger presses it. "
-                    "N hides this panel, C copies the report.")
+                    f"{config.JOYSTICK_CONNECTION_BUTTON} or N hides this panel, "
+                    "C copies the report.")
             tint = BUTTON_BORDER
         screen.blit(small.render(hint, True, tint), (x, by - UI(18)))
 

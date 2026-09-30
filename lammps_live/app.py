@@ -134,6 +134,7 @@ class App:
         # ui_scale=None lets the renderer pick from the screen (see ui/scale.py).
         self.renderer = Renderer(config.WINDOW_SIZE, fullscreen=fullscreen,
                                  ui_scale=ui_scale)
+        self.renderer.joystick = self.input_mode == "joystick"
         if self.lock is not None:
             from .kiosk import Watchdog
             took = self.lock.apply_platform_lockdown()
@@ -175,6 +176,10 @@ class App:
         # sliders and a new set of knobs.
         self.hero_engaged = set()
         self._hero_saved = {}
+        # Knobs still sliding their parameters in (HeroKnob.ramp_time): index ->
+        # (start values, target values, sim time at start, duration). Advanced
+        # once a frame by _advance_hero_ramps, and cleared with hero_engaged.
+        self._hero_ramps = {}
         self.history = None
         self.atom_trails = None
         self._trail_frame_counter = 0
@@ -497,6 +502,7 @@ class App:
         # no longer exist.
         self.hero_engaged = set()
         self._hero_saved = {}
+        self._hero_ramps = {}
         # Where this scene stands in the taught sequence, for the rail. Same
         # argument as `self.acts`: it is a property of the order, it cannot change
         # between switches, and the rail reads it 60 times a second.
@@ -650,6 +656,16 @@ class App:
         """10, 9, ... 0 over the last eleven seconds: each number is up for one
         full second, and the return fires as 0 runs out."""
         left = self._idle_seconds_left()
+        # The timer itself, always, very small in the bottom-left corner -- so
+        # the idle return can be watched (and debugged) without waiting a minute
+        # for it. "off" until something has been touched since the last return.
+        if left is not None:
+            clock = f"idle {max(0, int(math.ceil(left)))} s"
+        elif self._idle_armed:
+            clock = "idle paused (connect card up)"
+        else:
+            clock = "idle off"
+        renderer.draw_idle_clock(clock)
         if left is None or left > self.IDLE_COUNTDOWN + 1.0:
             return
         renderer.draw_idle_countdown(min(int(self.IDLE_COUNTDOWN), int(left)))
@@ -741,6 +757,7 @@ class App:
             # back later would restore a state nobody was in.
             self.hero_engaged = set()
             self._hero_saved = {}
+            self._hero_ramps = {}
             # And the colouring goes back to the scene's own default, which is what
             # "the beginning" looks like -- announced, so the jump reads as the
             # Reset rather than as the picture glitching.
@@ -1143,6 +1160,9 @@ class App:
                     if hero is not None:
                         self._toggle_hero(hero)
                         continue
+                    if self.renderer.connection_hit(event.pos):
+                        self.remote_panel.toggle()
+                        continue
                     if self.renderer.bead_color_hit(event.pos):
                         # Through the Choice, so clicking and pushing the stick are
                         # two ways of moving one state -- otherwise the next stick
@@ -1364,6 +1384,7 @@ class App:
                 elif key in by_key:
                     by_key[key].value = value
             self.hero_engaged.discard(index)
+            self._hero_ramps.pop(index, None)
             return
         saved = {key: by_key[key].value for key in knob.params if key in by_key}
         if knob.temperature is not None:
@@ -1373,8 +1394,15 @@ class App:
             # mistake, not a state to enter: entering it would light a button that
             # then had nothing to give back.
             return
-        for key, value in knob.params.items():
-            if key in by_key:
+        targets = {key: value for key, value in knob.params.items() if key in by_key}
+        if knob.ramp_time > 0.0 and targets:
+            # Only the start is set here; _advance_hero_ramps walks the sliders
+            # the rest of the way, frame by frame, in simulation time.
+            self._hero_ramps[index] = (
+                {key: saved[key] for key in targets}, targets,
+                self.system.get_sim_time(), float(knob.ramp_time))
+        else:
+            for key, value in targets.items():
                 by_key[key].value = value
         if knob.temperature is not None:
             self.temp_slider.value = max(
@@ -1382,6 +1410,25 @@ class App:
                 min(self.temp_slider.vmax, knob.temperature))
         self._hero_saved[index] = saved
         self.hero_engaged.add(index)
+
+    def _advance_hero_ramps(self):
+        """Move every ramping hero knob's sliders to where this frame's simulation
+        time puts them (see HeroKnob.ramp_time). Through the sliders, like the
+        knob itself, so the panel shows the value actually running."""
+        if not self._hero_ramps:
+            return
+        by_key = dict(zip(self.extra_slider_keys, self.extra_sliders))
+        now = self.system.get_sim_time()
+        for index, (start, target, t0, duration) in list(self._hero_ramps.items()):
+            # A sim clock that went backwards (a rebuild under the knob) finishes
+            # the ramp rather than stalling it.
+            done = now < t0 or now - t0 >= duration
+            frac = 1.0 if done else (now - t0) / duration
+            for key, value in target.items():
+                if key in by_key:
+                    by_key[key].value = start[key] + frac * (value - start[key])
+            if done:
+                del self._hero_ramps[index]
 
     def _toggle_puller_attached(self):
         """Grab / release the puller (B, or moving the focus off the viewport --
@@ -1508,8 +1555,21 @@ class App:
                     self.remote_panel.step_focus(1 if hat[0] > 0 else -1)
                 if config.JOYSTICK_PLAY_PAUSE_BUTTON in fired:
                     self.remote_panel.activate_focus()
+            # The button that brought the card up puts it away again, from
+            # anywhere -- the one exception to "needs the viewport focus", since
+            # it is the card's own button and cannot mean anything else.
+            if config.JOYSTICK_CONNECTION_BUTTON in fired:
+                self.remote_panel.toggle()
             self._cycle_system_buttons(fired)
             return
+        # THE WAY BACK TO THE CARD. Closing it with the stick used to be one-way:
+        # N brought it back, and nobody holding a joystick has a keyboard. Its
+        # button is drawn on the scene with this number in its chip.
+        connection = (self.remote_panel.active
+                      and config.JOYSTICK_CONNECTION_BUTTON in fired)
+        if connection:
+            self.remote_panel.toggle()
+            fired = fired - {config.JOYSTICK_CONNECTION_BUTTON}
 
         if hat_moved and hat != (0, 0):
             self._move_focus_hat(hat)
@@ -1665,6 +1725,7 @@ class App:
         self._handle_faults()
 
         # ---- 2. push this frame's control inputs into the simulation ---------
+        self._advance_hero_ramps()
         self.system.set_target_temp(self.temp_slider.value)
         self.system.set_puller_damping(self.damping_slider.value)
         for key, s in zip(self.extra_slider_keys, self.extra_sliders):
@@ -1779,9 +1840,14 @@ class App:
             # than up with the other device reads because it needs the box and
             # the view direction, and both are only known once the 3D scene is
             # being gathered.
-            slice_plane = self.view_slice.update(
+            #
+            # Only on a scene that offers it (see ui/disclosure.py, "slice"):
+            # a slab through two beads or a flat sheet shows less, not more, and
+            # an invisible control is worse than a missing one.
+            slice_offered = "slice" in disclosure.shown(spec.lesson)
+            slice_plane = (self.view_slice.update(
                 lever, dt, forward=self.camera3d.forward,
-                box_bounds=box_bounds_3d)
+                box_bounds=box_bounds_3d) if slice_offered else None)
             ids3d, pos3d, is_puller3d = self.system.get_positions_3d()
             scene_3d = {
                 "positions3d": pos3d,
@@ -1823,6 +1889,14 @@ class App:
                 "bead_tints": self.system.get_bead_tints(),
                 # This frame's cut through the scene, or None for the whole box.
                 "view_slice": slice_plane,
+                # The corner gauge that says the lever is there and where it is:
+                # (lever position 0..1 or None, how far the cut is in 0..1).
+                # Only with a joystick -- the mouse and keyboard have no lever,
+                # and a gauge for a control you do not have is a false promise.
+                "slice_gauge": ((self.view_slice.lever_position,
+                                 self.view_slice.progress)
+                                if slice_offered and self.input_mode == "joystick"
+                                else None),
             }
         gather_seconds = perf_counter() - t_gather_start
 
@@ -1876,7 +1950,15 @@ class App:
             self.interaction_smoother.reset()
         ff_seconds += perf_counter() - t_in
 
-        if self.energy_baseline is None:
+        # In reduced units LAMMPS already reports these PER BEAD (thermo `norm`
+        # defaults to yes in lj units), and that is what the plot shows, as is:
+        # an absolute, intensive number that reads the same on seven beads and
+        # fifty thousand. It used to be relative to t = 0, which put a plot near
+        # zero right under a whole-system panel reading -1800, with nothing
+        # saying one was a change per bead and the other a total.
+        if spec.reduced_units:
+            self.energy_baseline = (0.0, 0.0, 0.0)
+        elif self.energy_baseline is None:
             self.energy_baseline = (ke, pe, etotal)
         ke0, pe0, etotal0 = self.energy_baseline
         self.history.add(self.sim_wall_time, temp=temp, press=press,
@@ -1918,6 +2000,10 @@ class App:
             # "the GPU is still yours, on that other playground" -- None unless a
             # remote session is being held in the background.
             remote_note=self.remote_panel.standby_note(),
+            # The chip that reopens the connect card, while there is a card to
+            # reopen and it is not up.
+            connection_button=(self.remote_panel.active
+                               and not self.remote_panel.visible),
             # WHERE THIS SCENE SITS IN THE TAUGHT SEQUENCE, for the rail top-right
             # of the sim view, and whether the thesis button is lit. Both are the
             # app's to know: the position is a property of the offered ORDER (see

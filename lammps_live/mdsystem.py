@@ -7,7 +7,7 @@ physical scales, not reduced LJ units -- so numbers on screen mean what a
 physicist expects them to mean regardless of which system is active.
 """
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .render_style import DEFAULT_STYLE, RenderStyle
 
@@ -160,6 +160,8 @@ class SystemSpec:
     # start/stop the automatic orbit), for a scene with nothing to steer. None ->
     # the fixed camera the scenario chose. A render_style.CameraOrbit.
     camera_orbit: object = None
+    # Fixed y ranges for the panel plots (see Playground.plot_ranges).
+    plot_ranges: dict = field(default_factory=dict)
     # WHAT THE INPUT DEVICE'S TWO AXES DRIVE: "force" (they push the puller) or
     # "torque" (they turn its director, and nothing pushes it). See
     # playground/spec.py's Control.drive, which is where a playground says so.
