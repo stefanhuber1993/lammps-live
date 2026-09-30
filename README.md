@@ -314,7 +314,10 @@ Some things worth knowing, the details are elsewhere:
 
 - The 3D scenes are GPU sphere impostors going through a deferred shading chain
   with ambient occlusion, contact shadows and depth of field. [The impostor
-  book](docs/impostor-book/) is the long version of that story.
+  book](docs/impostor-book/) is the long version of that story, and the
+  [Impostor Viewer](https://stefanhuber1993.github.io/lammps-live/) is the same
+  renderer in a browser tab, for your own dump files. It lives on the
+  `gh-pages` branch, which is its only copy: edit it there.
 - MesoMem runs in the paper's reduced LJ units and the atomistic scenes run in
   real metal units, and the readouts follow whichever model you're in rather
   than one house style.
