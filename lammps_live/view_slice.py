@@ -63,9 +63,11 @@ TRANSITION_SECONDS = 0.5
 # How much of the lever's travel at EACH END means "no slicing", and over which
 # the slab opens back out. Wide enough that shoving the lever to a stop without
 # looking is reliably "off" -- the point of putting it at the stops -- and narrow
-# enough that the remaining 70% of the travel still sweeps the plane across the
-# whole box at a usable resolution.
-EDGE_FRACTION = 0.15
+# enough that the rest of the travel sweeps the plane across the whole box.
+# 5%, a third of the 15% it started at (user's call, 2026-09-30: the dead ends
+# were most of what the hand felt): about six notches of the 7-bit lever, still
+# well past its dither, and 90% of the travel left for the sweep.
+EDGE_FRACTION = 0.05
 # How much the lever has to move to count as touched. The device reports it as 7
 # bits, so one notch is 1/127 ~ 0.008; this is a few notches -- past the last
 # bit's dither, well inside a deliberate nudge.
@@ -201,6 +203,18 @@ class ViewSlice:
     def progress(self):
         """0 = whole box on screen, 1 = the slab at its full thinness."""
         return self._progress
+
+    @property
+    def lever_sweep(self):
+        """Where the lever currently sits as a sweep position 0..1 (see `sweep`),
+        or None before it has reported anything -- what the on-screen gauge
+        draws its knob at, whether or not it is cutting."""
+        return None if self._lever is None else self.sweep(self._lever)
+
+    @property
+    def lever_position(self):
+        """The raw lever reading 0..1, or None before it has reported."""
+        return self._lever
 
     @property
     def plane(self):

@@ -1,5 +1,6 @@
 """Rolling time-series buffer and the generic line-plot drawer used for the
 instrumentation panel (temperature/pressure/energy/RDF)."""
+import math
 from collections import deque
 
 import pygame
@@ -16,14 +17,39 @@ class RollingHistory:
         self.window_seconds = window_seconds
         self.t = deque()
         self.series = {name: deque() for name in names}
+        # Each plot's y axis, by plot name (see axis_range).
+        self.y_ranges = {}
 
     def reset(self):
         """Clear all buffered samples -- called on system switch, so a
         session's history doesn't leak visually into the next system's
-        (different units/scale) plots."""
+        (different units/scale) plots. The axes go with them: a Reset is a new
+        run, and it is allowed a new scale."""
         self.t.clear()
         for s in self.series.values():
             s.clear()
+        self.y_ranges.clear()
+
+    def axis_range(self, name, values, floor):
+        """A y range for plot `name` that holds still.
+
+        Fitting the axis to what is on screen every frame made the plots jump:
+        the data sat still and the ruler under it moved, so a flat line
+        twitched and a real change was indistinguishable from a rescale. Here
+        the axis starts at `floor` -- a (lo, hi) that is a sensible span for
+        this quantity -- and only ever WIDENS, in round steps, when the data
+        leaves it; it never shrinks back until the history is reset. So it
+        changes a handful of times in a run, each time to a number worth
+        reading, and the trace moves while the axis does not.
+        """
+        lo, hi = self.y_ranges.get(name, floor)
+        vals = [v for v in values if math.isfinite(v)]
+        if vals:
+            vlo, vhi = min(vals), max(vals)
+            if vlo < lo or vhi > hi:
+                lo, hi = _nice_range(min(lo, vlo), max(hi, vhi))
+        self.y_ranges[name] = (lo, hi)
+        return lo, hi
 
     def add(self, t, **values):
         self.t.append(t)
@@ -34,6 +60,25 @@ class RollingHistory:
             self.t.popleft()
             for s in self.series.values():
                 s.popleft()
+
+
+def _nice_step(span):
+    """The 1-2-5 step that cuts `span` into about four intervals."""
+    raw = span / 4.0
+    mag = 10.0 ** math.floor(math.log10(raw))
+    for m in (1.0, 2.0, 5.0, 10.0):
+        if raw <= m * mag:
+            return m * mag
+    return 10.0 * mag
+
+
+def _nice_range(lo, hi):
+    """(lo, hi) widened by a margin and snapped out to round numbers, so a
+    widened axis is not immediately outgrown again by the next sample."""
+    span = max(hi - lo, 1e-9)
+    lo, hi = lo - 0.15 * span, hi + 0.15 * span
+    step = _nice_step(hi - lo)
+    return math.floor(lo / step) * step, math.ceil(hi / step) * step
 
 
 def draw_plot(screen, font, rect, title, y_label, x_vals, series, y_range=None, ref_lines=()):
@@ -95,6 +140,9 @@ def draw_plot(screen, font, rect, title, y_label, x_vals, series, y_range=None, 
             x = plot_rect.x + (x_vals[i] - x_lo) / x_span * plot_rect.width
             yv = vals[i - (len(x_vals) - n)]
             y = plot_rect.bottom - (yv - lo) / (hi - lo) * plot_rect.height if hi != lo else plot_rect.centery
+            # Pinned to the frame: a spike past a fixed axis runs along its edge
+            # rather than off the panel (see Playground.plot_ranges).
+            y = min(max(y, plot_rect.top), plot_rect.bottom)
             pts.append((x, y))
         if len(pts) >= 2:
             pygame.draw.lines(screen, color, False, pts, UI.w(2))

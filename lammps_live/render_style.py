@@ -205,6 +205,14 @@ class RenderStyle:
     # only within its own scene; narrow it per system to spend the whole ramp on
     # one of them.
     energy_range: tuple = (-8.0, 0.0)
+    # A SECOND SCALE for the tinted species (the beads a playground paints with
+    # `render_tints`, mix > 0.5), or None to put every bead on `energy_range`.
+    # For a species whose number is a different quantity: the vesicle chain's
+    # beads carry their BENDING energy (see ForceField.bonded_bead_energies), which
+    # is 0 for a straight chain and has nothing to do with how bound a membrane
+    # bead is. Painted on theme.BEND_RAMP, a different hue family, so nobody reads
+    # one against the other.
+    tint_energy_range: tuple = None
 
     # --- periodic image tiling ------------------------------------------------
     # A periodic cell is a window onto an infinite system, and drawing only the

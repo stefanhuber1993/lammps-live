@@ -296,6 +296,36 @@ INFERNO = (
     (0.9625, 0.8515, 0.2855), (0.9487, 0.9105, 0.3953), (0.9517, 0.9606, 0.5242), (0.9884, 0.9984, 0.6449),
 )
 
+# THE SECOND ENERGY SCALE, for a species whose energy is a different quantity
+# (RenderStyle.tint_energy_range): the vesicle chain's BENDING energy, painted
+# beside the membrane's binding energy. It must not be mistaken for a reading on
+# INFERNO's scale -- a straight chain is not "as bound as" a dark membrane bead --
+# so it is a different hue family altogether: deep blue through teal to a pale
+# mint, where INFERNO goes black through red to yellow. Monotone in lightness,
+# like INFERNO, so "brighter = more" still holds on both. Same rgb convention
+# as INFERNO (uploaded to the shader as is), 32
+# samples, interpolated from five anchors.
+_BEND_ANCHORS = ((0.00, (0.020, 0.030, 0.140)),
+                 (0.30, (0.020, 0.140, 0.380)),
+                 (0.55, (0.000, 0.360, 0.520)),
+                 (0.80, (0.150, 0.700, 0.620)),
+                 (1.00, (0.780, 0.980, 0.820)))
+
+
+def _sample_ramp(anchors, n=32):
+    out = []
+    for k in range(n):
+        t = k / (n - 1)
+        for (t0, c0), (t1, c1) in zip(anchors, anchors[1:]):
+            if t <= t1:
+                f = (t - t0) / (t1 - t0)
+                out.append(tuple(a + f * (b - a) for a, b in zip(c0, c1)))
+                break
+    return tuple(out)
+
+
+BEND_RAMP = _sample_ramp(_BEND_ANCHORS)
+
 # --- the third bead colouring: which aggregate ---------------------------------
 # Neither of the two above says what a bead is PART OF. The director banding is a
 # property of one bead and the energy ramp is a property of one bead; a membrane

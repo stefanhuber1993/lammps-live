@@ -50,6 +50,7 @@ from ..render_style import DEFAULT_STYLE
 from .theme import (
     BEAD_BAND_HALFWIDTH, BEAD_BAND_SOFT, BEAD_EQUATOR_COLOR, BEAD_POLE_COLOR,
     BEAD_WHITE_POLE_COLOR, BEAD_WHITE_POLE_MIN, BEAD_WHITE_POLE_SOFT,
+    BEND_RAMP,
     INFERNO,
 )
 
@@ -182,6 +183,9 @@ uniform float clipEnable; // 1 for periodic scenes (clip beads to the box), 0 ot
 uniform float colorMode;  // 0 = director bands, 1 = energy colormap, 2 = per-bead tint
 uniform vec2 energyRange; // (lo, hi) of the colormap, in the model's energy units
 uniform vec3 ramp[32];    // the colormap, sampled (see theme.INFERNO)
+uniform vec3 ramp2[32];   // the tinted species' own colormap (theme.BEND_RAMP)
+uniform vec2 energyRange2; // ... and its range (RenderStyle.tint_energy_range)
+uniform float tintEnergy; // 1 -> a tinted bead (mix > 0.5) is on ramp2 instead
 uniform vec3 bodyLight;   // the mottling's two colours (style.body_color_light/dark),
 uniform vec3 bodyDark;    // ... already in linear light
 uniform float bodyMottle; // world size of the coarsest noise octave
@@ -308,11 +312,17 @@ void main() {
         // One flat colour per bead, from its own potential energy. Flat on
         // purpose: the number belongs to the WHOLE bead, so shading it like a
         // band would invite reading a gradient across a sphere that has none.
-        float t = clamp((v_energy - energyRange.x)
-                        / max(energyRange.y - energyRange.x, 1e-6), 0.0, 1.0);
+        //
+        // A TINTED bead may be on a scale of its own (tintEnergy): a species whose
+        // number is a different quantity -- the chain's bending energy -- painted
+        // in a different hue family, so it is never read against the membrane's.
+        bool own = tintEnergy > 0.5 && v_tint.a > 0.5;
+        vec2 rng = own ? energyRange2 : energyRange;
+        float t = clamp((v_energy - rng.x) / max(rng.y - rng.x, 1e-6), 0.0, 1.0);
         float f = t * 31.0;
         int i = int(floor(f));
-        albedo = mix(ramp[i], ramp[min(i + 1, 31)], f - float(i));
+        albedo = own ? mix(ramp2[i], ramp2[min(i + 1, 31)], f - float(i))
+                     : mix(ramp[i], ramp[min(i + 1, 31)], f - float(i));
     } else {
         float cosl = abs(s);
         float tt = clamp((cosl - (band_half - band_soft)) / (2.0 * band_soft), 0.0, 1.0);
@@ -865,6 +875,9 @@ class GLScene:
         # The energy colormap never changes; only which mode is active and what
         # range it spans do (per frame, in render()).
         self.geom_prog["ramp"].write(np.array(INFERNO, dtype="f4").tobytes())
+        self.geom_prog["ramp2"].write(np.array(BEND_RAMP, dtype="f4").tobytes())
+        self.geom_prog["tintEnergy"].value = 0.0
+        self.geom_prog["energyRange2"].value = (0.0, 1.0)
         self.geom_prog["colorMode"].value = 0.0
         self.geom_prog["energyRange"].value = (-6.0, 0.0)
 
@@ -1170,6 +1183,10 @@ class GLScene:
             color_mode if color_mode is not None
             else (2 if tints is not None else (0 if energies is None else 1)))
         self.geom_prog["energyRange"].value = tuple(style.energy_range)
+        own = style.tint_energy_range
+        self.geom_prog["tintEnergy"].value = 0.0 if own is None else 1.0
+        if own is not None:
+            self.geom_prog["energyRange2"].value = tuple(own)
         energies = np.zeros(n, "f4") if energies is None else np.asarray(energies, "f4")
         tints = np.zeros((n, 4), "f4") if tints is None else np.asarray(tints, "f4")
         fades = np.ones(n, "f4") if fades is None else np.asarray(fades, "f4")
