@@ -2578,7 +2578,12 @@ function demoSheet() {
   const A = 1.4, kx = 2*Math.PI/(nx*a*0.75), ky = 2*Math.PI/(ny*a*0.9);
   let i = 0;
   for (let iy = 0; iy < ny; iy++) for (let ix = 0; ix < nx; ix++, i++) {
-    const x = (ix + 0.5*(iy&1) - nx/2) * a, y = (iy - ny/2) * a * 0.866;
+    // Centred in the cell (the +0.25 and +0.5), not started on its lower faces:
+    // a bead ON a face is a coin toss after the float32 rounding, and the wrap
+    // (on by default) sends the losers to the opposite face -- a whole column of
+    // the left edge's wave drawn along the right one. Centred, every bead is a
+    // quarter pitch inside, and the spacing across each face is still a.
+    const x = (ix + 0.25 + 0.5*(iy&1) - nx/2) * a, y = (iy + 0.5 - ny/2) * a * 0.866;
     const z = A * Math.sin(kx*x) * Math.cos(ky*y);
     pos[i*3] = x; pos[i*3+1] = y; pos[i*3+2] = z;
     const dzx = A*kx*Math.cos(kx*x)*Math.cos(ky*y), dzy = -A*ky*Math.sin(kx*x)*Math.sin(ky*y);
@@ -2622,7 +2627,8 @@ function demoMixed() {
   const A = 1.1, kx = 2*Math.PI/(nx*a*0.8), ky = 2*Math.PI/(ny*a*0.8);
   let i = 0;
   for (let iy = 0; iy < ny; iy++) for (let ix = 0; ix < nx; ix++, i++) {
-    const x = (ix + 0.5*(iy&1) - nx/2) * a, y = (iy - ny/2) * a * 0.866;
+    // Centred in the cell, for the reason in demoSheet.
+    const x = (ix + 0.25 + 0.5*(iy&1) - nx/2) * a, y = (iy + 0.5 - ny/2) * a * 0.866;
     const z = A * Math.sin(kx*x) * Math.cos(ky*y);
     pos[i*3] = x; pos[i*3+1] = y; pos[i*3+2] = z;
     const dzx = A*kx*Math.cos(kx*x)*Math.cos(ky*y), dzy = -A*ky*Math.sin(kx*x)*Math.sin(ky*y);
