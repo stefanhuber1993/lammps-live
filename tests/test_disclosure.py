@@ -120,3 +120,16 @@ def test_the_assembly_box_offers_the_cut_and_draws_its_gauge(app):
     assert app.view_slice.progress > 0.0
     assert "slice" in app.renderer._ui_rects
     assert "slice" in app._callouts
+
+
+def test_the_idle_return_brings_the_first_scene_back_in_its_own_colours(app):
+    """The two-bead pair offers no colouring, so it must not inherit one: the
+    idle return lands on it straight from a cluster-coloured scene, and two beads
+    in the cluster colouring are painted as loose grey gas."""
+    app._build_system("mesomem_assembly")
+    assert app.renderer.bead_color_mode == "cluster"
+    app._note_input()
+    app._last_input -= App.IDLE_SECONDS + 1.0
+    app._check_idle()
+    assert app.system_key == "mesomem_bead"
+    assert app.renderer.bead_color_mode == "director"

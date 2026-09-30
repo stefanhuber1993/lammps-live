@@ -484,6 +484,12 @@ class App:
             # A stop only where the toggle is drawn (see ui/disclosure.py).
             if "colour" in ui:
                 choices = (self.color_choice,)
+        else:
+            # NO CHOICE MEANS THE PLAIN BANDING, not whatever the last scene was
+            # in. Left alone, the mode carried over: the idle return jumps to the
+            # two-bead pair straight from a cluster-coloured scene, and two beads
+            # that are no cluster were painted as loose grey gas.
+            self.renderer.bead_color_mode = BEAD_COLOR_MODES[0]
         # A stop on a widget that is not drawn is a stop the hand cannot see, so
         # the dial leaves the cycle on a scene that does not offer it -- the same
         # rule the bead-colour toggle follows when a scene offers no colouring.
