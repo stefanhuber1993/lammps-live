@@ -21,7 +21,12 @@ body{
 #app{display:flex;height:100%;width:100%}
 
 /* ---- viewport ---- */
-#stage{position:relative;flex:1 1 auto;min-width:0;background:#000}
+/* min-height and the absolute canvas together keep the canvas out of the
+   layout. A canvas's intrinsic size is its PIXEL size, which sizeCanvas sets
+   from the stage -- so as an ordinary child it props the stage open at whatever
+   size it last had, and after a rotation or hiding the panel the stage could
+   never shrink back (the panel was squeezed to nothing). */
+#stage{position:relative;flex:1 1 auto;min-width:0;min-height:0;overflow:hidden;background:#000}
 /* With a transparent background the canvas shows whatever is behind it, so put
    a checkerboard there: it is the only way to tell an empty matte from a black
    one before the PNG is opened somewhere else. */
@@ -29,7 +34,7 @@ body{
   background:
     repeating-conic-gradient(#23252d 0% 25%, #16171d 0% 50%) 0 0/20px 20px;
 }
-#gl{display:block;width:100%;height:100%;cursor:grab}
+#gl{display:block;position:absolute;inset:0;width:100%;height:100%;cursor:grab}
 #gl.dragging{cursor:grabbing}
 /* Dim grey on a white render is unreadable; flip the overlays when the
    background goes light. They are DOM, so they never reach the PNG either way. */
@@ -211,22 +216,42 @@ kbd{
   padding:7px 11px;font-size:12.5px;
 }
 #app.nopanel #panel{display:none}
+/* The portrait phone's toggle: a full-width strip BETWEEN the view and the
+   controls, not a button floating on the view. On the view it had to be hit
+   inside an area where every other touch is a camera gesture; down here it is
+   the one thing in its row, and with the panel hidden it sits at the bottom of
+   the screen, where the thumb already is. */
+#sheetbar{
+  display:none;flex:0 0 auto;width:100%;min-height:44px;border:none;border-radius:0;
+  border-top:1px solid var(--line);background:var(--panel2);color:var(--txt);
+  font:600 12px/1 system-ui;letter-spacing:.06em;text-transform:uppercase;
+  align-items:center;justify-content:center;gap:8px;
+  -webkit-tap-highlight-color:transparent;
+  /* clear of the home indicator, on the phones that draw one over the page */
+  padding-bottom:env(safe-area-inset-bottom);
+}
+#sheetbar .chev{transition:transform .15s}
+#app.nopanel #sheetbar .chev{transform:rotate(180deg)}
 /* A 372 px side panel beside the view leaves a phone about 20 px of picture, so
    on a narrow screen the panel goes UNDER the view instead: the picture keeps
    the full width and most of the height, and the controls scroll below it. */
 @media (max-width: 760px) and (orientation: portrait){
-  html,body{height:100%;height:100dvh}
-  #app{flex-direction:column}
-  #stage{flex:0 0 58%}
-  #app.nopanel #stage{flex:1 1 auto}
-  #panel{flex:1 1 auto;border-left:none;border-top:1px solid var(--line)}
-  #panelbtn{display:block}
-  #brand{padding:9px 14px 8px}
-  #brand p{display:none}
-  #bgquick{margin-top:7px}
+  /* Pinned to the viewport rather than sized by 100% / 100dvh, which iOS can
+     leave at the old orientation's height after a rotation. */
+  #app{position:fixed;inset:0;flex-direction:column}
+  /* The controls get a little more than half: they are what the hand is
+     working, and the view reads fine at this size. */
+  #stage{flex:0 0 44%}
+  #app.nopanel #stage{flex:1 1 0}
+  #panel{flex:1 1 0;border-left:none}
+  #sheetbar{display:flex}
+  /* the strip names the thing, so the panel's own title can go */
+  #brand h1,#brand p{display:none}
+  #brand{padding:8px 14px}
+  #bgquick{margin-top:0}
   #tabs button{padding:12px 1px 11px;font-size:10.5px}
   .overlay{font-size:10px}
-  #stats{right:120px}
+  #stats{right:12px}
   #hint{right:12px}
   /* iOS zooms the whole page into any field whose text is under 16 px the
      moment it is focused, and does not zoom back out. */
@@ -261,6 +286,7 @@ kbd{
     <div class="overlay" id="err"></div>
     <button id="panelbtn" title="show or hide the controls (H)">Controls</button>
   </div>
+  <button id="sheetbar" aria-label="show or hide the controls"><span>Impostor Viewer · controls</span><span class="chev">▾</span></button>
 
   <aside id="panel">
     <div id="brand">
@@ -4565,6 +4591,7 @@ function loop(t) {
 // freed height back to the view.
 function togglePanel() { $("app").classList.toggle("nopanel"); sizeCanvas(); }
 $("panelbtn").addEventListener("click", togglePanel);
+$("sheetbar").addEventListener("click", togglePanel);
 
 $("hint").textContent = matchMedia("(pointer: coarse)").matches
   ? "drag to orbit · pinch to zoom · two fingers to pan · double-tap to fit"
