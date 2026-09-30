@@ -270,6 +270,14 @@ class Scenario(ABC):
         """
         return None
 
+    def bonded_loops(self, params):
+        """Where the closed bonded chains are, as (first particle index, [loop
+        lengths]) in id order, or None (the default) for a scenario with no
+        bonds. Each loop is consecutive and closed, with one angle centred on
+        every bead -- what ForceField.bonded_bead_energies needs to paint a
+        chain by its own energy without being sent the topology."""
+        return None
+
     def render_tints(self, params):
         """Static per-particle colour, (N, 4) or None (the default).
 
@@ -980,6 +988,9 @@ class RodOnSheet(HexSheet):
         structural("view_elevation_deg", 6.0,
                    "camera elevation above the membrane plane (0 = exactly "
                    "edge-on, so the membrane is a line)"),
+        structural("view_target_z", 0.0,
+                   "height the camera looks at, in sigma: raising it moves the "
+                   "whole picture DOWN the screen without changing the angle"),
         # How much of the rod's OUT-OF-PLANE travel to keep in frame. None derives
         # it from the starting height, which is right only while that is the whole
         # of the travel; a playground whose leash reaches well past it has to say
@@ -1029,8 +1040,11 @@ class RodOnSheet(HexSheet):
         span = max(box.lengths[0], box.lengths[1]) * params["view_span"]
         el = math.radians(min(max(float(params["view_elevation_deg"]), 0.0), 85.0))
         d = 0.5 * box.lengths[1] + 2.5 * span
-        return dict(eye=(0.0, -d * math.cos(el), d * math.sin(el)),
-                    target=(0.0, 0.0, 0.0), up=(0.0, 0.0, 1.0), fov_deg=34.0)
+        # Eye and target lifted together, so this is a translation of the view
+        # rather than a tilt: the angle the section is seen at is unchanged.
+        tz = float(params["view_target_z"])
+        return dict(eye=(0.0, -d * math.cos(el), d * math.sin(el) + tz),
+                    target=(0.0, 0.0, tz), up=(0.0, 0.0, 1.0), fov_deg=34.0)
 
     def build(self, params, rng):
         sheet = super().build(params, rng)
@@ -1576,6 +1590,11 @@ class VesiclePolymer(Scenario):
         order they are laid down -- what the molecule template bonds up. Here one
         entry per ring; a subclass with other topology says so by overriding it."""
         return [int(params["ring_side"]) ** 3] * self.ring_count(params)
+
+    def bonded_loops(self, params):
+        # The membrane is created first, so the polymer's ids follow it, in the
+        # order the template lays the loops down.
+        return self.subdivision(params)[1], self.loop_lengths(params)
 
     # --- LAMMPS side ----------------------------------------------------------
 

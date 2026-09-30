@@ -156,3 +156,27 @@ def test_empty_pair_list_is_harmless():
     terms = ff.energy_terms(state, pairs, params)
     assert set(terms) == {ISO, TILT, SPLAY}
     assert all(len(v) == 0 for v in terms.values())
+
+
+def test_spontaneous_curvature_is_the_sphere_it_asks_for():
+    """c0 (the pair style's own spontaneous-curvature offset, a live dial since
+    the 50k box's "Curved membrane" knob): beads on a sphere of radius R with
+    their directors pointing IN cost no tilt and no splay at c0 = 1/R -- the
+    sphere is what c0 asks for -- and cost both at c0 = 0, where flat is.
+    (Pointing out, the sign flips: the pair style's rhat runs j -> i.)"""
+    from lammps_live.playground.state import icosphere_faces
+
+    ff = MesoMem()
+    R = 5.0
+    _, normals = icosphere_faces(3)
+    pos = normals * R
+    state = FrameState(positions=pos, directors=-normals, box=None)
+
+    def orientational(c0):
+        params = ff.new_params({"c0": c0})
+        pairs = build_pairs(pos, ff.interaction_cutoff(params), None)
+        terms = ff.energy_terms(state, pairs, params)
+        return terms[TILT].sum() + terms[SPLAY].sum()
+
+    assert orientational(1.0 / R) == pytest.approx(0.0, abs=1e-9)
+    assert orientational(0.0) > 1.0

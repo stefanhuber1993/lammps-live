@@ -21,6 +21,8 @@ come from the compiled pair style inside LAMMPS.
 """
 from abc import ABC, abstractmethod
 
+import numpy as np
+
 from .params import ParamSet
 
 _REGISTRY = {}
@@ -192,6 +194,17 @@ class ForceField(ABC):
         to build the pair list for the energy decomposition and observables."""
         return 0.0
 
+    def bonded_bead_energies(self, positions, loops, params):
+        """The energy each bead of a bonded chain holds, for the energy colouring
+        to paint it by -- or None (the default), when there is no such thing.
+
+        `positions` are the chain's own beads, in id order, laid out as `loops`
+        (lengths of consecutive closed loops, see Scenario.bonded_loops).
+        Computed from positions, on the drawing side, because the topology never
+        travels: a remote client has the same scenario and so the same loops.
+        """
+        return None
+
     def pair_landmarks(self, params):
         """The separations where this force field's behaviour CHANGES -- a term
         switching on, a branch of one taking over -- as
@@ -256,3 +269,32 @@ class ForceField(ABC):
         everything, and a single particle's share sums the pairs touching it.
         """
         return None
+
+
+def with_bonded_energies(force_field, scenario, scenario_params, params,
+                         positions, energies):
+    """`energies` (per particle, id order) with the bonded chain's beads replaced
+    by their own bonded energy (ForceField.bonded_bead_energies), when the
+    scenario has chains and the force field has a number for them; otherwise
+    `energies` unchanged. The renderer paints those beads on a scale of their own
+    (RenderStyle.tint_energy_range) -- this is the number that scale is for.
+
+    Shared by the local system and the remote client, so both paint the same
+    thing: the client computes it from the positions it was sent.
+    """
+    if energies is None or positions is None:
+        return energies
+    loops = scenario.bonded_loops(scenario_params)
+    if loops is None:
+        return energies
+    start, lengths = loops
+    n = int(sum(lengths))
+    if start + n > len(energies) or start + n > len(positions):
+        return energies
+    chain = force_field.bonded_bead_energies(positions[start:start + n], lengths,
+                                             params)
+    if chain is None:
+        return energies
+    out = np.array(energies, dtype=float, copy=True)
+    out[start:start + n] = chain
+    return out

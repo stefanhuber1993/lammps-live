@@ -124,6 +124,10 @@ class PairAnnotation:
     # ((label, radius, term_index), ...) -- the force field's own landmark radii
     # (see ForceField.pair_landmarks), drawn as rings around the fixed partner.
     shells: tuple = ()
+    # How far the pair can see each other at all (ForceField.interaction_cutoff):
+    # past it every term is exactly zero. Carried separately from the shells
+    # because it is no longer drawn as one -- the dashed bond already says it.
+    reach: float = 0.0
     # World unit normal of the plane the driven particle is confined to, or None.
     # The landmark shells are spheres, and what the driven particle can actually
     # cross is their intersection with ITS OWN plane -- a circle in that plane,
@@ -151,9 +155,10 @@ class PairAnnotation:
     @property
     def in_range(self):
         """Whether the pair is interacting at all -- i.e. whether there is
-        anything but zeros to read. Outside the outermost shell every term is
-        exactly zero, and saying so is more use than three zeros."""
-        reach = max((radius for _, radius, _ in self.shells), default=0.0)
+        anything but zeros to read. Outside the force field's reach every term
+        is exactly zero, and saying so is more use than three zeros."""
+        reach = self.reach or max((radius for _, radius, _ in self.shells),
+                                  default=0.0)
         return self.r < reach if reach > 0.0 else any(
             t.energy or t.radial_force for t in self.terms)
 
@@ -270,6 +275,7 @@ def probe_pair(force_field, state, params, i=0, j=1, plane_normal=None,
     return PairAnnotation(
         i=i, j=j, r=r, angle_deg=angle, terms=terms,
         shells=tuple(force_field.pair_landmarks(params)),
+        reach=float(force_field.interaction_cutoff(params) or 0.0),
         plane_normal=(None if plane_normal is None
                       else tuple(float(c) for c in plane_normal)),
         torque_scale=float(torque_scale),

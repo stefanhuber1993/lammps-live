@@ -129,6 +129,9 @@ def verify_all(refs, tolerance=1e-6, steps=40, param_sets=None):
         ("stiff", {"k_tilt": 40.0, "k_splay": 2.5}),
         ("abs splay", {"splay_symmetry": 1.0}),
         ("short cutoffs", {"rc": 1.6, "wc": 1.2}),
+        # The spontaneous-curvature offset enters both orientational terms, and
+        # at c0 = 0 it vanishes from both.
+        ("curved", {"c0": 0.2}),
     ]
     results = []
     all_ok = True

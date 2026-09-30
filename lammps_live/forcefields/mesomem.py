@@ -49,7 +49,6 @@ MESOMEM_PLUGIN = PluginSpec(
 # --- Paper "standard conditions" (Sec. II-III) --------------------------------
 SIGMA = 1.0        # bead diameter / length unit
 EPS = 1.0          # energy unit (LJ well depth)
-C0 = 0.0           # spontaneous curvature (0 -> flat preferred)
 
 # Term labels, shared by the energy panels and the verifier so a label can never
 # drift between them.
@@ -108,6 +107,15 @@ class MesoMem(ForceField):
         Param("zeta", 5.0, "zeta (attraction falloff, higher=shorter reach)",
               0.0, 12.0, optimum=5.0, fmt="{:.1f}",
               doc="steepness/width of the cosine-squared attractive branch"),
+        # SPONTANEOUS CURVATURE, the pair style's own c0 (it was a constant 0
+        # here until 2026-09-30). The tilt and splay terms then prefer each pair
+        # bent by sin(alpha/2) = r c0 / 2, i.e. a sphere of radius 1/c0, instead
+        # of flat -- which is how a sheet is told to close. Advanced: it is the
+        # large-scale self-assembly box's hero knob (see mesomem_remote), and
+        # nowhere else is it an everyday dial.
+        Param("c0", 0.0, "c0 (spontaneous curvature, 1/radius)", 0.0, 0.4,
+              fmt="{:.3f}", advanced=True,
+              doc="preferred curvature: 0 = flat, 1/R = a sphere of radius R"),
         Param("splay_symmetry", 0.0, "splay symmetry (0=signed, 1=|dot|)",
               0.0, 1.0, fmt="{:.2f}", advanced=True,
               doc="blends the splay term's signed director dot product toward "
@@ -159,7 +167,7 @@ class MesoMem(ForceField):
         """
         return [
             f"pair_coeff 1 1 {SIGMA} {EPS} {params['k_tilt']} {params['k_splay']} "
-            f"{params['rc']} {params['wc']} {params['zeta']} {C0} "
+            f"{params['rc']} {params['wc']} {params['zeta']} {params['c0']} "
             f"{params['splay_symmetry']}"
         ]
 
@@ -175,10 +183,11 @@ class MesoMem(ForceField):
         passes through zero there and comes back out the other side. It is the
         force field's length unit and therefore fixed at 1.
 
-        rc is where everything stops, exactly, and it is drawn because the pair
-        connector already changes with it -- the bond goes dashed outside rc, and a
-        ring at the radius where that happens is the same statement twice, which is
-        the good kind.
+        rc, where everything stops, WAS drawn too and is not any more (user's
+        call, 2026-09-30): the big ring round the partner read as a "rotational
+        cutoff", which it is not, and the bond going dashed outside rc already
+        says where the pair stops seeing each other without inviting that
+        misreading. The annotation still knows rc -- as its `reach`, not a ring.
 
         wc USED TO BE HERE AND IS NOT ANY MORE. It is the outer edge of the
         orientational weight w(r) = exp(r^2 / (rga^2 ((r/wc)^4 - 1))), and w does
@@ -191,24 +200,25 @@ class MesoMem(ForceField):
         rounding, so a bead crossing the tilt ring is a bead making the tilt row
         light up.
         """
-        return (("sigma", SIGMA, 0),
-                ("rc", float(params["rc"]), 0))
+        return (("sigma", SIGMA, 0),)
 
     # ---- the Python reference expression ------------------------------------
 
     def energy_terms(self, state, pairs, params):
         """The three additive MesoMem energies, per pair, fully vectorized.
 
-        Mirrors the pair style's compute() (paper Eqs. 2-6, c0 = 0):
+        Mirrors the pair style's compute() (paper Eqs. 2-6, plus its c0):
 
           U_iso   4-2 soft core for r < sigma, then -eps cos(g)^(2 zeta) with
                   g = (pi/2)(r - sigma)/(rc - sigma) out to rc
           w(r)    orientational weight, exp(r^2 / (rga^2 ((r/wc)^4 - 1))) inside
                   wc and zero outside, with rga = wc/2
-          U_tilt  (k_tilt/2)[(n_i.rhat)^2 + (n_j.rhat)^2] w(r)
-          U_splay (k_splay/2)(n_i.n_j - 1)^2 w(r), with the dot product blended
-                  toward |n_i.n_j| by splay_symmetry so the panel matches the
-                  force actually being applied
+          U_tilt  (k_tilt/2)[(n_i.rhat + s)^2 + (n_j.rhat - s)^2] w(r)
+          U_splay (k_splay/2)(n_i.n_j - 1 + 2 s^2)^2 w(r), with the dot product
+                  blended toward |n_i.n_j| by splay_symmetry so the panel
+                  matches the force actually being applied
+          s       sin(alpha/2) = r c0 / 2, the spontaneous-curvature offset;
+                  rhat = (r_i - r_j)/r, as in the pair style
 
         Returns per-pair arrays, so the caller sums them over everything (whole
         system) or over the pairs touching one particle (that bead's share) from
@@ -224,6 +234,7 @@ class MesoMem(ForceField):
         k_tilt = float(params["k_tilt"])
         k_splay = float(params["k_splay"])
         sym = float(params["splay_symmetry"])
+        c0 = float(params["c0"])
 
         r = pairs.r
         iso = np.zeros_like(r)
@@ -260,7 +271,8 @@ class MesoMem(ForceField):
                 njr = np.einsum("ij,ij->i", nj, rhat)
                 ninj = np.einsum("ij,ij->i", ni, nj)
                 ninj_eff = (1.0 - sym) * ninj + sym * np.abs(ninj)
-                tilt = 0.5 * k_tilt * (nir * nir + njr * njr) * w
-                splay = 0.5 * k_splay * (ninj_eff - 1.0) ** 2 * w
+                s = 0.5 * r * c0
+                tilt = 0.5 * k_tilt * ((nir + s) ** 2 + (njr - s) ** 2) * w
+                splay = 0.5 * k_splay * (ninj_eff - 1.0 + 2.0 * s * s) ** 2 * w
 
         return {ISO: iso, TILT: tilt, SPLAY: splay}

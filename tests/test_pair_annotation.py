@@ -24,7 +24,7 @@ from lammps_live.playground.state import FrameState
 
 # The paper's standard conditions, as the playground runs them.
 PARAMS = {"k_tilt": 12.0, "k_splay": 1.0, "zeta": 5.0, "rc": 2.5, "wc": 2.0,
-          "splay_symmetry": 0.0}
+          "splay_symmetry": 0.0, "c0": 0.0}
 
 
 def pair_state(r, n_driven=(0.0, 0.0, 1.0), n_partner=(0.0, 0.0, 1.0)):
@@ -91,21 +91,20 @@ def test_out_of_range_is_flat_zero_and_says_so():
     assert ann.in_range
 
 
-def test_the_shells_follow_the_live_cutoffs():
-    """The rings are drawn from the parameters, so dragging rc moves them -- which
-    is the only reason a ring is worth drawing rather than printing.
-
-    wc is deliberately NOT among them: w(r) vanishes there with an essential
-    singularity, so just inside it the orientational energies are e^-40 and a ring
-    at that radius promised the audience something that then did not happen for
-    another 0.2 sigma. Rings drawn at each term's measured onset were tried in its
-    place and were worse -- they moved as the director turned -- so what is left is
-    the two radii that never move, and the faded rows are what say which term is
-    asleep (see Renderer._draw_pair_shells).
+def test_only_sigma_is_a_ring_and_rc_is_the_reach():
+    """sigma is the one ring left. wc went first: w(r) vanishes there with an
+    essential singularity, so just inside it the orientational energies are e^-40
+    and a ring at that radius promised the audience something that then did not
+    happen for another 0.2 sigma. rc went next, because the big ring round the
+    partner read as a "rotational cutoff"; the bond going dashed outside rc says
+    the same thing without the misreading. rc is still what `in_range` reads, and
+    it still follows the live slider.
     """
-    assert probe(1.4).shells == (("sigma", 1.0, 0), ("rc", 2.5, 0))
-    widened = probe_pair(MesoMem(), pair_state(1.4), dict(PARAMS, rc=2.9))
-    assert widened.shells == (("sigma", 1.0, 0), ("rc", 2.9, 0))
+    assert probe(1.4).shells == (("sigma", 1.0, 0),)
+    assert probe(1.4).reach == 2.5
+    widened = probe_pair(MesoMem(), pair_state(2.7), dict(PARAMS, rc=2.9))
+    assert widened.reach == 2.9
+    assert widened.in_range
 
 
 def test_a_missing_partner_is_no_annotation():
@@ -337,7 +336,7 @@ ANNOTATION = PairAnnotation(
     terms=(PairTerm(ISO, -0.41, -1.89, (0.0, 0.0, 0.0), 0.0),
            PairTerm(TILT, 0.23, 1.37, (0.0, -0.45, 0.0), -0.45),
            PairTerm(SPLAY, 0.01, 0.03, (0.0, -0.02, 0.0), -0.02)),
-    shells=(("sigma", 1.0, 0), ("rc", 2.5, 0)),
+    shells=(("sigma", 1.0, 0),), reach=2.5,
     plane_normal=(0.0, 1.0, 0.0), torque_scale=2.5)
 
 

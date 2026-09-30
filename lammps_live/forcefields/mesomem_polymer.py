@@ -169,6 +169,32 @@ class MesoMemPolymer(MesoMem):
             return self.angle_commands(params)
         return super().live_commands(params, changed_name)
 
+    def bonded_bead_energies(self, positions, loops, params):
+        """Each chain bead's BENDING energy: the `angle_style cosine` term
+        k_bend (1 + cos theta) of the one angle centred on it, theta being the
+        angle between its two bonds -- 0 for a straight run, k_bend at a right-
+        angle corner, 2 k_bend folded back on itself.
+
+        The whole angle's energy, not LAMMPS' per-atom third of it: the angle
+        belongs to the bead at its vertex, and "how bent is the chain HERE" is
+        the question the colour answers. Bond stretching is left out on purpose;
+        FENE at these constants barely moves, and what the stiffness knob
+        changes is bending.
+        """
+        k = float(params["k_bend"])
+        p = np.asarray(positions, dtype=float)
+        out = np.empty(len(p))
+        start = 0
+        for length in loops:
+            q = p[start:start + length]
+            u = np.roll(q, 1, axis=0) - q
+            v = np.roll(q, -1, axis=0) - q
+            cos = np.einsum("ij,ij->i", u, v) / np.maximum(
+                np.linalg.norm(u, axis=1) * np.linalg.norm(v, axis=1), 1e-12)
+            out[start:start + length] = k * (1.0 + np.clip(cos, -1.0, 1.0))
+            start += length
+        return out
+
     # ---- the Python reference expression ------------------------------------
 
     def energy_terms(self, state, pairs, params):
