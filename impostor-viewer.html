@@ -6,16 +6,17 @@
 <title>Impostor Viewer — deferred sphere renderer for LAMMPS output</title>
 <style>
 :root{
-  --bg:#0d0d11; --panel:#15161c; --panel2:#1b1d25; --line:#2a2d38;
-  --txt:#d8dae4; --dim:#868c9e; --hi:#f0f2f8; --acc:#f2c14e; --acc2:#6fb2f0;
-  --bad:#ff7a6b; --ok:#7fd6a2;
-  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --bg:#c9c5b9; --panel:#e2dfd5; --panel2:#f4f2eb; --line:#8f8a7d;
+  --txt:#1e1c18; --dim:#5f5a4f; --hi:#000; --acc:#a4401b; --acc2:#2f6b2f;
+  --bad:#b3131b; --ok:#2f6b2f;
+  --ui:Verdana,Geneva,Tahoma,sans-serif;
+  --mono:"Courier New",Courier,monospace;
 }
 *{box-sizing:border-box}
 html,body{height:100%;margin:0}
 body{
   background:var(--bg); color:var(--txt); overflow:hidden;
-  font:13px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif;
+  font:12px/1.45 var(--ui);
   -webkit-font-smoothing:antialiased;
 }
 #app{display:flex;height:100%;width:100%}
@@ -44,15 +45,15 @@ body{
   content:"drop a LAMMPS dump / data / xyz file";
   position:absolute;inset:12px;border:2px dashed var(--acc);border-radius:8px;
   display:flex;align-items:center;justify-content:center;
-  font:600 15px/1 system-ui;color:var(--acc);letter-spacing:.02em;
-  background:rgba(13,13,17,.55);pointer-events:none;
+  font:bold 15px/1 var(--ui);color:#f0c9b8;
+  background:rgba(0,0,0,.55);pointer-events:none;
 }
 .overlay{
-  position:absolute;font:11px/1.5 var(--mono);color:var(--dim);
+  position:absolute;font:11px/1.5 var(--mono);color:#bdb8aa;
   pointer-events:none;text-shadow:0 1px 3px #000;
 }
 #stats{top:10px;left:12px}
-#stats b{color:var(--hi);font-weight:600}
+#stats b{color:#fff;font-weight:bold}
 #hint{bottom:10px;left:12px;max-width:60ch}
 #err{
   top:10px;left:50%;transform:translateX(-50%);color:var(--bad);
@@ -70,7 +71,7 @@ body{
   display:flex;flex-direction:column;min-height:0;
 }
 #brand{padding:13px 16px 11px;border-bottom:1px solid var(--line);flex:0 0 auto}
-#brand h1{margin:0;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:var(--hi)}
+#brand h1{margin:0;font:bold 17px/1.2 Georgia,"Times New Roman",serif;color:var(--hi)}
 #brand p{margin:4px 0 0;font-size:11px;color:var(--dim)}
 /* The background switch is the only thing in the header. It is not a tool, it is
    the decision the whole figure hangs off -- paper or screen -- and every other
@@ -82,23 +83,24 @@ body{
 
 /* ---- tabs ---- */
 #tabs{
-  display:flex;flex:0 0 auto;background:var(--panel2);
+  display:flex;flex:0 0 auto;background:#d3cfc3;
   border-bottom:1px solid var(--line);
 }
 #tabs button{
-  flex:1 1 0;min-width:0;border:none;border-radius:0;background:transparent;
-  padding:9px 1px 8px;color:var(--dim);cursor:pointer;overflow:hidden;
-  font:600 9.5px/1.2 system-ui;letter-spacing:.02em;text-transform:uppercase;
-  border-bottom:2px solid transparent;transition:color .12s,border-color .12s;
+  flex:1 1 0;min-width:0;border:none;border-right:1px solid var(--line);border-radius:0;
+  background:transparent;box-shadow:none;
+  padding:8px 1px 7px;color:var(--dim);cursor:pointer;overflow:hidden;
+  font:11px/1.2 var(--ui);border-top:3px solid transparent;
 }
 #tabs button:hover{color:var(--txt)}
-#tabs button.on{color:var(--hi);background:var(--panel);border-bottom-color:var(--acc)}
+#tabs button:last-child{border-right:none}
+#tabs button.on{color:var(--hi);font-weight:bold;background:var(--panel);border-top-color:var(--acc)}
 #tabbody{
   flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;
   scrollbar-width:thin;scrollbar-color:var(--line) transparent;
 }
 #tabbody::-webkit-scrollbar{width:9px}
-#tabbody::-webkit-scrollbar-thumb{background:var(--line);border-radius:5px}
+#tabbody::-webkit-scrollbar-thumb{background:var(--line)}
 .tab{display:none;padding:4px 16px 48px}
 .tab.on{display:block}
 
@@ -106,49 +108,42 @@ body{
 .row{display:flex;align-items:center;gap:8px;margin:7px 0}
 .row>label{flex:1 1 auto;min-width:0;font-size:12px;color:var(--txt)}
 .row .val{
-  flex:0 0 auto;font:11px/1 var(--mono);color:var(--acc);
+  flex:0 0 auto;font:bold 12px/1 var(--mono);color:var(--acc);
   min-width:4.4em;text-align:right;
 }
 input[type=range]{
   -webkit-appearance:none;appearance:none;width:100%;height:16px;
   background:transparent;margin:0;display:block;cursor:pointer;
 }
-input[type=range]::-webkit-slider-runnable-track{height:3px;background:var(--line);border-radius:2px}
-input[type=range]::-moz-range-track{height:3px;background:var(--line);border-radius:2px}
+input[type=range]::-webkit-slider-runnable-track{height:4px;background:#b1ac9f;border:1px solid var(--line)}
+input[type=range]::-moz-range-track{height:4px;background:#b1ac9f;border:1px solid var(--line)}
 input[type=range]::-webkit-slider-thumb{
-  -webkit-appearance:none;width:13px;height:13px;margin-top:-5px;border-radius:50%;
-  background:var(--hi);border:none;
+  -webkit-appearance:none;width:10px;height:16px;margin-top:-7px;border-radius:1px;
+  background:#6b665a;border:1px solid #2e2b25;
 }
-input[type=range]::-moz-range-thumb{width:13px;height:13px;border-radius:50%;background:var(--hi);border:none}
-input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 3px rgba(242,193,78,.35)}
+input[type=range]::-moz-range-thumb{width:10px;height:16px;border-radius:1px;background:#6b665a;border:1px solid #2e2b25}
+input[type=range]:focus-visible::-webkit-slider-thumb{outline:2px dotted var(--acc)}
 .slider{margin:2px 0 10px}
 .slider .top{display:flex;align-items:baseline;gap:8px;margin-bottom:1px}
 .slider .top label{flex:1 1 auto;font-size:12px;color:var(--txt)}
-.slider .top .val{font:11px/1 var(--mono);color:var(--acc)}
+.slider .top .val{font:bold 12px/1 var(--mono);color:var(--acc)}
 .slider.off{opacity:.38;pointer-events:none}
 
 .chk{display:flex;align-items:center;gap:8px;margin:8px 0;cursor:pointer;font-size:12px}
-.chk input{
-  appearance:none;-webkit-appearance:none;width:30px;height:17px;border-radius:9px;
-  background:var(--line);position:relative;cursor:pointer;flex:0 0 auto;transition:background .13s;
-}
-.chk input::after{
-  content:"";position:absolute;top:2px;left:2px;width:13px;height:13px;border-radius:50%;
-  background:var(--dim);transition:transform .13s,background .13s;
-}
-.chk input:checked{background:rgba(111,178,240,.32)}
-.chk input:checked::after{transform:translateX(13px);background:var(--acc2)}
+.chk input{width:15px;height:15px;margin:0;flex:0 0 auto;cursor:pointer;accent-color:var(--acc2)}
 
 button,select,input[type=text],input[type=number],textarea{
-  font:12px/1.4 system-ui;color:var(--txt);background:var(--panel2);
-  border:1px solid var(--line);border-radius:5px;padding:6px 9px;
+  font:12px/1.4 var(--ui);color:var(--txt);background:var(--panel2);
+  border:1px solid #7d786c;border-radius:3px;padding:5px 8px;
 }
-button{cursor:pointer;transition:border-color .12s,color .12s}
-button:hover{border-color:var(--dim);color:var(--hi)}
-button.primary{background:rgba(242,193,78,.13);border-color:rgba(242,193,78,.45);color:var(--acc)}
-button.primary:hover{background:rgba(242,193,78,.2)}
+/* a slightly raised key: the darker bottom edge is all the bevel there is */
+button{cursor:pointer;background:#ebe8df;box-shadow:inset 0 -2px 0 rgba(0,0,0,.12)}
+button:hover{border-color:#3d3a33;color:var(--hi)}
+button:active{box-shadow:inset 0 2px 0 rgba(0,0,0,.12)}
+button.primary{background:#f1d8c8;border-color:var(--acc);color:#7a2c10;font-weight:bold}
+button.primary:hover{background:#ecc9b3}
 /* the selected member of a mutually-exclusive row (projection, background) */
-button.on{background:rgba(111,178,240,.16);border-color:rgba(111,178,240,.5);color:var(--acc2)}
+button.on{background:#d5e3c9;border-color:var(--acc2);color:#1f4d1f;font-weight:bold}
 select,input[type=text],input[type=number]{width:100%}
 /* A colour well, not a form control: the browser's default swatch has a fat
    inner padding that shrinks the colour to a stripe at this size. */
@@ -177,17 +172,17 @@ textarea{
 .note{font-size:11px;line-height:1.5;color:var(--dim);margin:8px 0 0}
 .note code{font:10.5px/1 var(--mono);color:var(--txt);background:var(--panel2);padding:1px 4px;border-radius:3px}
 .log{
-  font:10.5px/1.55 var(--mono);color:var(--dim);background:var(--panel2);
-  border:1px solid var(--line);border-radius:5px;padding:8px 9px;margin:8px 0 0;
+  font:11px/1.5 var(--mono);color:#3c3930;background:#fbf7df;
+  border:1px dashed #a89f76;border-radius:0;padding:7px 8px;margin:8px 0 0;
   max-height:170px;overflow-y:auto;white-space:pre-wrap;word-break:break-word;
 }
-.log .w{color:var(--acc)}
+.log .w{color:#8a5a00}
 .log .e{color:var(--bad)}
 .log .k{color:var(--ok)}
 hr.sep{border:none;border-top:1px solid var(--line);margin:14px 0 10px}
 .sub{
-  font:600 10px/1 system-ui;letter-spacing:.09em;text-transform:uppercase;
-  color:var(--dim);margin:14px 0 6px;
+  font:bold 12px/1.2 var(--ui);color:var(--txt);margin:16px 0 6px;
+  padding-bottom:2px;border-bottom:1px solid #b1ac9f;
 }
 kbd{
   font:10px/1 var(--mono);background:var(--panel2);border:1px solid var(--line);
@@ -212,7 +207,7 @@ kbd{
 /* The on-screen twin of the H key, for a screen with no keyboard. */
 #panelbtn{
   display:none;position:absolute;top:8px;right:8px;z-index:2;
-  background:rgba(21,22,28,.78);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
+  background:var(--panel2);
   padding:7px 11px;font-size:12.5px;
 }
 #app.nopanel #panel{display:none}
@@ -224,7 +219,7 @@ kbd{
 #sheetbar{
   display:none;flex:0 0 auto;width:100%;min-height:44px;border:none;border-radius:0;
   border-top:1px solid var(--line);background:var(--panel2);color:var(--txt);
-  font:600 12px/1 system-ui;letter-spacing:.06em;text-transform:uppercase;
+  font:bold 13px/1 var(--ui);
   align-items:center;justify-content:center;gap:8px;
   -webkit-tap-highlight-color:transparent;
   /* clear of the home indicator, on the phones that draw one over the page */
@@ -249,7 +244,7 @@ kbd{
   #brand h1,#brand p{display:none}
   #brand{padding:8px 14px}
   #bgquick{margin-top:0}
-  #tabs button{padding:12px 1px 11px;font-size:10.5px}
+  #tabs button{padding:11px 1px 10px;font-size:11px}
   .overlay{font-size:10px}
   #stats{right:12px}
   #hint{right:12px}
@@ -286,7 +281,7 @@ kbd{
     <div class="overlay" id="err"></div>
     <button id="panelbtn" title="show or hide the controls (H)">Controls</button>
   </div>
-  <button id="sheetbar" aria-label="show or hide the controls"><span>Impostor Viewer · controls</span><span class="chev">▾</span></button>
+  <button id="sheetbar" aria-label="show or hide the controls"><span>Impostor Viewer: controls</span><span class="chev">▾</span></button>
 
   <aside id="panel">
     <div id="brand">
