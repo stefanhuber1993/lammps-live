@@ -117,7 +117,9 @@ PLAYGROUND = Playground(
         title="A periodic sheet of 900 beads held flat by orientation-dependent interactions",
         ui=("panel", "energy", "colour", "plots", "readings"),
         claim="900 beads and no edges: a piece of bilayer that holds itself flat.",
-        instruction="Pull a bead out and let go. Then heat it and watch it flow.",
+        instruction="Drag a bead out and let go. Then press Heat and watch it flow.",
+        joystick_instruction="Pull a bead out with the stick and let go. Then "
+                             "heat it (button 5) and watch it flow.",
         hook="Every bead here was placed on a lattice. Was that necessary?",
         hero_knobs=(HEAT,),
     ),
@@ -130,6 +132,9 @@ PLAYGROUND = Playground(
         "floppy": {"k_tilt": 2.0, "k_splay": 0.1},
         "isotropic_only": {"k_tilt": 0.0, "k_splay": 0.0, "wc": 0.0},
     },
+    # The panel plots' fixed y ranges (see Playground.plot_ranges), measured
+    # over the temperature dial and with the hero knob on: P ~0 cold, ~0.01 warm, 0.05 at T = 0.5 (a spike to 0.27 as it melts); PE -3.75 per bead intact, towards 0 melted; KE up to 0.76.
+    plot_ranges={"press": (-0.05, 0.15), "energy": (-4.0, 1.0)},
     temperature=(0.0, 0.5),
     temperature_default=0.001,
     melt_temp=0.3,

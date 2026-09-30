@@ -51,10 +51,11 @@ below, and playground/pair_probe.py for the arithmetic):
   * the bond, with the separation on it, drawn solid while the pair is inside rc
     and DASHED outside it -- so "every number is zero because they cannot see each
     other" is a thing you can see rather than infer;
-  * sigma, wc and rc as rings around the FIXED partner, coloured by the term each
-    one belongs to, so the shells are visible before the bead reaches them. They
-    are drawn in the control plane, which is the plane the bead is held in, so
-    where a ring crosses the bead's path is exactly where the crossing happens;
+  * sigma as a ring around the FIXED partner, where the attraction turns into
+    the wall. It is drawn in the control plane, which is the plane the bead is
+    held in, so where the ring crosses the bead's path is exactly where the
+    crossing happens. (wc and rc used to be rings too; see
+    MesoMem.pair_landmarks for why neither is any more);
   * and the callout: one row per additive term, with its energy, the force it
     contributes along the bond, and the torque it puts on the driven bead. The two
     energy panels in the upper left are switched OFF here (see
@@ -118,7 +119,6 @@ Units are the paper's LJ-reduced units (sigma = eps = m = 1).
 """
 from ..mdsystem import ForceFeedbackProfile
 from ..playground import Control, Lesson, Playground, bead_and_partner
-from ._knobs import VDW_ONLY
 from .mesomem_patch import STYLE as PATCH_STYLE
 
 # WHERE THE PARTNER IS, which is also the pair's starting separation and also half
@@ -338,8 +338,7 @@ PLAYGROUND = Playground(
     # THE READOUT THIS SCENE EXISTS FOR: the three additive terms written between
     # the two beads, with the separation and the director angle they belong to, the
     # energy in each and the force each one is contributing along the bond -- plus
-    # sigma / wc / rc drawn as rings around the fixed partner, so the shells are
-    # visible before the bead reaches them. See playground/pair_probe.py.
+    # sigma drawn as a ring around the fixed partner. See playground/pair_probe.py.
     pair_annotation=True,
     # THE OPENING SLIDE OF THE WHOLE TALK, so the claim says what a bead IS. Every
     # scene after this one is a consequence of having thrown the lipids away and
@@ -354,17 +353,18 @@ PLAYGROUND = Playground(
     # colouring toggle either. What IS on screen is the pair annotation, which is
     # this scene's whole instrument.
     #
-    # ONE HERO KNOB, AND THIS IS THE CLEAREST PLACE IN THE DEMO FOR IT. Everywhere
-    # else "van der Waals only" is watched as a shape collapsing; here the callout
-    # is showing all three terms as numbers, so pressing it puts two of those rows
-    # at exactly zero while the reader is looking at them. The claim of the model
-    # and the arithmetic behind it, in one press, before any membrane exists to
-    # confuse it with.
+    # NO HERO KNOB. "van der Waals only" used to be here, and it is the right move
+    # made too early: on the opening slide the hands are the experiment, and a
+    # button under the scene is one more thing to look at before anyone has
+    # driven the pair once. It arrives on the next scene, with a callout saying
+    # what the row of buttons is (see ui/disclosure.py, "hero").
     lesson=Lesson(
         title="Two coarse-grained membrane beads: attraction, tilt and splay between one pair",
         ui=(),
         claim="Each bead is a patch of lipid membrane. The arrow is the way it faces.",
-        instruction="Drive the beads together and read the three terms between them.",
+        instruction="Drag the bead toward its partner and read the three terms.",
+        joystick_instruction="Steer the bead toward its partner with the stick "
+                             "and read the three terms.",
         hook="That was one pair. What do six neighbours do?",
         everyday_params=(),
         plots=False,
@@ -377,7 +377,6 @@ PLAYGROUND = Playground(
         # temperature of two particles) or already written between the beads
         # by the pair annotation, in the units this scene is about.
         panel_readouts=False,
-        hero_knobs=(VDW_ONLY,),
     ),
     presets={"paper": {}},
     temperature=(0.0, 0.5),

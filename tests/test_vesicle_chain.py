@@ -205,9 +205,14 @@ def test_the_hero_knob_toggles_k_bend_between_its_two_extremes(shipped):
     stiff = knob.params["k_bend"]
     # It starts floppy, and the knob is the way to the other end.
     ff = forcefield.get(shipped.force_field)()
-    assert ff.new_params(shipped.resolved_params(None))["k_bend"] == 0.0
-    assert stiff >= 10.0
+    assert ff.new_params(shipped.resolved_params(None))["k_bend"] == 1.0
+    # Stiff enough to press the envelope out (10 did nothing visible), cooled so
+    # the membrane survives it, and ramped because a jump breaks a bond.
+    assert stiff >= 100.0
     assert f"{stiff:.0f}" in knob.caption
+    assert knob.temperature is not None and knob.temperature < shipped.temperature_default
+    assert f"{knob.temperature:.2f}" in knob.caption
+    assert knob.ramp_time >= 5.0
     # A live dial, and its slider reaches the knob's value.
     spec = make_spec(shipped, shipped.mode)
     sliders = {s.key: s for s in spec.extra_sliders}
@@ -254,25 +259,31 @@ def test_the_deck_creates_one_closed_chain(small_system):
     # A closed chain of L beads has L bonds and L angles: no free end.
     assert small_system.lmp.extract_global("nbonds") == n_chain
     assert small_system.lmp.extract_global("nangles") == n_chain
-    assert small_system.params["k_bend"] == 0.0
+    assert small_system.params["k_bend"] == 1.0
 
 
 def test_it_runs_floppy_then_stiff_without_blowing_up(small_system):
-    """The hero knob's move, done to a running system: from 0 straight to the
-    stiff value with every right-angle corner of the curve loaded, and then on to
-    the slider's end for margin."""
-    from lammps_live.playgrounds.mesomem_vesicle_chain import STIFF_K_BEND
+    """The hero knob's move, done to a running system the way the app does it:
+    cooled, and k_bend ramped from 0 to the stiff value over the knob's ramp_time
+    with every right-angle corner of the curve loaded, then held."""
+    from lammps_live.playgrounds.mesomem_vesicle_chain import STIFF_CHAIN
 
     small_system.step(1000)
     assert _chain_bonds(small_system).max() < 1.5
-    for k_bend in (STIFF_K_BEND, 20.0):
-        small_system.set_extra_param("k_bend", k_bend)
-        small_system.step(1000)
-        state = small_system.frame_state()
-        assert np.isfinite(state.positions).all()
-        assert _chain_bonds(small_system).max() < 1.5, k_bend
-        assert 0.0 < small_system.get_thermo_state()[0] < 1.5
-    small_system.set_extra_param("k_bend", 0.0)
+    small_system.set_target_temp(STIFF_CHAIN.temperature)
+    stiff = STIFF_CHAIN.params["k_bend"]
+    n_ramp = round(STIFF_CHAIN.ramp_time / 0.005)
+    for i in range(1, 41):
+        small_system.set_extra_param("k_bend", 1.0 + (stiff - 1.0) * i / 40)
+        small_system.step(n_ramp // 40)
+        assert _chain_bonds(small_system).max() < 1.5, i
+    small_system.step(1000)
+    state = small_system.frame_state()
+    assert np.isfinite(state.positions).all()
+    assert _chain_bonds(small_system).max() < 1.5
+    assert 0.0 < small_system.get_thermo_state()[0] < 1.5
+    small_system.set_extra_param("k_bend", 1.0)
+    small_system.set_target_temp(0.2)
 
 
 def test_the_observables_make_sense_for_one_chain(small_system):
@@ -283,3 +294,57 @@ def test_the_observables_make_sense_for_one_chain(small_system):
     assert values["radius"] == pytest.approx(scenario.radius(params), rel=0.15)
     assert 0.2 * values["radius"] < values["gyration"] < 0.9 * values["radius"]
     assert values["contact"] >= 0.0
+
+
+# --- the chain on its own energy scale -----------------------------------------
+
+def test_the_bending_energy_of_a_moore_curve_is_its_corners():
+    """k_bend (1 + cos theta) at every bead: 0 on a straight run, k_bend at a
+    right-angle corner -- and a lattice curve has nothing else."""
+    from lammps_live.forcefields.mesomem_polymer import MesoMemPolymer
+
+    ff = MesoMemPolymer()
+    walk = moore_curve(2).astype(float)
+    e = ff.bonded_bead_energies(walk, [len(walk)], {"k_bend": 7.0})
+    assert set(np.round(e, 9)) <= {0.0, 7.0}
+    assert np.isclose(e, 7.0).sum() > len(walk) // 3, "a Moore curve folds"
+    assert ff.bonded_bead_energies(walk, [len(walk)], {"k_bend": 0.0}).max() == 0.0
+
+
+def test_the_style_puts_the_chain_on_its_own_scale(shipped):
+    """The energy colouring paints the chain's bending, not its binding, and says
+    where: a second range on the style, and the chain beads are the tinted ones."""
+    lo, hi = shipped.render_style.tint_energy_range
+    assert lo == 0.0 < hi
+    scenario, params = _built()[:2]
+    tints = scenario.render_tints(params)
+    start, loops = scenario.bonded_loops(params)
+    assert (tints[:start, 3] <= 0.5).all()
+    assert (tints[start:start + sum(loops), 3] > 0.5).all()
+
+
+def test_the_energy_colouring_carries_the_chains_bending(small_system):
+    """The membrane keeps its pair energy; each chain bead carries the bending
+    energy of the angle centred on it, recomputed from positions -- so it is the
+    same number the remote client derives from the frame it was sent."""
+    from lammps_live.playground.forcefield import with_bonded_energies
+
+    small_system.set_extra_param("k_bend", 5.0)
+    small_system.step(10)
+    state = small_system.frame_state()
+    chain = np.asarray(state.types) == 2
+    got = small_system.get_bead_energies()
+    params = small_system.scenario_params
+    start, loops = small_system.scenario.bonded_loops(params)
+    want = small_system.force_field.bonded_bead_energies(
+        state.positions[start:], loops, small_system.params)
+    if small_system._smoothing_tau <= 0.0:
+        assert got[chain] == pytest.approx(want)
+    assert 0.0 <= got[chain].min() and got[chain].max() <= 2 * 5.0 + 1e-9
+    assert got[~chain].max() < 1.0, "the membrane is still on its binding scale"
+    # The helper leaves a system without chains alone.
+    plain = np.arange(4.0)
+    assert with_bonded_energies(small_system.force_field,
+                                registry.load("mesomem_sheet").scenario, None,
+                                small_system.params, np.zeros((4, 3)), plain) is plain
+    small_system.set_extra_param("k_bend", 1.0)

@@ -185,6 +185,22 @@ ROD_RADIUS = 1.5
 # would be yanked down to the limit on the first frame. tests/test_rod_wrapping.py
 # pins both, via RodOnSheet.verify_reach.
 ROD_HEIGHT = 3.5
+# See `view_target_z` in the scenario below.
+VIEW_TARGET_Z = 3.5
+
+# eps_rod, the dial a wrap is a contest about. The scene opens at 1, where the
+# rod has to be pushed in; at the reference deck's 3 the membrane pulls it in on
+# its own. Measured on the shipped scene (T = 0.2, pushed down for 2 tau at a
+# force of 10, then no drive for 36 tau):
+#
+#     eps_rod   rod centre above the sheet   beads touching it
+#       1.0              +0.2                       82
+#       3.0              -0.7                      208
+#
+# It was briefly a hero knob ("Sticky rod"), and taken off again on the user's
+# call: this scene already has the stick, the twist and the lever, and the dial
+# stays on the panel for whoever wants to show it.
+LOOSE_EPS = 1.0
 # THE NET, and therefore three other numbers. Twice what it was (7, 5) -- see the
 # leash comment below for why -- and written here because the container has to hold
 # it, the camera has to frame it, and the Control has to declare it, and those three
@@ -375,6 +391,13 @@ PLAYGROUND = Playground(
         # foreshortening away. Push the thrust lever to get the profile back.
         # See RodOnSheet.camera.
         view_elevation_deg=24.0,
+        # LOOK A LITTLE HIGHER than the leash's centre. The leash is centred on the
+        # origin but the membrane sits at plane_z = 5 above it, so aimed at 0 the
+        # sheet and the rod rode up into the top third of the frame -- under the
+        # title and the energy panels. Aiming part of the way up to the sheet
+        # brings them down toward the middle; not all the way, or the bottom of
+        # the net (the rod's deepest reach) leaves the picture.
+        view_target_z=VIEW_TARGET_Z,
         # And frame the WHOLE net vertically, not just the rod's clearance. The
         # default here is `rod_height + 1.5`, which was the travel back when the
         # leash was 5; with the leash at 10 it would put the bottom half of the
@@ -450,7 +473,8 @@ PLAYGROUND = Playground(
     # eps_rod starts at 1, not the reference deck's 3: at 1 the rod rests on the
     # membrane and has to be PRESSED in, so the wrap is something the hand does and
     # watches happen, rather than something that snaps shut on first contact.
-    params={"rod_length": ROD_LENGTH, "rod_radius": ROD_RADIUS, "eps_rod": 1.0},
+    params={"rod_length": ROD_LENGTH, "rod_radius": ROD_RADIUS,
+            "eps_rod": LOOSE_EPS},
     param_ranges={
         # The wrapping transition is the thing worth finding, and it sits well
         # below the membrane's own default stiffness -- a floppy membrane wraps a
@@ -463,12 +487,15 @@ PLAYGROUND = Playground(
     #
     # NO HERO KNOB, AND IT STARTS WARM. A wrap is the membrane FLOWING around the
     # rod, and a cold membrane deforms like a sheet of foil instead -- so rather
-    # than a Heat button the scene simply opens at the sheet's warm T = 0.2.
+    # than a Heat button the scene simply opens at the sheet's warm T = 0.2. And
+    # there is enough to do with the hands here already (see LOOSE_EPS above).
     lesson=Lesson(
         title="A fluid membrane adhering to and wrapping a rod-shaped particle, as in endocytosis",
-        ui=("panel", "energy", "colour", "plots", "readings", "status"),
+        ui=("panel", "energy", "colour", "plots", "readings", "status", "slice"),
         claim="The membrane sticks to the rod and bends around it. Cells eat this way.",
-        instruction="Steer the rod into the sheet. Cut it open with the lever to look.",
+        instruction="Drag the rod down into the sheet and let the membrane close round it.",
+        joystick_instruction="Steer the rod into the sheet with the stick. Slice "
+                             "it open with the lever to look.",
         hook="Three thousand beads on a laptop. Does it hold at ten times that?",
     ),
     presets={
@@ -500,6 +527,9 @@ PLAYGROUND = Playground(
         # the wrapping literature usually treats.
         "stubby": {"rod_length": 1.5},
     },
+    # The panel plots' fixed y ranges (see Playground.plot_ranges), measured
+    # over the temperature dial and with the hero knob on: P 0.003, 0.02 at T = 0.5 (spikes to 0.055); PE -3.0 per bead, toward 0 at T = 0.5; KE up to 0.75.
+    plot_ranges={"press": (-0.05, 0.1), "energy": (-4.0, 1.0)},
     temperature=(0.0, 0.5),
     temperature_default=0.2,
     melt_temp=0.3,

@@ -208,10 +208,11 @@ PLAYGROUND = Playground(
     # line follows, where a hardcoded "55k" would quietly start lying.
     lesson=Lesson(
         title="A closed membrane vesicle enclosing a dense melt of ring polymers",
-        ui=("panel", "energy", "colour", "plots", "readings", "status", "snellius"),
+        ui=("panel", "energy", "colour", "plots", "readings", "status", "snellius", "slice"),
         claim=f"{_k(N_MEMBRANE_RUN)} of membrane closed around "
               f"{_k(N_POLYMER_RUN)} of polymer. Still the same three terms.",
-        instruction="Cut the vesicle open with the lever to see inside it.",
+        instruction="Drag to orbit round the vesicle.",
+        joystick_instruction="Slice the vesicle open with the lever to see inside it.",
     ),
     presets={
         # The collaborator's deck: k_bend 2, the paper's membrane moduli.
@@ -232,6 +233,8 @@ PLAYGROUND = Playground(
     # here (see the force field's docstring), at the membrane's temperature: it is
     # the one whose physics is temperature-sensitive, and a melt at 0.2 in reduced
     # units is a melt, not a frozen chain.
+    # The panel plots' fixed y ranges (see Playground.plot_ranges), not measured: the same membrane-to-chain ratio as mesomem_vesicle_chain, so the same ranges.
+    plot_ranges={"press": (-0.02, 0.06), "energy": (0.0, 16.0)},
     temperature=(0.0, 0.5),
     temperature_default=0.2,
     melt_temp=0.3,

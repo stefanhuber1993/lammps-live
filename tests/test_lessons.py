@@ -225,26 +225,27 @@ def test_the_hero_knobs_are_where_the_move_is_worth_making():
     """One or none per scene, and each on a scene where its move is the obvious
     thing to do next.
 
-    "van der Waals only" is on the three scenes where taking the orientation away
-    shows something: the two-bead pair, where two of the three rows in the callout
-    go to exactly zero while the reader is looking at the numbers; the seven-bead
-    patches (force and torque alike -- they are meant to read as identical, and a
-    button on only one of them is a difference the eye has to rule out); and the
-    assembly box, which has just built a sheet out of nothing. "Heat" is on the
-    sheet; the rod scene simply starts warm instead. The 50k assembly box has none
-    because the one thing to do there is watch; the vesicle's one move is
-    stiffening its single chain, "Stiff chain".
+    None on the two-bead pair: the opening slide's hands are the experiment, and
+    the row of buttons arrives on the next scene with a callout of its own. "van
+    der Waals only" is on the seven-bead patches (force and torque alike -- they
+    are meant to read as identical, and a button on only one of them is a
+    difference the eye has to rule out) and the assembly box, which has just built
+    a sheet out of nothing. "Heat" is on the sheet. The rod scene has none (the
+    hands are busy enough there); the 50k assembly box's is spontaneous curvature,
+    "Make the membrane curve", which closes its sheets; the vesicle's is
+    stiffening its single chain, "Make the polymer stiff". Labels are verbs, so
+    an unlit button says what pressing it does.
     """
     knobs = {key: [k.label for k in pg.lesson.hero_knobs] for key, pg in _offered()}
     assert knobs == {
-        "mesomem_bead": ["van der Waals only"],
+        "mesomem_bead": [],
         "mesomem_patch": ["van der Waals only"],
         "mesomem_patch_torque": ["van der Waals only"],
         "mesomem_sheet": ["Heat"],
         "mesomem_assembly": ["van der Waals only"],
         "mesomem_rod": [],
-        "mesomem_remote": [],
-        "mesomem_vesicle_chain": ["Stiff chain"],
+        "mesomem_remote": ["Make the membrane curve"],
+        "mesomem_vesicle_chain": ["Make the polymer stiff"],
     }, knobs
 
 
@@ -284,6 +285,10 @@ def test_the_temperature_a_heat_knob_asks_for_is_reachable_and_below_melting():
                 continue
             assert spec.temperature.vmin <= knob.temperature <= spec.temperature.vmax
             assert knob.temperature < spec.melt_temp, key
+            if knob.temperature < spec.temperature.default:
+                # A knob that COOLS as part of its move (the vesicle's stiff chain,
+                # which the membrane survives only colder) is not a heat knob.
+                continue
             assert knob.temperature > spec.temperature.default * 10, (
                 f"{key}: heating to {knob.temperature} is not a change from "
                 f"{spec.temperature.default}")
@@ -293,9 +298,12 @@ def test_removing_orientation_is_the_isotropic_only_preset_by_another_route():
     """One definition of what "isotropic only" means, not two: the preset is a
     place to start and the knob is a place to visit and come back from, and they
     have to agree about what is being removed."""
+    from lammps_live.playgrounds._knobs import VDW_ONLY
     for key, pg in _offered():
         for knob in pg.lesson.hero_knobs:
-            if not knob.params or "isotropic_only" not in pg.presets:
+            # The van der Waals knob only: another scene's parameter knob (the
+            # 50k box's curvature) has nothing to do with the preset.
+            if knob is not VDW_ONLY or "isotropic_only" not in pg.presets:
                 continue
             preset = pg.presets["isotropic_only"]
             assert knob.params == preset, key
@@ -464,7 +472,7 @@ def test_a_playgrounds_own_parameter_values_reach_its_sliders():
     own value undid that value on the first frame."""
     from lammps_live.playground.system import make_spec
     for key, name, value in (("mesomem_rod", "eps_rod", 1.0),
-                             ("mesomem_vesicle_chain", "k_bend", 0.0)):
+                             ("mesomem_vesicle_chain", "k_bend", 1.0)):
         pg = registry.load(key)
         spec = make_spec(pg, pg.mode)
         default = {s.key: s.default for s in spec.extra_sliders}[name]

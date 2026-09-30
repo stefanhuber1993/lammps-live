@@ -107,6 +107,8 @@ PLAYGROUND = Playground(
         ui=("panel", "energy"),
         claim="Pull one bead out of the patch and its neighbours lean to follow.",
         instruction="Drag the middle bead out of the plane, then let go of it.",
+        joystick_instruction="Pull the middle bead out of the plane with the "
+                             "stick, then let go.",
         hook="You pushed it. What happens if you only turn it?",
         everyday_params=("k_tilt", "k_splay"),
         plots=False,
@@ -132,6 +134,9 @@ PLAYGROUND = Playground(
     },
     # Cold -> rigid flat patch; hot -> directors disorder and the patch frays. The
     # default starts near-frozen so the first thing you see is the geometry.
+    # The panel plots' fixed y ranges (see Playground.plot_ranges), measured
+    # over the temperature dial and with the hero knob on: 7 beads: P at rest ~0.005, 0.04 at T = 0.5 with spikes to 0.13; PE -1.77 per bead, -2.45 with van der Waals only, near 0 once T = 0.5 shakes it apart; KE up to 0.65.
+    plot_ranges={"press": (-0.1, 0.2), "energy": (-3.0, 1.0)},
     temperature=(0.0, 0.5),
     temperature_default=0.001,
     melt_temp=0.3,

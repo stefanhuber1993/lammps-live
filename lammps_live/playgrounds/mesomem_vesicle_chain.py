@@ -22,16 +22,20 @@ monolayer is opaque, and from outside this is a sphere of beads.
 THE HERO KNOB is the chain's stiffness, and it is a toggle between two extremes
 rather than a nudge off the reference:
 
-  * FLOPPY, k_bend = 0, is where the scene starts. An ideal flexible chain with
-    only excluded volume: it spreads through the lumen but keeps its crumpled,
-    domain-by-domain structure for a long time, which is the picture the rainbow
-    is for. It is also the only gentle place to START a Moore curve: every one of
-    its thousands of right-angle corners costs k_bend in `angle_style cosine`,
-    and a stiff chain built on it begins with all of that energy at once.
-  * STIFF, k_bend = STIFF_K_BEND below. `angle_style cosine` makes k_bend / kT
-    the persistence length in bonds, so at the scene's T = 0.2 that is 50 bonds:
-    straight on the scale of the vesicle's radius. The corners unfold, the colour
-    domains are drawn out into long strands, and the chain presses the envelope.
+  * FLEXIBLE, k_bend = 1, is where the scene starts: persistence of five bonds
+    at T = 0.2, a flexible chain that is still a chain rather than an ideal
+    random walk (it was 0 until 2026-09-30; the user's call). It spreads
+    through the lumen but keeps its crumpled, domain-by-domain structure for a
+    long time, which is the picture the rainbow is for. It is also a gentle
+    place to START a Moore curve: every one of its thousands of right-angle
+    corners costs k_bend in `angle_style cosine`, 1 eps each here -- five kT,
+    which the thermostat takes away in the first few tau -- where a stiff chain
+    built on it begins with two hundred times that at once.
+  * STIFF, k_bend = STIFF_K_BEND below, with the bath cooled to STIFF_T. The
+    chain becomes a tangle of wire that wants to be far bigger than its
+    container and presses the envelope out from inside: the vesicle swells and
+    goes lumpy and faceted where loops of chain push on it. See the numbers at
+    STIFF_K_BEND for why it is exactly this far and no further.
 
 k_tilt and eps_poly are the other two dials, as on `mesomem_polymer`: how much
 bending the envelope tolerates, and how hard the (never sticky) contact is.
@@ -86,6 +90,15 @@ STYLE = DEFAULT_STYLE.varied(
     ao_strength=5.83,
     outline_strength=12.0,
     outline_edge_fraction=0.90,
+    # THE CHAIN ON ITS OWN ENERGY SCALE, in the energy colouring: each chain bead
+    # carries its BENDING energy k_bend (1 + cos theta) on theme.BEND_RAMP (blue
+    # to mint), while the membrane keeps its binding energy on INFERNO. 0..1 eps
+    # is 0 to ten kT at the stiff knob's T = 0.1: a thermally relaxed stiff chain
+    # sits in the bottom tenth, and what lights up is the bending that has not
+    # relaxed yet -- every corner of the Moore curve at once, the moment the knob
+    # is pressed, then fading as the chain straightens. Flexible (k_bend 1) its
+    # thermal bends sit around kT = 0.2 on this scale: dark, faintly speckled.
+    tint_energy_range=(0.0, 1.0),
 ).on_light()
 
 # The two sizes. The membrane's is a REQUEST (an icosphere only comes in
@@ -132,15 +145,20 @@ SCENARIO = vesicle_chain(
     # count: holding the vesicle at the ~35 sigma this demo is framed for
     # takes 23,120 beads at 0.70 where it took 18,000 at 0.80. See N_MEMBRANE.
     a=0.70,
-    # Just enough vacuum around the vesicle that it can bulge, and that the
-    # outline reads as a container rather than as a tight shrink-wrap.
-    box_factor=1.12,
+    # ROOM FOR IT TO GO WRONG. 1.12 (mesomem_polymer's) was just enough vacuum
+    # for the vesicle to bulge; held stiff long enough it tears open and the
+    # chain spills out (see STIFF_K_BEND), and in a cell that tight the spill
+    # met the walls at once. 1.6 leaves ~21 sigma on every side -- the chain
+    # has somewhere to come out INTO, which is the thing worth watching. The
+    # camera still frames the vesicle, not the cell (see VesicleChain.fit_points).
+    box_factor=1.6,
     settle_steps=400,
     # 10 steps a frame. The membrane's own stability sets the ceiling on the
     # step size and the chains do not lower it -- FENE at these constants is
     # stable well past 0.005 -- so this is the sheet playgrounds' number. The
-    # stiff chain does not lower it either: at STIFF_K_BEND a bond angle's own
-    # period is a couple of hundred steps (checked, see tests/test_vesicle_chain).
+    # stiff chain does not lower it either, once ramped in: at STIFF_K_BEND no bond
+    # passed 1.05 sigma over 40 tau of the full system (see tests/test_vesicle_chain
+    # for the miniature). Jumped to, it breaks one -- that is energy, not the step.
     timestep=0.005,
     sim_time_per_frame=0.05,
 )
@@ -153,23 +171,62 @@ N_MEMBRANE_RUN = SCENARIO.subdivision(_SP)[1]
 N_POLYMER_RUN = SCENARIO.particle_count(_SP) - N_MEMBRANE_RUN
 N_TOTAL_RUN = N_MEMBRANE_RUN + N_POLYMER_RUN
 
-# THE STIFF END OF THE HERO KNOB. angle_style cosine is E = k (1 + cos theta), so
-# k_bend / kT is the persistence length in bond lengths: 10 at the scene's T = 0.2
-# is 50 bonds, which is straight on the scale of a 35 sigma vesicle -- the far
-# extreme from 0 without leaving the force field's own slider (0..20). Stable at
-# the 0.005 step with room to spare: the stiffest bending mode's period is a couple
-# of hundred steps, and a reduced system switched from 0 to 20 mid-run keeps every
-# bond intact (see tests/test_vesicle_chain.py).
-FLOPPY_K_BEND = 0.0
-STIFF_K_BEND = 10.0
+# THE STIFF END OF THE HERO KNOB, found by running the shipped system (56k beads,
+# ramped in over 10 tau from floppy, then 40 tau held) and looking at it. k_bend 10,
+# the old value, is a persistence length of 50 bonds and does nothing you can see:
+# the radius moves by a tenth of a percent. The envelope only answers once the
+# chain is stiff on the scale of the whole lumen, and past that the answer is not
+# a bigger shape change but a torn membrane:
+#
+#     k_bend   T      R grows   surface       what you see
+#       10    0.20     +0.1%    intact        nothing
+#      100    0.20     +2.5%    intact        lumpy, faceted
+#      200    0.20     +6%      one pore      a loop herniates through it
+#      300    0.20     +9%      pores         chain spilling out of a dozen
+#      200    0.10     +4%      intact        swollen, faceted -- THIS
+#      250    0.10     +5%      pores         the first herniations
+#
+# HELD, IT STILL GIVES WAY EVENTUALLY. The 200/0.10 run carried on to 150 tau keeps
+# swelling (+7.5%), starts to stretch out of round, and at about 125 tau -- some 80
+# seconds at the demo's rate -- opens ONE large pore that the chain bulges out of.
+# So it is a move to make and take back within a minute; left on, it ends in a
+# rupture rather than a blow-up, which the Reset button undoes.
+#
+# The membrane gives out before the chain does because a vesicle's area is fixed:
+# pressure from inside can only STRETCH it, and a stretched monolayer opens pores
+# (the same failure the spacing comment above is about). Cooling it is what buys
+# the extra stiffness: pores are thermally activated, the chain's push is not. The
+# other membrane dials were tried and are worse -- k_tilt down to 5 dissolves the
+# envelope, up to 25 still tears at 300, and zeta 2-3 holds it together as one
+# sheet but opens holes the size of the chain's loops.
+#
+# IT HAS TO BE RAMPED. Switched on in one step, k_bend 200 loads every corner of
+# the curve at once, heats the system fivefold and breaks a FENE bond within a few
+# hundred steps; reached over RAMP_TAU the thermostat takes the heat as it
+# arrives. HeroKnob.ramp_time does that in simulation time.
+FLOPPY_K_BEND = 1.0
+STIFF_K_BEND = 200.0
+STIFF_T = 0.1
+RAMP_TAU = 10.0
 _T = 0.2
 
+# NAMED FOR THE MATERIAL, not the move: "Stiff chain" said what the button did
+# to a parameter, where the audience's word is "polymer", and "stiff polymer" is
+# the thing they can compare with something they know (DNA is one; a cooked
+# noodle is not). The caption then says what stiffness COSTS -- bending energy --
+# in the numbers the energy colouring paints on the chain.
+#
+# AND A VERB ON THE BUTTON, like every knob now: "Stiff polymer chain" could not
+# say whether the chain already was, or would be once pressed.
 STIFF_CHAIN = HeroKnob(
-    label="Stiff chain",
-    engaged_label="Floppy chain",
-    caption=f"k_bend = {STIFF_K_BEND:.0f}, up from {FLOPPY_K_BEND:.0f}. Persistence "
-            f"length {STIFF_K_BEND / _T:.0f} bonds at T = {_T:.2f}.",
+    label="Make the polymer stiff",
+    engaged_label="Make it flexible again",
+    caption=f"Bending now costs energy: k_bend = {STIFF_K_BEND:.0f}, up from "
+            f"{FLOPPY_K_BEND:.0f}, at T = {STIFF_T:.2f}. The chain straightens "
+            f"and presses the vesicle out.",
     params={"k_bend": STIFF_K_BEND},
+    temperature=STIFF_T,
+    ramp_time=RAMP_TAU,
 )
 
 
@@ -192,7 +249,7 @@ PLAYGROUND = Playground(
     # k_bend starts at the floppy end (see the module docstring for why that is
     # the end to start at), and its slider must reach the stiff one.
     params={"k_bend": FLOPPY_K_BEND},
-    param_ranges={"k_splay": (0.0, 5.0), "k_bend": (0.0, 20.0)},
+    param_ranges={"k_splay": (0.0, 5.0), "k_bend": (0.0, STIFF_K_BEND)},
     # THE LAST SLIDE, AND IT CLOSES THE FIRST ONE: the two-bead scene opens by
     # saying a bead is a patch of membrane and all we kept of it was the way it
     # faces, and this is where that turns out to have been enough to close a
@@ -210,20 +267,23 @@ PLAYGROUND = Playground(
     lesson=Lesson(
         title="Closed membrane vesicle enclosing one continuous space-filling "
               "polymer chain",
-        ui=("panel", "energy", "colour", "plots", "readings", "status", "snellius"),
+        ui=("panel", "energy", "colour", "plots", "readings", "status", "snellius", "slice"),
         claim=f"{_k(N_MEMBRANE_RUN)} membrane beads around one "
               f"{_k(N_POLYMER_RUN)}-bead chain. Still the same three terms.",
-        instruction="Stiffen the chain, and cut the vesicle open to see inside.",
+        instruction="Stiffen the chain with the button below, and drag to orbit.",
+        joystick_instruction="Stiffen the chain (button 5), and slice the vesicle "
+                             "open with the lever.",
         hero_knobs=(STIFF_CHAIN,),
     ),
     presets={
-        # Where the scene starts: a flexible chain, k_bend 0.
+        # Where the scene starts: a flexible chain, k_bend 1.
         "floppy_chain": {},
         # The collaborator's deck, k_bend 2 -- the semi-flexible middle.
         "reference": {"k_bend": 2.0},
-        # The hero knob's other end, as a place to START -- a harsh one, since
-        # every corner of the Moore curve begins loaded.
-        "stiff_chain": {"k_bend": STIFF_K_BEND},
+        # A stiff chain as a place to START -- a harsh one, since every corner of
+        # the Moore curve begins loaded. NOT the hero knob's value: 200 from a
+        # standing start breaks a bond (see STIFF_K_BEND); 10 is survivable.
+        "stiff_chain": {"k_bend": 10.0},
         # A floppy envelope against the same chain: the membrane is what gives.
         "soft_envelope": {"k_tilt": 4.0},
         # The chain pushed hard against a membrane that will not bend.
@@ -233,6 +293,8 @@ PLAYGROUND = Playground(
     # here (see the force field's docstring), at the membrane's temperature: it is
     # the one whose physics is temperature-sensitive, and a chain at 0.2 in reduced
     # units is a flexible chain, not a frozen one.
+    # The panel plots' fixed y ranges (see Playground.plot_ranges), measured on the full 56k system: P 0.005, 0.02 at T = 0.5, 0.02-0.05 stiffened; PE per bead +10.8 (positive: every chain bead holds a stretched FENE bond, about +18), to 12 at T = 0.5 and 13.6-15.7 while the stiff chain ramps in; KE 0.2-0.8 along the bottom.
+    plot_ranges={"press": (-0.02, 0.06), "energy": (0.0, 16.0)},
     temperature=(0.0, 0.5),
     temperature_default=_T,
     melt_temp=0.3,
@@ -243,7 +305,11 @@ PLAYGROUND = Playground(
     # Nothing is steered and the subject is a closed 3D object, so the camera
     # turns: drag to orbit, wheel to dolly, C to hand it back. Slower than the
     # assembly box's, so a sliced section can be followed round as it turns.
-    camera_orbit=CameraOrbit(autostart=True, speed=0.10),
+    #
+    # dist_max 4 rather than the default 1.5: the framing is the vesicle, and
+    # pulling back far enough to see the whole (now larger) cell, and whatever
+    # has escaped into it, takes more than the default's half again.
+    camera_orbit=CameraOrbit(autostart=True, speed=0.10, dist_max=4.0),
     # As mesomem_remote: the energy panels are a pass over every pair and their
     # aggregate barely moves between frames, so halving their cadence is free.
     analysis_energy_every=8,

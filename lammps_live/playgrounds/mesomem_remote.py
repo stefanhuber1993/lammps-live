@@ -45,7 +45,7 @@ the renderer while offline -- run the server on this machine:
 """
 import math
 
-from ..playground import Lesson, Playground, random_fill
+from ..playground import HeroKnob, Lesson, Playground, random_fill
 from ..remote import RemoteTarget
 from .mesomem_assembly import STYLE
 from ..render_style import CameraOrbit
@@ -72,6 +72,45 @@ STYLE = STYLE.varied(
     dof_bokeh_px=2.0,
 )
 
+# THE HERO KNOB: SPONTANEOUS CURVATURE -- the pair style's own c0, which the
+# model has always carried and this app kept at 0. With it on, every bonded pair
+# prefers to be bent by sin(alpha/2) = r c0 / 2 instead of lying flat: the
+# membrane now WANTS to be a sphere of radius 1/c0. That is the question the
+# scene's hook asks ("this sheet has no edges, but it is not closed -- what if it
+# closes?"), answered with the same beads rather than a new scene, and it is the
+# honest reason the next scene has a vesicle in it: a real bilayer closes because
+# its two leaflets are not the same, and c0 is that asymmetry in one number.
+#
+# Not van der Waals only, deliberately: that move is made on the sheet-forming
+# box two scenes earlier, and repeating it here would teach nothing new.
+#
+# MEASURED on a 6,000-bead version of this box (same phi, T, timestep and
+# nudges), switched on once the sheets had formed at 200 tau, classifying every
+# aggregate of 100+ beads by its gyration tensor:
+#
+#     c0      200 tau later
+#     0       flat sheets only (9 flat, 1 slightly curved)
+#     0.15    mostly cups (11 curved, 1 closed)
+#     0.20    no flat ones left: 5 closed vesicles, 2 cups   <- THIS
+#     0.25    fewer aggregates at all -- the curvature starts to dissolve them
+#
+# and at 0.3 from the start nothing assembles at all. So it is a move to make
+# AFTER the sheets are there, which is how the demo is watched anyway. At this
+# wire's 0.2 tau a frame, 200 tau is under a minute, and the curling shows well
+# before that.
+CURVED_C0 = 0.20
+
+# THE LABELS ARE VERBS, because a button that names a state ("Curved
+# membrane") cannot say whether that state is what you HAVE or what you GET by
+# pressing. Unlit it says what pressing does; lit, the way back.
+CURVED = HeroKnob(
+    label="Make the membrane curve",
+    engaged_label="Make it flat again",
+    caption=f"c0 = {CURVED_C0:.2f}, was 0: the beads now prefer a curve of "
+            f"radius {1.0 / CURVED_C0:.0f} sigma. The sheets roll up and close.",
+    params={"c0": CURVED_C0},
+)
+
 PLAYGROUND = Playground(
     name="MesoMem self-assembly, remote GPU (3D)",
     description=f"{N_BEADS:,} beads assembling on a cluster A100, drawn here. "
@@ -94,15 +133,23 @@ PLAYGROUND = Playground(
     # that it is happening now. The connect panel already says everything about the
     # machinery, to the person driving, at the moment it matters.
     #
-    # No hero knob: the one thing to do here is watch it, and a button that changed
-    # the physics of a run somebody is waiting on a queue for is a button pressed
-    # by accident.
+    # ONE HERO KNOB (see CURVED above), which used to be none: the thinking was
+    # that a physics-changing button on a run somebody queued for is a button
+    # pressed by accident. But it is a toggle, it changes one coefficient and no
+    # structure, and it is the one move that turns this scene from "bigger" into
+    # a new idea -- so it earns the risk.
     lesson=Lesson(
         title=f"Self-assembly of {N_BEADS:,} membrane beads, computed live on a cluster GPU",
-        ui=("panel", "energy", "colour", "plots", "readings", "status", "snellius"),
+        ui=("panel", "energy", "colour", "plots", "readings", "status", "snellius", "slice"),
         claim="Fifty thousand beads on a cluster GPU, computed there and drawn here.",
         instruction="Drag to orbit. This is running now, not a recording.",
+        joystick_instruction="Fly round it with the stick. This is running now, "
+                             "not a recording.",
         hook="This sheet has no edges, but it is not closed. What if it closes?",
+        hero_knobs=(CURVED,),
+        # And the dial itself, next to k_tilt: the knob is the move, the slider
+        # is how far to take it (0.15 gives cups, 0.20 closed vesicles).
+        promoted_params=("c0",),
     ),
     presets={
         "paper": {},
@@ -110,6 +157,9 @@ PLAYGROUND = Playground(
         "strongly_planar": {"k_tilt": 30.0},
         "isotropic_only": {"k_tilt": 0.0, "k_splay": 0.0, "wc": 0.0},
     },
+    # The panel plots' fixed y ranges (see Playground.plot_ranges), measured
+    # over the temperature dial and with the hero knob on: measured on a 6,000-bead copy at the same phi: P 0.01, 0.04 at T = 0.5, and the curvature knob does not move it; PE from 0 toward -3.5 as it assembles.
+    plot_ranges={"press": (-0.02, 0.06), "energy": (-4.0, 1.0)},
     temperature=(0.0, 0.5),
     temperature_default=0.2,
     melt_temp=0.3,

@@ -120,7 +120,9 @@ PLAYGROUND = Playground(
         title="A seven-bead membrane patch answering a torque that turns one bead's orientation",
         ui=("panel", "energy"),
         claim="Turn one arrow far enough and it flips over to face the other way.",
-        instruction="Twist the middle arrow with Q and E, or with the stick.",
+        instruction="Drag to turn the middle arrow, and keep turning until it flips.",
+        joystick_instruction="Push the stick to turn the middle arrow, and keep "
+                             "turning until it flips.",
         hook="Seven beads hold together. Does a real membrane stay flat?",
         everyday_params=("k_tilt", "k_splay"),
         plots=False,
@@ -137,6 +139,9 @@ PLAYGROUND = Playground(
         "rigid": {"k_tilt": 40.0, "k_splay": 2.5},
         "isotropic_only": {"k_tilt": 0.0, "k_splay": 0.0, "wc": 0.0},
     },
+    # The panel plots' fixed y ranges (see Playground.plot_ranges), measured
+    # over the temperature dial and with the hero knob on: as mesomem_patch, measured the same.
+    plot_ranges={"press": (-0.1, 0.2), "energy": (-3.0, 1.0)},
     temperature=(0.0, 0.5),
     temperature_default=0.001,
     melt_temp=0.3,

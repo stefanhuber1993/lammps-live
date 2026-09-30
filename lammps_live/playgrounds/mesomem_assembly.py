@@ -93,11 +93,20 @@ PLAYGROUND = Playground(
     # make it: the box has just built a membrane out of nothing, and taking the
     # orientation away un-builds it into droplets while everything else about the
     # run stays the same.
+    #
+    # THE VIEW CUT ARRIVES HERE ("slice"), with its callout. It is the first
+    # scene whose inside is hidden by its outside -- a box of sheets stacked
+    # behind one another -- and the first one watched rather than driven, so the
+    # presenter's hands are free to try a new control while nothing needs
+    # steering. The rod and the vesicle rely on it after this; the vesicle is
+    # unwatchable without it, and by then nobody should be learning it.
     lesson=Lesson(
         title="Spontaneous self-assembly of randomly dispersed membrane beads into fluid sheets",
-        ui=("panel", "energy", "colour", "plots", "readings", "status"),
+        ui=("panel", "energy", "colour", "plots", "readings", "status", "slice"),
         claim="The same beads, poured in at random. They find the sheet on their own.",
-        instruction="Press Start (the trigger) and watch. Colours mark separate clusters as they merge.",
+        instruction="Press Start and watch. Colours mark separate clusters as they merge.",
+        joystick_instruction="Pull the trigger to start, and watch. Colours mark "
+                             "separate clusters as they merge.",
         hook="So the beads make a membrane. What is a membrane for?",
         hero_knobs=(VDW_ONLY,),
     ),
@@ -112,6 +121,9 @@ PLAYGROUND = Playground(
     # Assembly needs finite T so beads can diffuse and anneal into flat membranes,
     # but below the ~eps attraction well so they stay condensed rather than boiling
     # back into a gas. The default sits in that fluid-membrane window.
+    # The panel plots' fixed y ranges (see Playground.plot_ranges), measured
+    # over the temperature dial and with the hero knob on: P 0.01-0.03, 0.12 at T = 0.5; PE from 0 (the gas it starts as) toward -3.5 as sheets form, and -7.3 with van der Waals only, where it condenses into droplets.
+    plot_ranges={"press": (-0.05, 0.15), "energy": (-8.0, 1.0)},
     temperature=(0.0, 0.5),
     temperature_default=0.2,
     melt_temp=0.3,
