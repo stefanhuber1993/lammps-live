@@ -1,337 +1,173 @@
-# LAMMPS live
+# Feel the force
 
-An MD simulation you can grab with your hands. It's real LAMMPS running under a
-60 fps game loop, and you drive it with a force feedback joystick, so you
-actually feel what the model pushes back with.
+Experience molecular dynamics with a force feedback joystick.
+
+**Stefan Huber**<sup>1</sup>, **Pietro Sillano**<sup>2</sup>, **Timon Idema**<sup>2</sup>
+
+<sup>1</sup> Visualisation & XR Team, SURF, Amsterdam<br>
+<sup>2</sup> Kavli Institute of Nanoscience Delft, Department of Bionanoscience, TU Delft
+
+In molecular dynamics simulations, forces and torques result in particle
+motion. The resulting dynamics are usually visualized as movies or plots,
+something to watch rather than to play with. In this interactive demo you can
+not only control the simulation, but also experience what happens in it in an
+immersive manner, feeling the forces at work: a live LAMMPS simulation runs under
+a 60 fps game loop, you push one bead around with a 1998 joystick, and the
+joystick pushes back with the force the membrane puts on that bead.
 
 ![Seven MesoMem beads](docs/images/mesomem_patch.png)
 
-Those seven balls are MesoMem beads, the coarse grained membrane model from the
-Idema group. It's their actual LAMMPS pair style
-([arXiv:2602.24123](https://arxiv.org/abs/2602.24123)) compiled in, not my
-approximation of it. Every bead carries a director, which is what the
-yellow/blue banding shows, and basically everything the model does (membranes
-staying flat, healing, assembling themselves out of a random soup) comes from
-those directors wanting to line up with their neighbours.
+MesoMem ([Sillano, Marrink & Idema, Phys. Rev. E 2026](https://journals.aps.org/pre/abstract/10.1103/4dhv-8xd7),
+[arXiv:2602.24123](https://arxiv.org/abs/2602.24123)) is a solvent-free coarse-grained model of a biological
+lipid-bilayer membrane. A patch of many lipids becomes one anisotropic bead, so
+the simulation can reach the length and time scales on which membranes
+self-assemble and remodel. That economy also makes it fast enough to run live.
+Each bead carries a director (the yellow/blue banding), and there are three
+energy terms: van der Waals, tilt and splay. The app uses the authors' own C++
+pair style, compiled into LAMMPS as a plugin.
 
-## What it's for
+Presented as a poster and live demo at NWO Biophysics 2026, next to the MesoMem
+poster by Sillano et al.
 
-In the paper membrane elasticity is a handful of numbers. A tilt modulus, a
-splay modulus, a transition somewhere around `k_tilt ~ 10`. Here you can just
-grab the thing and find out what those numbers feel like.
+![The poster](docs/images/poster.jpg)
 
-- **Feel it.** Pull a bead out of the sheet and the membrane resists in your
-  hand. The stick is limp when nothing is holding you and gets firm on contact,
-  and it buzzes more when you turn the temperature up. Twist hard enough and the
-  director flips over to the other normal, because the tilt term has two minima.
-  That's not an effect I added, it's the force field.
-- **Turn the knobs while it runs.** Every coefficient is a live slider. Take
-  `k_tilt` down through the transition and the same run stops making membranes
-  and starts making blobs.
-- **Watch it build itself.** 1500 beads dropped in at random, coarsening into
-  flat lamellae in front of you, in about a minute.
+## The game loop
 
-Mostly it's a demo you give standing up, and a way to get an intuition for a
-model whose parameters otherwise stay pretty abstract.
+LAMMPS runs inside Python as a library and shares its memory with it. Every
+frame the joystick sets one extra force on the controlled bead, and the
+simulation advances a short burst of steps.
 
-## Scenes
+```python
+from lammps import lammps
 
-The eight of them are a sequence rather than a menu, in three acts, and the app
-says where you are: **Rules** (what one interaction is, 1 to 3), **Material**
-(what a lot of them make, and that nobody had to arrange it, 4 and 5), and
-**Life** (what such a material is for, at the size the science is done at, 6 to
-8). Each scene opens with its number and a descriptive title in large type across
-the top, and one line saying what to do with your hands. While a scene builds,
-that title is shown over a progress bar. `Tab` and buttons 3/4 stop at the ends:
-there is nothing after 8 and nothing before 1.
+lmp = lammps()                                       # LAMMPS as a library
+lmp.file("in.membrane")                              # an ordinary input deck
+lmp.command("variable fx internal 0.0")              # slots Python can write
+lmp.command("variable fy internal 0.0")
+lmp.command("fix drive probe addforce v_fx v_fy 0")  # push the probe bead
 
-The interface itself arrives as it becomes worth looking at (`Lesson.ui`, see
-`lammps_live/ui/disclosure.py`). The two-bead scene has no side panel and no
-status line at all -- two beads and the readout between them; the seven-bead
-scenes add the panel with two dials and the pulled bead's energy; the sheet adds
-the colour toggle and the plots; the assembly box the clock; the two cluster
-scenes a SURF / Snellius badge. Whatever is new on a scene gets an amber arrow
-and one line of explanation for its first few seconds. Everything hidden is one
-click away under "Advanced".
-
-A minute with nobody touching anything takes the demo back to scene 1, counting
-down the last ten seconds on screen; any input cancels it. The bead colouring is
-remembered per scene, and Reset puts it back to that scene's default.
-
-Under each scene are its **hero knobs**: the one or two things worth doing to it,
-on the input device's buttons `5` upward (`F1`-`F4` on the keyboard) with the
-number printed on the button (`F1`-`F4` are buttons 5-8). `van der Waals
-only`, on the seven-bead patch and the assembly box, sets `k_tilt` and `k_splay`
-to zero and leaves the plain attraction: the same beads, and no membrane (it is
-on the twist patch too, and on the assembly box it sits on button 8).
-`Make the membrane curve`, on button 5 of both assembly boxes, sets the
-spontaneous curvature c0 to 0.2 and the sheets close into vesicles; c0 is also
-a visible slider there. `Stiff chain`, on the vesicle, takes the chain's bending
-stiffness from 0 to 10. `Heat`, on the sheet, takes the temperature to 0.2 against a melting point of 0.3, which is
-where the membrane stops sitting still and behaves like the liquid it is. Both
-toggle, both put back the settings they found rather than the defaults, and both
-say in numbers what they changed.
-
-There is no printed key list on screen. The bindings are discoverable (the hat
-moves a visible cyan frame, the trigger runs the simulation, and every button
-worth pressing is drawn under the scene with its number on it), and a key list
-belongs on a card next to the display rather than in a fifth of it.
-
-| | |
-|---|---|
-| `mesomem_bead` | two beads: one in your hand, one nailed down at the edge of the net. Drive them together and feel the pair potential switch on, term by term |
-| `mesomem_patch` | seven beads. Pull the middle one out and feel tilt and splay resist |
-| `mesomem_patch_torque` | the same seven, twisted instead of pulled: the stick turns the middle bead's director and the ring splays after it |
-| `mesomem_sheet` | ~900 beads, periodic, so a piece of an endless membrane. Watch a deformation spread |
-| `mesomem_assembly` | 1500 beads from a random start, assembling. Play / Pause / Reset |
-| `mesomem_rod` | 3600 beads at constant tension, opening warm (T = 0.2) at eps_rod = 1. Steer a rod-shaped "bacterium" in and watch the membrane engulf it -- sideways first, then a neck, then the rod standing up inside the pit. Cut it open with the thrust lever to read the profile |
-| `mesomem_remote` | same thing at 50,000 beads, running on a cluster A100 |
-| `mesomem_vesicle_chain` | a closed vesicle round ONE 32,768-bead polymer laid along a 3D Moore curve, coloured as a rainbow along its length, on the same A100. Slice it open with the thrust lever to see in |
-
-(`mesomem_polymer`, the collaborator's ring-polymer melt that used to be scene 8,
-is shelved but still runs by name.)
-
-`1`-`9` or `Tab` switches between them, `lammps-live --list` prints them.
-
-Three atomistic classics -- `cu_deposition` (copper, EAM), `lj_argon` (argon
-melting) and `nacl` (a salt lattice whose ionic charge you can switch off and
-watch it fall apart) -- also ship, in real units rather than reduced ones. They
-are off the list above and out of the `Tab` cycle, since the talk is about the
-membrane; `lammps-live --playground lj_argon` still runs one.
-
-## It runs on a supercomputer
-
-`mesomem_remote` and `mesomem_polymer` put the simulation on a cluster GPU -- an
-A100 at [Snellius](https://www.surf.nl), or whichever machine you point them at --
-and keep the picture here at 60 fps. You press
-`N` and the app does the rest: asks Slurm for the GPU, ships itself over, starts
-the server there, tunnels a port back, and gives the allocation up again when
-you close the window. Both ends build the same scene file, so there's one
-definition of the demo and no input deck to keep in sync by hand.
-
-It behaves exactly like the local one, every slider and Play/Pause/Reset
-included, because what goes over the wire is the same LAMMPS commands the local
-app runs on itself. And the GPU stays yours while you wander off to show
-another scene.
-
-**One GPU, both of them.** The two remote scenes share the allocation: you ask
-for a GPU once, at the start, and after that `Tab` between them costs nothing --
-the run you leave keeps running, and going back to it is one socket. Pressing
-Connect on the other one *moves* the GPU: the far side sets aside the simulation
-it was holding and builds the other one on the same node, through the same
-tunnel, with no queue and no second one-time code. So an hour's allocation is an
-hour of switching between demos, not one demo.
-
-**And it comes back where you left it.** Moving the GPU used to throw the run
-away, which meant four minutes of coarsening gone every time you switched. The
-far side now parks the state and puts it back, so going between two demos costs
-about a second and neither of them starts over. Reset is about as quick, for the
-same reason: placing 50,000 beads with a minimum separation used to be 47 seconds
-of LAMMPS rejecting candidates one at a time, and is now half a second of numpy.
-
-`--gpu-hours` says how long to ask Slurm for (the default is one hour). It is the
-backstop that gives the GPU back when everything else has failed to, so it is not
-a number to pad -- and a longer request may sit in the queue longer:
-
-```bash
-lammps-live --playground mesomem_remote --gpu-hours 3
+while running:
+    fx, fy = hand_force()                            # from the stick
+    lmp.set_internal_variable("fx", fx)              # not a new fix, so no re-setup
+    lmp.set_internal_variable("fy", fy)
+    lmp.command("run 20 pre no post no")             # advance 20 steps
+    x = lmp.numpy.extract_atom("x")                  # positions, no copy
+    draw(x)
 ```
 
-**On your cluster, not just mine.** The login, the account, the partition and the
-paths on the far side live in a config file, not in the scene file, so running
-this is not a source edit:
-
-```bash
-lammps-live --write-config       # ~/.config/lammps-live/config.toml
-```
-
-```toml
-[remote.systems.mycluster]
-host = "cluster.example.org"
-user = "your-login"
-partition = "gpu"
-account = "prj1234"
-remote_dir = "~/lammps-mesomem"  # where the cluster's LAMMPS build lives
-env_script = "env.sh"            # sourced there before the server starts
-profile = "cluster-gpu"          # "cluster-cpu" if there is no GPU to have
-```
-
-Define several and `--hpc mycluster` picks one for a run. The caveat is the one
-thing this app can't do for you: **the LAMMPS on the far side has to exist
-already**, with a Python module, numpy, the MesoMem pair style compiled in, and
-Kokkos+CUDA if you want the GPU profile. The connect flow probes for exactly that
-and refuses to allocate anything for a build that can't serve, and
-`lammps-live --doctor` prints the probe command with your own paths already in
-it.
-
-How it works: [docs/remote-gpu.md](docs/remote-gpu.md).
-How to run it on your own cluster: [docs/cluster-setup.md](docs/cluster-setup.md).
-Snellius specifically: [docs/snellius/README.md](docs/snellius/README.md).
+The real version is `lammps_live/playground/modes.py` (the drive) and
+`lammps_live/playground/system.py` (the stepping). The run happens in a
+background thread, so the next 20 steps compute while the frame draws.
 
 ## The joystick
 
-An old Microsoft Sidewinder Force Feedback 2, talked to over raw HID with
-[this driver](https://github.com/stefanhuber1993/sidewinder). You can reach the
-whole demo from it, which is the point. Once you're standing in front of people
-with a stick in your hand you don't want to go hunting for the keyboard.
+A Microsoft Sidewinder Force Feedback 2, run by our own Python driver,
+[sidewinder](https://github.com/stefanhuber1993/sidewinder). Python sets a spring
+about 60 times a second. The spring itself runs on the stick's own chip, which
+pushes back much faster than that. The force from the membrane moves the
+spring's centre and sets how stiff it is, so you feel a pull towards wherever the
+membrane wants the bead to go.
 
-The stick has two axes and there's more than two things worth steering, so only
-one control is live at a time and the hat switch moves between them, laid out
-like the screen: left and right cross between the scene and the control panel,
-up and down walk the panel's rows (the bead colouring, then each slider). A cyan
-frame shows which one you're on. Then you just push the stick to drive it. Most
-of the travel is a slow band for placing a value carefully, and it accelerates
-near the end when you want to cross the whole range.
+```python
+from sidewinder.ff2 import FF2Device
 
-Once the panel has the focus the stick's own up/down axis walks the rows too, so
-the hand never has to leave the stick: push forward or back to pick the control,
-left or right to move its value. A flick is exactly one row, and holding it walks
-about two rows a second -- slow enough to let go on the one you wanted.
+ff = FF2Device()
+spring = ff.spring(stiffness=1)                  # limp until something pushes
 
-The trigger starts and stops the simulation, on every scene, and 2 resets it --
-back to the beginning, which means the sliders too: the reason to push a dial
-somewhere absurd is to see what happens, and what you want next is one button
-that undoes all of it. 3 and 4 are scene back and forward. Every scene shows
-Play, Pause and Reset buttons for the same three actions, and Space, R and Tab
-are the keyboard twins.
+while running:
+    s = ff.read_input()                          # s.x, s.y, s.twist in -1..1
+    set_hand_force(gain * s.x, -gain * s.y)      # into fix addforce above
+    fx, fy = force_on_probe()                    # what the membrane pushes with
+    k = int(1 + 126 * contact(fx, fy))           # firm on contact
+    spring.set_condition(axis=0, cp_offset=int(fx), pos_coeff=k, neg_coeff=k)
+    spring.set_condition(axis=1, cp_offset=int(-fy), pos_coeff=k, neg_coeff=k)
+```
 
-The remote scenes' Connect card takes the stick while it is up, because it is
-modal and there is no simulation behind it to steer: left and right pick a
-button, and the trigger presses the one with the cyan ring on it. Standing in
-front of a room with a stick in one hand, reaching back for a trackpad to press
-Connect is exactly the kind of thing that goes wrong in public.
+On top of that there is a damper and a small vibration that grows with
+temperature (`lammps_live/input/joystick.py`). The buttons: trigger is
+start/stop, 2 resets, 3/4 go to the previous/next scene, the hat moves around the
+GUI, 5 and up are each scene's "action" buttons, twist turns the bead's
+director, and the thrust lever cuts a slice through the 3D view. Mouse and
+keyboard work too (`--input mouse`).
 
-The thrust lever cuts the scene open, and it's a position, not a button: shove it
-to either stop and there's no cut at all, and anywhere in between the view
-narrows to a slab 15% of the box thick, square-on to whichever direction you're
-looking from, with the lever's position sweeping that slab through the box.
-Nothing times out -- cut in, let go, and it stays cut. It works on any of the 3D
-scenes; on `mesomem_polymer` it's the only way to see anything at all, since a
-closed membrane is opaque and the whole point of that one is what's inside it. A
-lever you haven't touched since you started the app never cuts anything, wherever
-it happens to be sitting.
+## Eight scenes
 
-The force feedback runs on the device itself instead of being streamed frame by
-frame: a spring whose centre and stiffness follow the contact force, a damper
-that stiffens when you're in contact, and a vibration standing in for thermal
-jitter. None of it is required, `--input mouse` and `--input keyboard` work
-fine.
+| | | |
+|---|---|---|
+| 1 | `mesomem_bead` | interaction of two beads |
+| 2 | `mesomem_patch` | 6+1 patch, feel the force |
+| 3 | `mesomem_patch_torque` | 6+1 patch, feel the torque |
+| 4 | `mesomem_sheet` | 900 beads, an infinite (periodic) membrane |
+| 5 | `mesomem_assembly` | 1500 beads in a box, self-assembling |
+| 6 | `mesomem_rod` | "endocytosis" of a rod, with an added rod-bead force term |
+| 7 | `mesomem_remote` | 50,000 beads on Snellius, large scale self-assembly |
+| 8 | `mesomem_vesicle_chain` | 56,000 beads, a membrane vesicle filled with a polymer chain |
 
-**Push or twist.** A scene says which of the two the stick's axes are for.
-Normally they push the bead around, inside the drawn net, and the twist axis
-turns its director as a second control. `mesomem_patch_torque` swaps that round:
-the two axes *turn* the director instead, about two axes, and nothing pushes the
-bead at all -- where it goes is the membrane's answer. Everything downstream
-follows into the rotational domain, force feedback included, so what you feel is
-the tilt term twisting back. Green and red mean the same as always: what you're
-doing, and what the membrane is doing about it.
+Temperature, `k_tilt`, `k_splay` and the other coefficients are sliders you can
+move while it runs.
+
+## Scenes 7 and 8 run on Snellius
+
+These two run on a GPU on Snellius, the Dutch national supercomputer at SURF,
+and the laptop only draws. Press `N` on either scene and the app asks Slurm for a
+GPU, starts a server there, and connects to it over a TCP connection through an
+SSH tunnel. Each bead is sent as 3 × 12 bit position and 2 × 8 bit orientation,
+which is about 7 MB/s for 56k beads at 20 fps, little enough for conference wifi.
+Both remote scenes share one allocation, so switching between them doesn't queue
+again.
+
+Your login, account, partition and paths go in a config file:
+
+```bash
+lammps-live --write-config       # writes ~/.config/lammps-live/config.toml
+```
+
+```toml
+[remote.systems.snellius]
+host = "snellius.surf.nl"
+user = "your-login"
+partition = "gpu_a100"
+account = "your-project"
+remote_dir = "~/lammps-mesomem"  # where LAMMPS lives on the cluster
+env_script = "env.sh"            # sourced there before the server starts
+profile = "cluster-gpu"
+```
+
+What the cluster needs: SSH access, Slurm, and a LAMMPS build with the Python
+module, numpy, the MesoMem pair style and Kokkos+CUDA. The app doesn't build that
+for you, but it checks for it before asking for a GPU, and `lammps-live --doctor`
+prints the check command. See [docs/cluster-setup.md](docs/cluster-setup.md) and
+[docs/snellius/README.md](docs/snellius/README.md).
+
+## Rendering
+
+The 3D scenes draw every bead as a sphere impostor: a flat square, on which a
+shader computes a perfect sphere pixel by pixel. All beads go to the GPU in one
+call, so 50,000 beads cost the CPU the same as ten. Shadows and ambient occlusion
+are added afterwards, at a cost per pixel, not per bead.
+
+The same renderer runs in a browser, also on a phone:
+[the impostor viewer](https://stefanhuber1993.github.io/lammps-live/). The long
+explanation is in [docs/impostor-book](docs/impostor-book/).
 
 ## Run it
 
 ```bash
-brew install mpich git          # Linux: apt install build-essential mpich libmpich-dev git
+brew install mpich hidapi git     # Linux: apt install build-essential mpich libmpich-dev libhidapi-hidraw0
 python3 -m venv venv && source venv/bin/activate
 pip install -e .
-lammps-live --doctor            # what this machine resolved to
-lammps-live --input mouse
+lammps-live --doctor              # check what this machine resolved to
+lammps-live --input joystick      # or --input mouse
 ```
 
-MPICH and not Open MPI, because that's what the `lammps` wheel links against.
-The MesoMem force field compiles itself into a LAMMPS plugin the first time you
-open a 3D scene, takes about 10 seconds once, and there's nothing to download
-for it.
+MPICH, not Open MPI, because the `lammps` wheel links against it. The MesoMem
+plugin compiles itself the first time you open a 3D scene (about 10 seconds).
 
-```bash
-lammps-live --input joystick               # wants hidapi: brew install hidapi
-lammps-live --playground mesomem_assembly  # start on a specific scene
-lammps-live --ui-scale 1.5                 # bigger UI on a 4K screen
-lammps-live --list                         # everything runnable
-```
+## More
 
-**Other machines, other compilers.** The pair style is compiled here, so the
-compiler, the architecture flags and which MPI's headers to use are all
-configurable rather than hardcoded — `-march=native` by default (probed, not
-assumed), `g++` or MSVC where that's what there is, LAMMPS' own MPI stubs for a
-serial build. Windows works natively and works with no surprises at all under
-WSL2. `lammps-live --doctor` prints every one of those decisions and
-`--build-plugin` compiles on the spot:
+- [docs/details.md](docs/details.md): what every scene shows, the full joystick
+  mapping, the remote setup in depth, kiosk mode (`--lock`), adding a scene
+- [docs/install.md](docs/install.md): other platforms and compilers, Linux udev rule
+- [docs/remote-gpu.md](docs/remote-gpu.md): how the remote connection works
 
-```toml
-# ~/.config/lammps-live/config.toml   (lammps-live --write-config makes one)
-[build]
-compiler = "g++"
-arch = "native"                  # or "none", or "-march=x86-64-v3"
-mpi_include = "/usr/lib/x86_64-linux-gnu/openmpi/include"
-```
-
-Per-platform install notes, the whole `[build]` table and a symptom-to-fix table
-are in [docs/install.md](docs/install.md). The Linux joystick also needs a udev
-rule so you can get at `/dev/hidraw*` without root:
-
-```bash
-echo 'SUBSYSTEM=="hidraw", ATTRS{idVendor}=="045e", ATTRS{idProduct}=="001b", TAG+="uaccess"' \
-  | sudo tee /etc/udev/rules.d/99-sidewinder-ff2.rules
-sudo udevadm control --reload-rules && sudo udevadm trigger
-```
-
-### Unattended: `--lock`
-
-```bash
-LAMMPS_LIVE_LOCK_PASSWORD=... lammps-live --input joystick --fullscreen --lock
-```
-
-Closing the window, Cmd-Q, Esc, minimising, hiding and leaving fullscreen all
-ask for the password (without the variable it is asked for on the terminal at
-startup). On macOS it also hides the Dock and the menu bar and disables Cmd-Tab,
-Force Quit and logout for as long as the app runs; a watchdog exits the app if
-its main loop ever hangs for 90 s, so a frozen demo cannot take the machine with
-it. The right password does what was asked and leaves the app unlocked;
-`Ctrl-L`, or a minute with nobody touching it, locks it again. Five wrong answers
-lock the prompt for 30 s.
-
-It is a lock for visitors, not a security boundary: see the notes on running the
-machine unattended below the scene list in `docs/remote-gpu.md`, and use a
-separate macOS account and screen lock as well.
-
-## Adding a scene
-
-One file of about 50 lines that names a force field, a scenario and a mode.
-Nothing to subclass:
-
-```python
-PLAYGROUND = Playground(
-    name="MesoMem membrane patch",
-    force_field="mesomem",
-    scenario=hex_patch(n_rings=1),
-    mode="game",
-)
-```
-
-Every live parameter the force field declares turns into a slider on its own.
-Put the file in `lammps_live/playgrounds/`, or keep it wherever and run
-`lammps-live --playground ./my_idea.py`.
-
-## Under the hood
-
-Some things worth knowing, the details are elsewhere:
-
-- The 3D scenes are GPU sphere impostors going through a deferred shading chain
-  with ambient occlusion, contact shadows and depth of field. [The impostor
-  book](docs/impostor-book/) is the long version of that story, and the
-  [Impostor Viewer](https://stefanhuber1993.github.io/lammps-live/) is the same
-  renderer in a browser tab, for your own dump files. It lives on the
-  `gh-pages` branch, which is its only copy: edit it there.
-- MesoMem runs in the paper's reduced LJ units and the atomistic scenes run in
-  real metal units, and the readouts follow whichever model you're in rather
-  than one house style.
-- Dragging a slider until the simulation dies is fair game. It recovers on its
-  own and tells you what happened, on the cluster too, where the old failure
-  mode was losing the GPU with it.
-- `docs/a100-plan.md` is the plan for making the remote one bigger, with the
-  measurements it's based on.
-- Nothing about your machine is hardcoded any more: the compiler and its flags,
-  the MPI headers, your cluster login and its paths are all one TOML file
-  (`lammps-live --write-config`), layered under the environment for one-off
-  overrides. [docs/install.md](docs/install.md) is this end,
-  [docs/cluster-setup.md](docs/cluster-setup.md) is the other one, and
-  `lammps-live --doctor` prints what both of them came out as.
+Contact: visualisation@surf.nl

@@ -27,9 +27,9 @@ size sweep is one loop and there is nothing to edit.
 ## The live demo: `mesomem_remote`
 
 The decks above are for benchmarking. The demo itself is a playground in the app --
-`mesomem_remote`, 10,000 beads -- and it needs no deck at all: the server on the
+`mesomem_remote`, 50,000 beads -- and it needs no deck at all: the server on the
 node builds the same `Playground` file the client draws, so there is exactly one
-definition of the experiment. Select it in the app (key 4, or Tab), press **N**, and
+definition of the experiment. Select it in the app (scene 7, or Tab), press **N**, and
 press Connect.
 
 The login and the paths come from your config file rather than from the playground
@@ -147,14 +147,15 @@ lammps-live --playground mesomem_remote --remote 127.0.0.1:5723 --token dev
 
 Positions as 3 x 12 bits over the cell (packed two codes to three bytes), directors
 octahedral-8, per-bead energies as uint8 and only while the energy colouring is
-switched on: 6.5 B/bead, so 65 kB and 3.9 MB/s at 10k and 60 fps. Control goes the other way as JSON -- one message per
+switched on: 6.5 B/bead, so 325 kB a frame at 50k, and 6.5 MB/s with the wire at
+20 fps (`--fps`). Control goes the other way as JSON -- one message per
 slider change, which is the same LAMMPS command the local app issues on itself.
 Details and the measured precision in `lammps_live/remote/protocol.py`; the
 bandwidth table it implements is §5 of ../a100-plan.md.
 
-### Why 10,000 and not 100,000
+### Why it started at 10,000 and not 100,000
 
-Because 10k is what the *drawing* machine can keep up with, not what the GPU can
+The first version of `mesomem_remote` was 10k beads (it is 50k now). Because 10k was what the *drawing* machine can keep up with, not what the GPU can
 run. The Python analysis measures 6.8 ms/frame average and 31.7 ms peak at 10k
 (§3 of the plan, re-measured), against a 16.7 ms frame; the A100 at that size is
 idling. 10k is therefore the right size to prove the pipeline before making the
