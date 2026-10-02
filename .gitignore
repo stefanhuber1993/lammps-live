@@ -27,3 +27,10 @@ docs/impostor-renderer.epub
 # (spherical_vesicle_ds.py, then combine_vesicle_polymer.py) -- 18 MB of text
 # that nothing in lammps_live/ reads; the playground builds the system itself.
 polymer/input/
+# Poster working files: the Illustrator source (29 MB) and the early draft
+# PDFs. The final poster is docs/poster/feel-the-force-poster2_print.pdf.
+docs/poster/*.ai
+docs/poster/feel-the-force-poster.pdf
+docs/poster/feel-the-force-poster2.pdf
+# Abstract and title brainstorm for the conference submission.
+docs/AbstractPlan.docx

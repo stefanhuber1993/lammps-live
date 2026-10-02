@@ -29,7 +29,7 @@ pair style, compiled into LAMMPS as a plugin.
 Presented as a poster and live demo at NWO Biophysics 2026, next to the MesoMem
 poster by Sillano et al.
 
-![The poster](docs/images/poster.jpg)
+[![The poster](docs/images/poster.jpg)](docs/poster/feel-the-force-poster2_print.pdf)
 
 ## The game loop
 
@@ -169,5 +169,6 @@ plugin compiles itself the first time you open a 3D scene (about 10 seconds).
   mapping, the remote setup in depth, kiosk mode (`--lock`), adding a scene
 - [docs/install.md](docs/install.md): other platforms and compilers, Linux udev rule
 - [docs/remote-gpu.md](docs/remote-gpu.md): how the remote connection works
+- [docs/FAQ.md](docs/FAQ.md): short answers to questions people ask at the poster
 
 Contact: visualisation@surf.nl
