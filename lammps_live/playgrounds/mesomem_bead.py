@@ -362,9 +362,12 @@ PLAYGROUND = Playground(
         title="Two coarse-grained membrane beads: attraction, tilt and splay between one pair",
         ui=(),
         claim="Each bead is a patch of lipid membrane. The arrow is the way it faces.",
-        instruction="Drag the bead toward its partner and read the three terms.",
-        joystick_instruction="Steer the bead toward its partner with the stick "
-                             "and read the three terms.",
+        # The stick has two axes, so the bead moves in one plane -- the grid,
+        # which is drawn in exactly that plane (see THE NET below). Saying so
+        # here, because the first thing anyone does with a 3D scene is try to
+        # pull the bead toward themselves.
+        joystick_instruction="The stick moves the bead across the grid only. "
+                             "Steer it to its partner and read the three terms.",
         hook="That was one pair. What do six neighbours do?",
         everyday_params=(),
         plots=False,

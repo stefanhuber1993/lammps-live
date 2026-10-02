@@ -876,8 +876,13 @@ class App:
         self._draw_unlock_prompt(renderer)
 
     def _playback_action(self, name):
-        """Apply a Play/Pause/Reset button (or its keyboard shortcut)."""
-        if name == "play":
+        """Apply a button of the deck's bottom row (or its keyboard shortcut):
+        Start/Stop, Reset, Back, Next."""
+        if name == "prev":
+            self._cycle_system(-1)
+        elif name == "next":
+            self._cycle_system(1)
+        elif name == "play":
             self.sim_playing = True
         elif name == "pause":
             self.sim_playing = False
@@ -1687,9 +1692,10 @@ class App:
 
         The drag has to START in the sim view: a drag that began on a slider and
         wandered left over the scene is still a slider drag, and grabbing the
-        camera out from under it would be a surprise. The Play/Pause/Reset
-        buttons are drawn INSIDE the sim view, so they are excluded too -- a
-        click on Play is a click on Play, not a camera grab.
+        camera out from under it would be a surprise. The deck's buttons (Start,
+        Reset, Back, Next, the hero knobs) are drawn INSIDE the sim view, so they
+        are excluded too -- a click on Start is a click on Start, not a camera
+        grab.
 
         Holding SHIFT pans instead of orbiting -- it slides the scene across the
         view, so an off-centre membrane can be brought to the middle and then
@@ -1698,7 +1704,7 @@ class App:
         if self.orbit_cam is None:
             return False
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-            if self._in_sim_view(event.pos) and self.renderer.playback_hit(event.pos) is None:
+            if self._in_sim_view(event.pos) and not self.renderer.control_hit(event.pos):
                 self._orbit_dragging = True
                 return True
         elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
@@ -1759,7 +1765,7 @@ class App:
         # puller's deflection, so swinging the camera by hand would otherwise
         # fling the controlled particle across the box.
         #
-        # And the same for the pointer merely RESTING on Play/Pause/Reset, which
+        # And the same for the pointer merely RESTING on a deck button, which
         # are drawn inside the sim view: since those buttons went onto the
         # interactive playgrounds too, reaching for Play in mouse mode would
         # otherwise drag the bead to the bottom of the frame on the way. Hovering
@@ -1767,8 +1773,8 @@ class App:
         # frame, so it is the travel that does the damage, not the click.
         ui_capturing_mouse = (self._orbit_dragging
                               or any(s.dragging for s in self._sliders())
-                              or self.renderer.playback_hit(
-                                  pygame.mouse.get_pos()) is not None)
+                              or self.renderer.control_hit(
+                                  pygame.mouse.get_pos()))
         # Device I/O is split into two debug fields, since on the joystick both are
         # blocking HID traffic that belongs in neither sim nor "other": "read" is
         # the stick poll here, "ff" is the force-feedback writes further down.

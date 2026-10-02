@@ -469,7 +469,7 @@ RAIL_LABEL_GAP = 7
 HERO_W = 250
 HERO_H = 42
 HERO_GAP = 14                   # between two knobs
-HERO_ROW_GAP = 14               # above the playback row
+HERO_ROW_GAP = 30               # above the playback dock: two kinds of button
 # Released: a filled accent, dark enough for its own light text, with a brighter
 # rim. Not the playback buttons' grey, because it is not a playback control.
 HERO_BG = (46, 58, 78)
@@ -479,13 +479,21 @@ HERO_BORDER = (120, 160, 210)
 HERO_ENGAGED_BG = (208, 138, 30)
 HERO_ENGAGED_TEXT = (16, 12, 4)
 HERO_ENGAGED_BORDER = (245, 190, 90)
-# The little device-button number on the left of each knob: "5" in a chip, so the
-# mapping is on the button rather than in a manual.
-HERO_BADGE_W = 26
+# The recessed well on the left of each knob that holds a drawing of the device
+# button firing it (ui/device_glyphs.py), so the mapping is on the button rather
+# than in a manual.
 HERO_BADGE_BG = (16, 22, 34, 190)
 HERO_BADGE_TEXT = (170, 200, 235)
 HERO_BADGE_ENGAGED_BG = (120, 76, 8, 210)
 HERO_BADGE_ENGAGED_TEXT = (255, 226, 160)
+# The Back / Next plates at the two ends of the playback row: quieter than the
+# knobs, because moving on is not the thing to do next -- it is what you do once
+# you are done here. The red device button on them carries the colour.
+NAV_BG = (34, 40, 54)
+# The dock under Start, Reset, Back and Next: one translucent dark plate that
+# makes the four one group, apart from the hero knobs above it.
+DOCK_BG = (12, 16, 26, 150)
+NAV_BORDER = (104, 116, 138)
 # The caption drawn above the row while any knob is engaged, saying in numbers what
 # that knob changed. Amber too, and on a plate, because it has to be legible over
 # whatever the membrane is doing behind it.

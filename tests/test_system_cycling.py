@@ -56,3 +56,48 @@ def test_a_tab_and_a_shift_tab_land_on_the_playground_they_started_from(app):
     pygame.event.post(_tab(shift=True))
     app._handle_events(FRAME)
     assert app.system_key == start
+
+
+# ---- Back and Next on screen ---------------------------------------------------
+
+def _click(pos):
+    return pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=pos)
+
+
+def _deck(app):
+    """Draw one frame and return the bottom row's buttons by name."""
+    app._tick(FRAME)
+    return {b.name: b for b in app.renderer.playback_buttons}
+
+
+def test_back_and_next_are_drawn_only_where_there_is_somewhere_to_go(app):
+    """No rollover (App._cycle_system), so no button that would do nothing: the
+    first scene has no Back, the last no Next, the ones between have both."""
+    keys = [key for key, _ in app.systems]
+    assert {"prev", "next"} <= set(_deck(app))
+    app._build_system(keys[0])
+    assert "prev" not in _deck(app) and "next" in _deck(app)
+    app._build_system(keys[-1])
+    assert "next" not in _deck(app) and "prev" in _deck(app)
+
+
+def test_clicking_next_and_back_walks_the_sequence(app, monkeypatch):
+    steps = []
+    monkeypatch.setattr(app, "_cycle_system", steps.append)
+    deck = _deck(app)
+    pygame.event.post(_click(deck["next"].rect.center))
+    app._handle_events(FRAME)
+    pygame.event.post(_click(deck["prev"].rect.center))
+    app._handle_events(FRAME)
+    assert steps == [1, -1]
+
+
+def test_a_click_on_a_hero_knob_is_not_a_camera_grab(app):
+    """The deck sits inside the sim view, over the turntable: a press on a knob
+    has to fire the knob, not start orbiting the camera."""
+    _deck(app)
+    rect = app.renderer._hero_rects[0]
+    pygame.event.post(_click(rect.center))
+    app._handle_events(FRAME)
+    assert not app._orbit_dragging
+    assert app.hero_engaged == {0}

@@ -268,9 +268,13 @@ class Lesson:
                      it under about twelve words: it is read from across a room,
                      off a projector, in the two seconds before the presenter
                      starts talking over it.
-        instruction  what to do with your hands, in the imperative. A scene nobody
-                     knows how to touch teaches nothing, and this is the only line
-                     that is about the app rather than the physics.
+        instruction  OPTIONAL, and empty on almost every scene: a short factual
+                     note under the title, for the rare thing about the controls
+                     that nothing on screen already says (the opening scene's
+                     bead moving only across the grid). The scenes used to carry
+                     a line of "do this, watch that" prose each; it read as
+                     narration rather than information, and the buttons and
+                     callouts say what to press.
 
     THE HOOK is the question this stage leaves open, and it is what turns eight
     scenes into one argument: the sheet ends by asking whether every bead had to be
@@ -284,7 +288,7 @@ class Lesson:
     """
     title: str
     claim: str
-    instruction: str
+    instruction: str = ""
     hook: str = ""
     # THE INSTRUCTION AGAIN, FOR A JOYSTICK. `instruction` is written for the
     # mouse and keyboard, and a line that says "drag" or "Q and E" to someone

@@ -106,9 +106,6 @@ PLAYGROUND = Playground(
         title="A seven-bead membrane patch answering a force that pulls one bead out of plane",
         ui=("panel", "energy"),
         claim="Pull one bead out of the patch and its neighbours lean to follow.",
-        instruction="Drag the middle bead out of the plane, then let go of it.",
-        joystick_instruction="Pull the middle bead out of the plane with the "
-                             "stick, then let go.",
         hook="You pushed it. What happens if you only turn it?",
         everyday_params=("k_tilt", "k_splay"),
         plots=False,

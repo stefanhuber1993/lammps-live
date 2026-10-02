@@ -14,7 +14,7 @@ from ..render_style import DEFAULT_STYLE
 from .gl3d import GLScene, proj_matrix, view_matrix
 from .glcompositor import GLCompositor
 from .plotting import draw_plot
-from . import disclosure
+from . import device_glyphs, disclosure
 from .scale import UI, auto_ui_scale, set_ui_scale
 from .widgets import Button
 from .theme import (
@@ -41,10 +41,10 @@ from .theme import (
     SLIDER_LABEL_H, SLIDER_ROW_H, SLIDER_ROW_H_MARKED,
     RAIL_MARK_W,
     HERO_BADGE_BG, HERO_BADGE_ENGAGED_BG, HERO_BADGE_ENGAGED_TEXT,
-    HERO_BADGE_TEXT, HERO_BADGE_W, HERO_BG, HERO_BORDER,
+    HERO_BADGE_TEXT, HERO_BG, HERO_BORDER,
     HERO_CAPTION_BG, HERO_CAPTION_COLOR, HERO_CAPTION_GAP,
     HERO_ENGAGED_BG, HERO_ENGAGED_BORDER, HERO_ENGAGED_TEXT,
-    HERO_GAP, HERO_H, HERO_ROW_GAP, HERO_TEXT, HERO_W,
+    HERO_GAP, HERO_H, HERO_ROW_GAP, HERO_TEXT, HERO_W, DOCK_BG, NAV_BG, NAV_BORDER,
     POTENTIAL_COLORS, POTENTIAL_PANEL_BG, POTENTIAL_TOTAL_COLOR, POTENTIAL_TRACK_COLOR,
     PULLER_BOND_COLOR, PULLER_LABEL_BG, PULLER_LABEL_COLOR, PULLER_RADIUS_BOOST,
     PULLER_RING_COLOR, PULLER_RING_FREE_COLOR, PULLER_RING_WIDTH,
@@ -3036,13 +3036,15 @@ class Renderer:
             surf = font.render(row, True, text_col)
             self.screen.blit(surf, (x, y))
             y += surf.get_height()
-        y += UI(LESSON_TITLE_GAP)
-        instr = self.font.render(lesson.instruction_for(self.joystick), True,
-                                 dim_col)
-        self.screen.blit(instr, (x, y))
+        note = lesson.instruction_for(self.joystick)
+        if note:
+            y += UI(LESSON_TITLE_GAP)
+            instr = self.font.render(note, True, dim_col)
+            self.screen.blit(instr, (x, y))
+            y += instr.get_height()
         # Callouts keep below this, so an arrow never covers the title.
-        self._title_bottom = y + instr.get_height()
-        return y + instr.get_height() + UI(LESSON_BLOCK_GAP)
+        self._title_bottom = y
+        return y + UI(LESSON_BLOCK_GAP)
 
     # The title's sizes, largest first: the largest that fits in two lines wins,
     # so a narrow window shrinks the title rather than stacking it four deep.
@@ -3155,6 +3157,52 @@ class Renderer:
                                  border_radius=UI(2))
                 mx += mw
 
+    # THE DECK: every on-screen button that a device button also fires, along the
+    # bottom of the sim view, GROUPED BY WHAT IT IS ABOUT rather than by when it
+    # was added:
+    #
+    #        [ 5  this scene's move ]   [ 8  another one ]       <- the scene
+    #
+    #   (( <3 Back   [1 Start]  [2 Reset]   Next 4> ))              <- the dock
+    #
+    # The DOCK is the machinery every scene has: running it (trigger, lens) in the
+    # middle, where the eye rests between looks at the beads, and the way through
+    # the talk (the red pair) a step out on either side of it, the way pages turn
+    # -- Back on the left, Next on the right, each plate itself an arrow pointing
+    # where it goes. Next to the run buttons rather than out at the window's
+    # edges, where nobody looks and they would be forgotten. All four sit on one
+    # dark plate, so they read as one group. Above it, clear of the plate, float
+    # this scene's big moves -- what the scene is FOR, a different kind of thing
+    # from the machinery, and drawn apart from it.
+    #
+    # Every button wears a drawing of the device button that fires it (see
+    # device_glyphs.py), so "which one is that on the stick" is answered by
+    # shape: the trigger, the lens, the small red pair, the big grey block.
+    PLAY_W, PLAY_H, PLAY_GAP, PLAY_BOTTOM = 200, 42, 12, 16
+    # The navigation plates: full (glyph + word) and compact (glyph only, for a
+    # sim view too narrow to hold the words), and how far the arrow point sticks
+    # out of the plate.
+    NAV_W, NAV_COMPACT_W, NAV_POINT = 124, 66, 16
+    DECK_MARGIN, DECK_NAV_GAP, DECK_PAD = 16, 26, 7
+    # Extra room between two hero knobs per device button skipped between them,
+    # so 5 and 8 read as the two ends of the block they sit on.
+    HERO_SKIP_GAP = 22
+
+    def _deck_bottom_row(self):
+        """(nav_w, play_w, nav_gap, y0) of the dock at this window size. The words
+        on the navigation plates are what gives first, then the gap to them, then
+        the run buttons' width: the run row is the one nobody may have to squint
+        at."""
+        avail = self.sim_width - 2 * UI(self.DECK_MARGIN) - 2 * UI(self.DECK_PAD)
+        gap = UI(self.PLAY_GAP)
+        nav_w, play_w, nav_gap = UI(self.NAV_W), UI(self.PLAY_W), UI(self.DECK_NAV_GAP)
+        if 2 * nav_w + 2 * play_w + gap + 2 * nav_gap > avail:
+            nav_w, nav_gap = UI(self.NAV_COMPACT_W), gap
+            spare = avail - 2 * nav_w - gap - 2 * nav_gap
+            play_w = max(UI(130), min(play_w, spare // 2))
+        y0 = self.window_size[1] - UI(self.PLAY_H) - UI(self.PLAY_BOTTOM)
+        return nav_w, play_w, nav_gap, y0
+
     def draw_hero_knobs(self, knobs, engaged, buttons=None):
         """The scene's big moves, as a centred row of buttons just above the
         playback controls. `engaged` is the set of indices currently applied.
@@ -3162,16 +3210,17 @@ class Renderer:
         IN THE SCENE, NOT IN THE PANEL, and that is the point of where they are: in
         the panel a hero knob would be one more grey widget among ten dials, and
         what it does is not a dial. It is the move whoever built the scene wants
-        made on it, and it is reached for while looking at the beads. Above the
-        playback row rather than in it because these are not playback controls, and
-        being adjacent to three of them is as close as they should get to looking
-        like one.
+        made on it, and it is reached for while looking at the beads. On a row of
+        its own above the playback row rather than in it, because these are not
+        playback controls.
 
-        EACH ONE WEARS THE DEVICE BUTTON THAT FIRES IT, in a chip on its left: the
+        EACH ONE WEARS THE DEVICE BUTTON THAT FIRES IT, drawn on its left: the
         row is the mapping, so nobody has to remember that 5 is Heat on this scene
         and Remove orientation on the next. `buttons` is each knob's device button
         (Lesson.hero_buttons); None numbers them 5 upward in declared order (see
-        App._poll_device_buttons and config.JOYSTICK_HERO_FIRST_BUTTON).
+        App._poll_device_buttons and config.JOYSTICK_HERO_FIRST_BUTTON). Knobs on
+        buttons that are not neighbours on the device (5 and 8) stand further
+        apart on screen too, when there is room.
 
         Engaged, a knob goes amber and says the way OUT, with its caption above the
         row naming in numbers what changed -- so a room that walked in halfway
@@ -3180,22 +3229,30 @@ class Renderer:
         self._hero_rects = []
         if not knobs:
             return
-        w, h, gap = UI(HERO_W), UI(HERO_H), UI(HERO_GAP)
-        total = len(knobs) * w + (len(knobs) - 1) * gap
-        x0 = (self.sim_width - total) // 2
-        play_h, play_gap = UI(self.PLAY_H), UI(self.PLAY_BOTTOM)
-        y0 = self.window_size[1] - play_h - play_gap - UI(HERO_ROW_GAP) - h
-
-        self._ui_rects["hero"] = pygame.Rect(x0, y0, total, h)
         buttons = buttons or tuple(config.JOYSTICK_HERO_FIRST_BUTTON + i
                                    for i in range(len(knobs)))
+        n = len(knobs)
+        avail = self.sim_width - 2 * UI(self.DECK_MARGIN)
+        gap, h = UI(HERO_GAP), UI(HERO_H)
+        w = min(UI(HERO_W), (avail - (n - 1) * gap) // n)
+        gaps = [gap + UI(self.HERO_SKIP_GAP) * max(0, buttons[i + 1] - buttons[i] - 1)
+                for i in range(n - 1)]
+        if n * w + sum(gaps) > avail:
+            gaps = [gap] * (n - 1)
+        total = n * w + sum(gaps)
+        x = (self.sim_width - total) // 2
+        y0 = (self.window_size[1] - UI(self.PLAY_H) - UI(self.PLAY_BOTTOM)
+              - UI(HERO_ROW_GAP) - h)
+
+        self._ui_rects["hero"] = pygame.Rect(x, y0, total, h)
         for i, knob in enumerate(knobs):
             on = i in engaged
-            rect = pygame.Rect(x0 + i * (w + gap), y0, w, h)
+            rect = pygame.Rect(x, y0, w, h)
             self._hero_rects.append(rect)
             self._draw_chip_button(
-                rect, str(buttons[i]),
-                knob.engaged_label if on else knob.label, lit=on)
+                rect, buttons[i], knob.engaged_label if on else knob.label, lit=on)
+            if i < n - 1:
+                x += w + gaps[i]
 
         # The captions of whatever is engaged, stacked above the row. Stacked
         # rather than joined, because each one is a sentence about its own knob and
@@ -3221,17 +3278,25 @@ class Renderer:
         it belongs with, wearing the device button that fires it like every other
         chip button (config.JOYSTICK_CONNECTION_BUTTON; N on the keyboard)."""
         badge = self._ui_rects.get("snellius")
-        w, h = UI(236), UI(34)
+        w, h = UI(236), UI(HERO_H)
         top = (badge.bottom if badge is not None else UI(14)) + UI(12)
         rect = pygame.Rect(self.sim_width - UI(18) - w, top, w, h)
         self._connection_rect = rect
-        self._draw_chip_button(rect, str(config.JOYSTICK_CONNECTION_BUTTON),
+        self._draw_chip_button(rect, config.JOYSTICK_CONNECTION_BUTTON,
                                "Cluster connection")
 
     def connection_hit(self, pos):
         """True if `pos` is on the "Cluster connection" chip (and it is drawn)."""
         rect = getattr(self, "_connection_rect", None)
         return rect is not None and rect.collidepoint(pos)
+
+    def control_hit(self, pos):
+        """True if `pos` is on any button drawn over the sim view -- the deck or
+        the connection chip -- so the app can keep a click there from also
+        grabbing the camera or the bead underneath."""
+        return (self.playback_hit(pos) is not None
+                or self.hero_hit(pos) is not None
+                or self.connection_hit(pos))
 
     SLICE_GAUGE_W, SLICE_GAUGE_TRACK = 58, 150
 
@@ -3302,64 +3367,160 @@ class Renderer:
                 return i
         return None
 
-    # The playback row's geometry, shared with draw_hero_knobs, which sits on it.
-    PLAY_W, PLAY_H, PLAY_GAP, PLAY_BOTTOM = 230, 42, 14, 16
+    def draw_playback_controls(self, playing, has_prev=False, has_next=False):
+        """The bottom row of the deck: Start/Stop and Reset in the middle, Back
+        and Next at the two edges.
 
-    def draw_playback_controls(self, playing):
-        """Start/Stop and Reset, centred along the bottom of the sim view.
+        Start/Stop is ONE button whose label is what pressing it will do ("Start"
+        while stopped, "Stop" while running), wearing the trigger. There used to
+        be three (Play, Pause, Reset) with nothing on them saying the trigger was
+        the run switch, so nobody holding the stick found out; now the drawn
+        trigger says it, and the label only has to name the key on a keyboard.
 
-        TWO BUTTONS, EACH WEARING THE DEVICE BUTTON THAT FIRES IT -- the same chip
-        the hero knobs carry. There used to be three (Play, Pause, Reset) with
-        nothing on them saying the trigger was the run switch, so nobody holding
-        the stick found out. Now the run switch is ONE button whose label is what
-        pressing it will do ("Start" while stopped, "Stop" while running), with
-        "1" in its chip and "trigger" in its label, and Reset carries "2".
+        Back and Next stand a step out from the run pair, on a dark dock plate
+        shared with it. They exist only where there is somewhere to go: the sequence does
+        not wrap (App._cycle_system), so the first scene has no Back and the last
+        no Next. Their SLOTS are kept either way, so the run buttons stand in the
+        same place on every scene.
 
         Positions the rects so the app can hit-test clicks (playback_hit): the
-        toggle is named "play" or "pause" after the action it performs.
+        toggle is named "play" or "pause" after the action it performs, the other
+        three "reset", "prev" and "next".
         """
-        bw, bh, gap = UI(self.PLAY_W), UI(self.PLAY_H), UI(self.PLAY_GAP)
-        total = 2 * bw + gap
-        x0 = (self.sim_width - total) // 2
-        y0 = self.window_size[1] - bh - UI(self.PLAY_BOTTOM)
-        # Named after the control in the hand: "trigger" means nothing to a mouse.
-        how = "trigger" if self.joystick else "Space"
-        toggle = (Button("pause", f"Stop  ({how})") if playing
-                  else Button("play", f"Start  ({how})"))
-        self.playback_buttons = [toggle, Button("reset", "Reset")]
-        for i, (btn, chip) in enumerate(zip(self.playback_buttons,
-                                            (config.JOYSTICK_PLAY_PAUSE_BUTTON,
-                                             config.JOYSTICK_RESET_BUTTON))):
-            btn.rect = pygame.Rect(x0 + i * (bw + gap), y0, bw, bh)
-            # Lit while stopped: Start is the thing to press next.
-            self._draw_chip_button(btn.rect, str(chip), btn.label,
-                                   lit=(btn.name == "play"))
+        nav_w, bw, nav_gap, y0 = self._deck_bottom_row()
+        bh, gap = UI(self.PLAY_H), UI(self.PLAY_GAP)
+        x0 = (self.sim_width - (2 * bw + gap)) // 2
+        # The dock plate, under the buttons this scene has. The run pair stays
+        # centred either way; only the plate's ends follow Back and Next.
+        pad = UI(self.DECK_PAD)
+        left = x0 - (nav_gap + nav_w if has_prev else 0) - pad
+        right = x0 + 2 * bw + gap + (nav_gap + nav_w if has_next else 0) + pad
+        dock = pygame.Rect(left, y0 - pad, right - left, bh + 2 * pad)
+        plate = pygame.Surface(dock.size, pygame.SRCALPHA)
+        pygame.draw.rect(plate, DOCK_BG, plate.get_rect(),
+                         border_radius=UI(11))
+        self.screen.blit(plate, dock.topleft)
+        # The joystick's trigger is drawn on the button; the keyboard's key is not.
+        toggle = Button("pause" if playing else "play",
+                        ("Stop" if playing else "Start")
+                        + ("" if self.joystick else "  (Space)"))
+        reset = Button("reset", "Reset")
+        toggle.rect = pygame.Rect(x0, y0, bw, bh)
+        reset.rect = pygame.Rect(x0 + bw + gap, y0, bw, bh)
+        # Lit while stopped: Start is the thing to press next.
+        self._draw_chip_button(toggle.rect, config.JOYSTICK_PLAY_PAUSE_BUTTON,
+                               toggle.label, lit=not playing)
+        self._draw_chip_button(reset.rect, config.JOYSTICK_RESET_BUTTON,
+                               reset.label)
+        self.playback_buttons = [toggle, reset]
+
+        compact = nav_w < UI(self.NAV_W)
+        if has_prev:
+            prev = Button("prev", "Back")
+            prev.rect = pygame.Rect(x0 - nav_gap - nav_w, y0, nav_w, bh)
+            self._draw_nav_button(prev.rect, config.JOYSTICK_PREV_PLAYGROUND_BUTTON,
+                                  -1, "" if compact else prev.label)
+            self.playback_buttons.append(prev)
+        if has_next:
+            nxt = Button("next", "Next")
+            nxt.rect = pygame.Rect(x0 + 2 * bw + gap + nav_gap, y0, nav_w, bh)
+            self._draw_nav_button(nxt.rect, config.JOYSTICK_NEXT_PLAYGROUND_BUTTON,
+                                  1, "" if compact else nxt.label)
+            self.playback_buttons.append(nxt)
         self._playback_visible = True
 
-    def _draw_chip_button(self, rect, chip, label, lit=False):
-        """A button with the device-button number in a chip on its left -- the
-        hero knobs' look, shared by the playback row."""
+    def _draw_chip_button(self, rect, button, label, lit=False):
+        """A deck button: the device button that fires it, drawn in a recessed well
+        on its left, and its label centred in the rest."""
         bg, fg, border = ((HERO_ENGAGED_BG, HERO_ENGAGED_TEXT, HERO_ENGAGED_BORDER)
                           if lit else (HERO_BG, HERO_TEXT, HERO_BORDER))
         pygame.draw.rect(self.screen, bg, rect, border_radius=UI(7))
         pygame.draw.rect(self.screen, border, rect, width=UI.w(2),
                          border_radius=UI(7))
-        badge = pygame.Rect(rect.x + UI(4), rect.y + UI(4), UI(HERO_BADGE_W),
-                            rect.height - UI(8))
-        plate = pygame.Surface(badge.size, pygame.SRCALPHA)
-        plate.fill(HERO_BADGE_ENGAGED_BG if lit else HERO_BADGE_BG)
-        self.screen.blit(plate, badge.topleft)
-        num = self.small_font.render(
-            chip, True, HERO_BADGE_ENGAGED_TEXT if lit else HERO_BADGE_TEXT)
-        self.screen.blit(num, num.get_rect(center=badge.center))
-        surf = self.font.render(label, True, fg)
-        self.screen.blit(surf, surf.get_rect(
-            center=(badge.right + (rect.right - badge.right) // 2, rect.centery)))
+        well = pygame.Rect(rect.x + UI(4), rect.y + UI(4),
+                           UI(device_glyphs.GLYPH_SLOT_W), rect.height - UI(8))
+        plate = pygame.Surface(well.size, pygame.SRCALPHA)
+        pygame.draw.rect(plate, HERO_BADGE_ENGAGED_BG if lit else HERO_BADGE_BG,
+                         plate.get_rect(), border_radius=UI(5))
+        self.screen.blit(plate, well.topleft)
+        device_glyphs.draw(self.screen, button, well, self.small_font,
+                           HERO_BADGE_ENGAGED_TEXT if lit else HERO_BADGE_TEXT)
+        self._blit_label(label, fg, pygame.Rect(well.right, rect.y,
+                                                rect.right - well.right,
+                                                rect.height))
+
+    def _blit_label(self, label, colour, area):
+        """`label` centred in `area`, dropping to the small font if the normal one
+        would not fit -- a narrow window should shrink a label, not clip it."""
+        surf = self.font.render(label, True, colour)
+        if surf.get_width() > area.width - UI(10):
+            surf = self.small_font.render(label, True, colour)
+        self.screen.blit(surf, surf.get_rect(center=area.center))
+
+    def _nav_plate(self, size, direction):
+        """The navigation plate: a rounded plate with one end drawn out into an
+        arrow point, toward `direction` (+1 right, -1 left). Drawn 4x and
+        smoothscaled, like the glyphs, for clean diagonals; cached per size."""
+        key = (size, direction, UI.factor)
+        cache = self.__dict__.setdefault("_nav_plate_cache", {})
+        if key in cache:
+            return cache[key]
+        ss = 4
+        w, h = size[0] * ss, size[1] * ss
+        point, radius = UI(self.NAV_POINT) * ss, UI(7) * ss
+        border = UI.f(2) * ss
+        surf = pygame.Surface((w, h), pygame.SRCALPHA)
+        # Outline then fill: the same shape twice, the second inset by the border.
+        # The point's inset apex moves in by border / sin(half-angle), which keeps
+        # the rim the same width along the slanted edges as along the flat ones.
+        half_angle = math.atan2(h / 2, point)
+        for colour, inset in ((NAV_BORDER, 0.0), (NAV_BG, border)):
+            base = w - point
+            pygame.draw.rect(surf, colour,
+                             pygame.Rect(inset, inset, base + radius - inset,
+                                         h - 2 * inset),
+                             border_radius=int(max(1, radius - inset)))
+            apex = w - inset / math.sin(half_angle)
+            pygame.draw.polygon(surf, colour, [
+                (base - 1, inset), (apex - (h / 2 - inset) / math.tan(half_angle)
+                                    + 0, inset),
+                (apex, h / 2),
+                (apex - (h / 2 - inset) / math.tan(half_angle), h - inset),
+                (base - 1, h - inset)])
+        surf = pygame.transform.smoothscale(surf, size)
+        if direction < 0:
+            surf = pygame.transform.flip(surf, True, False)
+        cache[key] = surf
+        return surf
+
+    def _draw_nav_button(self, rect, button, direction, label):
+        """Back or Next: an arrow-shaped plate with the small red device button on
+        it, next to the point, and the word on the flat end. An empty `label` is
+        the compact form, the button alone."""
+        self.screen.blit(self._nav_plate(rect.size, direction), rect.topleft)
+        point = UI(self.NAV_POINT)
+        slot_w = UI(30)
+        body = (pygame.Rect(rect.x + point, rect.y, rect.w - point, rect.h)
+                if direction < 0 else
+                pygame.Rect(rect.x, rect.y, rect.w - point, rect.h))
+        if label:
+            if direction < 0:
+                slot = pygame.Rect(body.x, body.y, slot_w, body.h)
+                text = pygame.Rect(slot.right, body.y, body.right - slot.right,
+                                   body.h)
+            else:
+                slot = pygame.Rect(body.right - slot_w, body.y, slot_w, body.h)
+                text = pygame.Rect(body.x, body.y, slot.x - body.x, body.h)
+            self._blit_label(label, HERO_TEXT, text)
+        else:
+            slot = body
+        device_glyphs.draw(self.screen, button, slot, self.small_font, HERO_TEXT)
 
     def playback_hit(self, pos):
-        """Name of the playback button under `pos` ("play"/"pause"/"reset"), or
-        None. Returns None while the controls aren't shown, so a click never hits
-        a stale button rect from a system that has since been switched away."""
+        """Name of the deck's bottom-row button under `pos` ("play", "pause",
+        "reset", "prev" or "next"), or None. Returns None while the controls aren't
+        shown, so a click never hits a stale button rect from a system that has
+        since been switched away."""
         if not self._playback_visible:
             return None
         for btn in self.playback_buttons:
@@ -3776,14 +3937,11 @@ class Renderer:
         pulse = 0.5 + 0.5 * math.sin(time.monotonic() * 5.0)
         col = self.CALLOUT_COLOR
         a = int(255 * alpha)
-        frame = pygame.Surface(self.window_size, pygame.SRCALPHA)
-        pygame.draw.rect(frame, (*col, int(a * (0.55 + 0.45 * pulse))),
-                         rect.inflate(UI(10), UI(10)),
-                         width=UI.w(3), border_radius=UI(8))
+        ring = rect.inflate(UI(10), UI(10))
 
-        surf = self.font.render(text, True, (255, 255, 255))
+        tw, th = self.font.size(text)
         pad_x, pad_y = UI(12), UI(8)
-        bw, bh = surf.get_width() + 2 * pad_x, surf.get_height() + 2 * pad_y
+        bw, bh = tw + 2 * pad_x, th + 2 * pad_y
         W, H = self.window_size
         gap = UI(46)
         if rect.left < self.sim_width - UI(8) and rect.top > H * 0.6:
@@ -3818,20 +3976,38 @@ class Renderer:
         if bx < self.sim_width:
             by = max(by, self._title_bottom + UI(8))
             tail = (tail[0], min(max(tail[1], by), by + bh))
-        pygame.draw.rect(frame, (*col, a), (bx, by, bw, bh),
-                         border_radius=UI(8))
-        pygame.draw.line(frame, (*col, a), tail, tip, UI.w(4))
         # The arrowhead, at the element.
         ang = math.atan2(tip[1] - tail[1], tip[0] - tail[0])
         L = UI(14)
         head = [tip,
                 (tip[0] - L * math.cos(ang - 0.45), tip[1] - L * math.sin(ang - 0.45)),
                 (tip[0] - L * math.cos(ang + 0.45), tip[1] - L * math.sin(ang + 0.45))]
-        pygame.draw.polygon(frame, (*col, a), head)
+        # Drawn on a layer only as big as the callout itself, not the window: a
+        # window-sized alpha surface, allocated and alpha-blitted every frame for
+        # every callout, cost a visible slice of the frame rate on a big screen.
+        bubble = pygame.Rect(bx, by, bw, bh)
+        xs = [p[0] for p in head] + [tail[0]]
+        ys = [p[1] for p in head] + [tail[1]]
+        box = ring.union(bubble).union(pygame.Rect(
+            int(min(xs)), int(min(ys)),
+            int(max(xs) - min(xs)) + 1, int(max(ys) - min(ys)) + 1)).inflate(
+            UI(8), UI(8))
+        ox, oy = box.topleft
+
+        def at(p):
+            return (p[0] - ox, p[1] - oy)
+
+        frame = pygame.Surface(box.size, pygame.SRCALPHA)
+        pygame.draw.rect(frame, (*col, int(a * (0.55 + 0.45 * pulse))),
+                         ring.move(-ox, -oy), width=UI.w(3), border_radius=UI(8))
+        pygame.draw.rect(frame, (*col, a), bubble.move(-ox, -oy),
+                         border_radius=UI(8))
+        pygame.draw.line(frame, (*col, a), at(tail), at(tip), UI.w(4))
+        pygame.draw.polygon(frame, (*col, a), [at(p) for p in head])
         text_surf = self.font.render(text, True, (25, 20, 10))
         text_surf.set_alpha(a)
-        frame.blit(text_surf, (bx + pad_x, by + pad_y))
-        self.screen.blit(frame, (0, 0))
+        frame.blit(text_surf, at((bx + pad_x, by + pad_y)))
+        self.screen.blit(frame, box.topleft)
 
     def draw_idle_clock(self, text):
         """The idle timer's own reading, tiny, in the window's bottom-left
@@ -3930,7 +4106,7 @@ class Renderer:
         head = f"{index}.  {title}" if index else title
         rows = _wrap_items(head.split(" "), self.lesson_font, width, " ")
         lines = [(self.lesson_font, r, fg) for r in rows]
-        if lesson is not None:
+        if lesson is not None and lesson.instruction_for(self.joystick):
             lines.append((self.font, "", dim))
             lines.append((self.font, lesson.instruction_for(self.joystick), dim))
         total_h = sum(f.get_height() for f, _, _ in lines)
@@ -4093,7 +4269,11 @@ class Renderer:
         # some scenes and not others reads as the buttons being broken.
         self._playback_visible = False
         if playback_playing is not None:
-            self.draw_playback_controls(playback_playing)
+            keys = [key for key, _ in systems]
+            idx = keys.index(current_key) if current_key in keys else -1
+            self.draw_playback_controls(playback_playing,
+                                        has_prev=idx > 0,
+                                        has_next=0 <= idx < len(keys) - 1)
         # And, just above them, this scene's big moves (see playground/spec.py's
         # HeroKnob) -- on the playgrounds that declare any.
         self.draw_hero_knobs(

@@ -270,9 +270,6 @@ PLAYGROUND = Playground(
         ui=("panel", "energy", "colour", "plots", "readings", "status", "snellius", "slice"),
         claim=f"{_k(N_MEMBRANE_RUN)} membrane beads around one "
               f"{_k(N_POLYMER_RUN)}-bead chain. Still the same three terms.",
-        instruction="Stiffen the chain with the button below, and drag to orbit.",
-        joystick_instruction="Stiffen the chain (button 5), and slice the vesicle "
-                             "open with the lever.",
         hero_knobs=(STIFF_CHAIN,),
     ),
     presets={

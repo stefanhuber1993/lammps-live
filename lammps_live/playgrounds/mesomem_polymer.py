@@ -211,8 +211,6 @@ PLAYGROUND = Playground(
         ui=("panel", "energy", "colour", "plots", "readings", "status", "snellius", "slice"),
         claim=f"{_k(N_MEMBRANE_RUN)} of membrane closed around "
               f"{_k(N_POLYMER_RUN)} of polymer. Still the same three terms.",
-        instruction="Drag to orbit round the vesicle.",
-        joystick_instruction="Slice the vesicle open with the lever to see inside it.",
     ),
     presets={
         # The collaborator's deck: k_bend 2, the paper's membrane moduli.

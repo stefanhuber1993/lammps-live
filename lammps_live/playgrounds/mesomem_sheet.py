@@ -117,9 +117,6 @@ PLAYGROUND = Playground(
         title="A periodic sheet of 900 beads held flat by orientation-dependent interactions",
         ui=("panel", "energy", "colour", "plots", "readings"),
         claim="900 beads and no edges: a piece of bilayer that holds itself flat.",
-        instruction="Drag a bead out and let go. Then press Heat and watch it flow.",
-        joystick_instruction="Pull a bead out with the stick and let go. Then "
-                             "heat it (button 5) and watch it flow.",
         hook="Every bead here was placed on a lattice. Was that necessary?",
         hero_knobs=(HEAT,),
     ),

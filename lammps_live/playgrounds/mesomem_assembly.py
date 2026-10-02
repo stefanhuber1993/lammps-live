@@ -112,9 +112,6 @@ PLAYGROUND = Playground(
         title="Spontaneous self-assembly of randomly dispersed membrane beads into fluid sheets",
         ui=("panel", "energy", "colour", "plots", "readings", "status", "slice"),
         claim="The same beads, poured in at random. They find the sheet on their own.",
-        instruction="Press Start and watch. Colours mark separate clusters as they merge.",
-        joystick_instruction="Pull the trigger to start, and watch. Colours mark "
-                             "separate clusters as they merge.",
         hook="So the beads make a membrane. What is a membrane for?",
         hero_knobs=(CURVED, dataclasses.replace(VDW_ONLY, button=8)),
         promoted_params=("c0",),

@@ -493,9 +493,6 @@ PLAYGROUND = Playground(
         title="A fluid membrane adhering to and wrapping a rod-shaped particle, as in endocytosis",
         ui=("panel", "energy", "colour", "plots", "readings", "status", "slice"),
         claim="The membrane sticks to the rod and bends around it. Cells eat this way.",
-        instruction="Drag the rod down into the sheet and let the membrane close round it.",
-        joystick_instruction="Steer the rod into the sheet with the stick. Slice "
-                             "it open with the lever to look.",
         hook="Three thousand beads on a laptop. Does it hold at ten times that?",
     ),
     presets={

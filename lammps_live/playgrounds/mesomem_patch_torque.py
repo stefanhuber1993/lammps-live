@@ -120,9 +120,6 @@ PLAYGROUND = Playground(
         title="A seven-bead membrane patch answering a torque that turns one bead's orientation",
         ui=("panel", "energy"),
         claim="Turn one arrow far enough and it flips over to face the other way.",
-        instruction="Drag to turn the middle arrow, and keep turning until it flips.",
-        joystick_instruction="Push the stick to turn the middle arrow, and keep "
-                             "turning until it flips.",
         hook="Seven beads hold together. Does a real membrane stay flat?",
         everyday_params=("k_tilt", "k_splay"),
         plots=False,

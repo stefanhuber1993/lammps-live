@@ -105,9 +105,10 @@ def test_every_card_line_fits_the_narrowest_window():
                            room, " ")
         if len(rows) > 3:
             over[f"{key}.title"] = len(rows)
-        width = UI(16) + body.size(pg.lesson.instruction)[0]
-        if width > sim_w - UI(16):
-            over[f"{key}.instruction"] = width
+        for slot in ("instruction", "joystick_instruction"):
+            width = UI(16) + body.size(getattr(pg.lesson, slot))[0]
+            if width > sim_w - UI(16):
+                over[f"{key}.{slot}"] = width
     assert not over, f"card lines too long for a {NARROWEST_WINDOW}px window: {over}"
 
 
@@ -119,7 +120,7 @@ def test_no_card_line_is_written_in_dashes():
     bad = {}
     for key, pg in _offered():
         lesson = pg.lesson
-        for slot in ("claim", "instruction", "hook"):
+        for slot in ("claim", "instruction", "joystick_instruction", "hook"):
             text = getattr(lesson, slot)
             if "--" in text or "\u2014" in text or "\u2013" in text:
                 bad[f"{key}.{slot}"] = text
@@ -129,14 +130,15 @@ def test_no_card_line_is_written_in_dashes():
     assert not bad, f"dashes in audience text: {bad}"
 
 
-def test_the_instruction_tells_a_hand_what_to_do():
-    """Imperative, and about the controls. A scene nobody knows how to touch
-    teaches nothing, and this is the only one of the three lines that is about the
-    app rather than about the physics."""
-    for key, pg in _offered():
-        instruction = pg.lesson.instruction
-        assert instruction and instruction[0].isupper(), key
-        assert not instruction.endswith("?"), f"{key}: an instruction, not a question"
+def test_the_line_under_the_title_is_the_exception():
+    """The scenes lost their "do this, watch that" line under the title; the
+    buttons and callouts say what to press. What is left is the opening scene's
+    one fact about the stick that nothing on screen shows: the bead moves only
+    across the grid."""
+    noted = {key for key, pg in _offered()
+             if pg.lesson.instruction or pg.lesson.joystick_instruction}
+    assert noted == {"mesomem_bead"}
+    assert "grid" in registry.load("mesomem_bead").lesson.joystick_instruction
 
 
 def test_every_scene_but_the_last_asks_the_next_one_s_question():

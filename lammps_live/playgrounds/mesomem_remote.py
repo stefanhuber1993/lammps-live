@@ -119,9 +119,6 @@ PLAYGROUND = Playground(
         title=f"Self-assembly of {N_BEADS:,} membrane beads, computed live on a cluster GPU",
         ui=("panel", "energy", "colour", "plots", "readings", "status", "snellius", "slice"),
         claim="Fifty thousand beads on a cluster GPU, computed there and drawn here.",
-        instruction="Drag to orbit. This is running now, not a recording.",
-        joystick_instruction="Fly round it with the stick. This is running now, "
-                             "not a recording.",
         hook="This sheet has no edges, but it is not closed. What if it closes?",
         hero_knobs=(CURVED,),
         # And the dial itself, next to k_tilt: the knob is the move, the slider
