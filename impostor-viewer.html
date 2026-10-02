@@ -211,6 +211,10 @@ kbd{
   padding:7px 11px;font-size:12.5px;
 }
 #app.nopanel #panel{display:none}
+/* The page opens with the panel hidden, so the way back has to be on screen
+   everywhere, not only on a phone on its side: a visitor has no reason to
+   guess H. */
+#app.nopanel #panelbtn{display:block}
 /* The portrait phone's toggle: a full-width strip BETWEEN the view and the
    controls, not a button floating on the view. On the view it had to be hit
    inside an area where every other touch is a camera gesture; down here it is
@@ -240,6 +244,7 @@ kbd{
   #app.nopanel #stage{flex:1 1 0}
   #panel{flex:1 1 0;border-left:none}
   #sheetbar{display:flex}
+  #app.nopanel #panelbtn{display:none}
   /* the strip names the thing, so the panel's own title can go */
   #brand h1,#brand p{display:none}
   #brand{padding:8px 14px}
@@ -273,7 +278,7 @@ kbd{
 </style>
 </head>
 <body>
-<div id="app">
+<div id="app" class="nopanel">
   <div id="stage">
     <canvas id="gl"></canvas>
     <div class="overlay" id="stats"></div>
@@ -310,11 +315,11 @@ kbd{
       <div class="grid g2">
         <button id="btn-open" class="primary">Import file…</button>
         <select id="demo">
-          <option value="sheet" selected>Demo · membrane sheet</option>
+          <option value="sheet">Demo · membrane sheet</option>
           <option value="vesicle">Demo · vesicle</option>
           <option value="cube">Demo · dense cube</option>
           <option value="mixed">Demo · three bead types</option>
-          <option value="stress">Demo · 100 000 random (fps)</option>
+          <option value="stress" selected>Demo · 100 000 random (fps)</option>
         </select>
       </div>
       <input type="file" id="file" hidden multiple>
@@ -2758,6 +2763,19 @@ function fitCamera() {
   cam.dist = rad / Math.tan(0.5 * cam.fov * Math.PI / 180) * 1.12;
   cam.dist0 = cam.dist;
 }
+// The opening shot of the 100 000-bead demo: not the whole box, which shrinks a
+// bead to a few pixels, but the eye just outside its near face, close enough
+// that the front beads are about a tenth of the view's height and the cloud
+// behind them fills the screen. The box's depth is measured along the view
+// axis, so this holds from whatever angle the camera is at. dist0 stays the
+// full fit, so the zoom limits and a double-tap still reach the whole box.
+function closeUpCamera(beadFrac = 0.10) {
+  fitCamera();
+  const lo = scene.drawLo, hi = scene.drawHi, { f } = cam.basis();
+  const half = [0,1,2].reduce((s, k) => s + 0.5 * (hi[k] - lo[k]) * Math.abs(f[k]), 0);
+  const gap = maxRadius() / (beadFrac * Math.tan(0.5 * cam.fov * Math.PI / 180));
+  cam.dist = half + gap;
+}
 function resetCamera() {
   cam.azimuth = 0; cam.elev = 0.35; cam.roll = 0; cam.auto = false;
   fitCamera();
@@ -4060,6 +4078,7 @@ $("demo").addEventListener("change", (e) => {
     ? [["k", "three types — pick “atom type” under Colour beads by"]] : [];
   setFrames(DEMOS[k](), "built-in demo: " + (DEMO_LABELS[k] || k),
             [["k", "built-in demo: " + (DEMO_LABELS[k] || k)], DEMO_NOTE, ...extra]);
+  if (k === "stress") { closeUpCamera(); syncAll(); }
 });
 
 const readAsText = (file) => new Promise((res, rej) => {
@@ -4435,7 +4454,19 @@ function pinchState() {
   const [a, b] = downs.values();
   return { span: Math.hypot(a.x - b.x, a.y - b.y), mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 };
 }
+// A page cannot go fullscreen on its own, only inside a user gesture, so the
+// first touch on the view asks for it, once. Phones only: on a desktop the first
+// click is someone reaching for the camera, and the window is big already. An
+// iPhone has no element fullscreen at all; there the hidden panel is as close
+// as it gets.
+let askedFullscreen = false;
 canvas.addEventListener("pointerdown", (e) => {
+  if (!askedFullscreen && e.pointerType === "touch") {
+    askedFullscreen = true;
+    const el = document.documentElement;
+    if (!document.fullscreenElement && el.requestFullscreen)
+      el.requestFullscreen({ navigationUI: "hide" }).catch(() => {});
+  }
   canvas.setPointerCapture(e.pointerId);
   downs.set(e.pointerId, { x: e.clientX, y: e.clientY });
   if (downs.size === 2) { dragMode = "pinch"; pinch = pinchState(); }
@@ -4590,13 +4621,13 @@ $("sheetbar").addEventListener("click", togglePanel);
 
 $("hint").textContent = matchMedia("(pointer: coarse)").matches
   ? "drag to orbit · pinch to zoom · two fingers to pan · double-tap to fit"
-  : "drag to orbit · shift+drag to pan · wheel to dolly · P for orthographic · drop a dump/data file · H hides the panel";
+  : "drag to orbit · shift+drag to pan · wheel to dolly · P for orthographic · drop a dump/data file · H toggles the panel";
 sizeCanvas();
 syncCameraUI();
-setFrames(demoSheet(), "built-in demo: membrane sheet",
-          [["k", "built-in demo: membrane sheet"],
-           ["", `1840 beads of radius ${BEAD_R} on a hex lattice of pitch ` +
-                `r_min = ${R_MIN.toFixed(4)}, directors normal to the sheet`],
+// The 100 000-bead cloud opens the page: it is the one that shows a phone
+// drawing a real system's worth of beads, which is what the poster promises.
+setFrames(demoStress(), "built-in demo: " + DEMO_LABELS.stress,
+          [["k", "built-in demo: " + DEMO_LABELS.stress], DEMO_NOTE,
            ["", "Import a dump/data/xyz file, or drop one on the view."]]);
 
 // Last: the remembered settings, applied over a scene that already exists so the
@@ -4617,6 +4648,10 @@ setFrames(demoSheet(), "built-in demo: membrane sheet",
     }
   }
 }
+// After the remembered settings, so the close-up is taken from the angle they
+// brought back.
+closeUpCamera();
+syncAll();
 requestAnimationFrame(loop);
 </script>
 </body>
