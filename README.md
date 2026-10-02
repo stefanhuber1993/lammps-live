@@ -60,10 +60,13 @@ remembered per scene, and Reset puts it back to that scene's default.
 
 Under each scene are its **hero knobs**: the one or two things worth doing to it,
 on the input device's buttons `5` upward (`F1`-`F4` on the keyboard) with the
-number printed on the button. `van der Waals only`, on the two-bead pair, the
-seven-bead patch and the assembly box, sets `k_tilt` and `k_splay` to zero and
-leaves the plain attraction: the same beads, and no membrane (it is on the
-twist patch too). `Stiff chain`, on the vesicle, takes the chain's bending
+number printed on the button (`F1`-`F4` are buttons 5-8). `van der Waals
+only`, on the seven-bead patch and the assembly box, sets `k_tilt` and `k_splay`
+to zero and leaves the plain attraction: the same beads, and no membrane (it is
+on the twist patch too, and on the assembly box it sits on button 8).
+`Make the membrane curve`, on button 5 of both assembly boxes, sets the
+spontaneous curvature c0 to 0.2 and the sheets close into vesicles; c0 is also
+a visible slider there. `Stiff chain`, on the vesicle, takes the chain's bending
 stiffness from 0 to 10. `Heat`, on the sheet, takes the temperature to 0.2 against a melting point of 0.3, which is
 where the membrane stops sitting still and behaves like the liquid it is. Both
 toggle, both put back the settings they found rather than the defaults, and both

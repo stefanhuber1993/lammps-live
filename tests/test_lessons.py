@@ -17,6 +17,7 @@ import pytest
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 
+from lammps_live import config
 from lammps_live.playground import registry
 from lammps_live.playground.spec import HeroKnob, Lesson
 
@@ -230,9 +231,10 @@ def test_the_hero_knobs_are_where_the_move_is_worth_making():
     der Waals only" is on the seven-bead patches (force and torque alike -- they
     are meant to read as identical, and a button on only one of them is a
     difference the eye has to rule out) and the assembly box, which has just built
-    a sheet out of nothing. "Heat" is on the sheet. The rod scene has none (the
-    hands are busy enough there); the 50k assembly box's is spontaneous curvature,
-    "Make the membrane curve", which closes its sheets; the vesicle's is
+    a sheet out of nothing -- and which also offers spontaneous curvature, "Make
+    the membrane curve", first. "Heat" is on the sheet. The rod scene has none (the
+    hands are busy enough there); the 50k assembly box's is the same curvature
+    knob, which closes its sheets; the vesicle's is
     stiffening its single chain, "Make the polymer stiff". Labels are verbs, so
     an unlit button says what pressing it does.
     """
@@ -242,7 +244,7 @@ def test_the_hero_knobs_are_where_the_move_is_worth_making():
         "mesomem_patch": ["van der Waals only"],
         "mesomem_patch_torque": ["van der Waals only"],
         "mesomem_sheet": ["Heat"],
-        "mesomem_assembly": ["van der Waals only"],
+        "mesomem_assembly": ["Make the membrane curve", "van der Waals only"],
         "mesomem_rod": [],
         "mesomem_remote": ["Make the membrane curve"],
         "mesomem_vesicle_chain": ["Make the polymer stiff"],
@@ -303,10 +305,33 @@ def test_removing_orientation_is_the_isotropic_only_preset_by_another_route():
         for knob in pg.lesson.hero_knobs:
             # The van der Waals knob only: another scene's parameter knob (the
             # 50k box's curvature) has nothing to do with the preset.
-            if knob is not VDW_ONLY or "isotropic_only" not in pg.presets:
+            if knob.label != VDW_ONLY.label or "isotropic_only" not in pg.presets:
                 continue
             preset = pg.presets["isotropic_only"]
             assert knob.params == preset, key
+
+
+def test_the_assembly_box_keeps_van_der_waals_on_8_and_curves_on_5():
+    """The user's mapping: the new curvature move on 5, the van der Waals knob
+    moved to the far end of the block, 6 and 7 left empty."""
+    pg = dict(_offered())["mesomem_assembly"]
+    assert pg.lesson.hero_buttons(config.JOYSTICK_HERO_FIRST_BUTTON) == (5, 8)
+    # And c0 is on the everyday panel, not in Advanced, next to its knob.
+    assert pg.is_everyday("c0", declared_advanced=True)
+
+
+def test_every_hero_knob_sits_on_a_device_button_of_its_own():
+    """Inside the block of hero buttons, never two on one, in increasing order so
+    the row reads left to right in the numbers it shows -- and never on the
+    connection button of a remote scene, which takes that press first."""
+    first = config.JOYSTICK_HERO_FIRST_BUTTON
+    block = range(first, first + config.JOYSTICK_HERO_BUTTONS)
+    for key, pg in _offered():
+        buttons = pg.lesson.hero_buttons(first)
+        assert all(b in block for b in buttons), (key, buttons)
+        assert list(buttons) == sorted(set(buttons)), (key, buttons)
+        if pg.remote is not None:
+            assert config.JOYSTICK_CONNECTION_BUTTON not in buttons, key
 
 
 def test_every_hero_knob_says_in_numbers_what_it_did():

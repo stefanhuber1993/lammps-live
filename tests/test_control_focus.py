@@ -297,15 +297,17 @@ def test_the_panel_holds_the_colouring_and_the_everyday_sliders(sim_app):
     labels = []
     _flick(sim_app, 1)
     labels.append(sim_app.focus.label)
-    for _ in range(4):
+    for _ in range(5):
         _flick(sim_app, 0, -1)
         labels.append(sim_app.focus.label)
     # The assembly box opens in CLUSTER colouring, which is its declared default
     # (see Playground.bead_colors): what is happening in that box is aggregates
-    # finding each other, so that is the colouring it comes up in.
+    # finding each other, so that is the colouring it comes up in. c0 is last,
+    # promoted onto the everyday panel next to its hero knob.
     assert labels == ["bead colour (cluster)", "Temperature",
                       "k_tilt", "k_splay",
-                      "zeta (attraction falloff, higher=shorter reach)"]
+                      "zeta (attraction falloff, higher=shorter reach)",
+                      "c0 (spontaneous curvature, 1/radius)"]
     # Down from the last row wraps within the panel rather than falling out of it:
     # the way back to the scene is hat left, and only hat left.
     _flick(sim_app, 0, -1)

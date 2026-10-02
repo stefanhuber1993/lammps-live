@@ -45,7 +45,8 @@ the renderer while offline -- run the server on this machine:
 """
 import math
 
-from ..playground import HeroKnob, Lesson, Playground, random_fill
+from ..playground import Lesson, Playground, random_fill
+from ._knobs import CURVED
 from ..remote import RemoteTarget
 from .mesomem_assembly import STYLE
 from ..render_style import CameraOrbit
@@ -84,32 +85,8 @@ STYLE = STYLE.varied(
 # Not van der Waals only, deliberately: that move is made on the sheet-forming
 # box two scenes earlier, and repeating it here would teach nothing new.
 #
-# MEASURED on a 6,000-bead version of this box (same phi, T, timestep and
-# nudges), switched on once the sheets had formed at 200 tau, classifying every
-# aggregate of 100+ beads by its gyration tensor:
-#
-#     c0      200 tau later
-#     0       flat sheets only (9 flat, 1 slightly curved)
-#     0.15    mostly cups (11 curved, 1 closed)
-#     0.20    no flat ones left: 5 closed vesicles, 2 cups   <- THIS
-#     0.25    fewer aggregates at all -- the curvature starts to dissolve them
-#
-# and at 0.3 from the start nothing assembles at all. So it is a move to make
-# AFTER the sheets are there, which is how the demo is watched anyway. At this
-# wire's 0.2 tau a frame, 200 tau is under a minute, and the curling shows well
-# before that.
-CURVED_C0 = 0.20
-
-# THE LABELS ARE VERBS, because a button that names a state ("Curved
-# membrane") cannot say whether that state is what you HAVE or what you GET by
-# pressing. Unlit it says what pressing does; lit, the way back.
-CURVED = HeroKnob(
-    label="Make the membrane curve",
-    engaged_label="Make it flat again",
-    caption=f"c0 = {CURVED_C0:.2f}, was 0: the beads now prefer a curve of "
-            f"radius {1.0 / CURVED_C0:.0f} sigma. The sheets roll up and close.",
-    params={"c0": CURVED_C0},
-)
+# The knob itself, and the measurements behind its 0.20, are in _knobs.py: the
+# 1500-bead assembly box offers the same move.
 
 PLAYGROUND = Playground(
     name="MesoMem self-assembly, remote GPU (3D)",
@@ -133,7 +110,7 @@ PLAYGROUND = Playground(
     # that it is happening now. The connect panel already says everything about the
     # machinery, to the person driving, at the moment it matters.
     #
-    # ONE HERO KNOB (see CURVED above), which used to be none: the thinking was
+    # ONE HERO KNOB (CURVED, see the note above), which used to be none: the thinking was
     # that a physics-changing button on a run somebody queued for is a button
     # pressed by accident. But it is a toggle, it changes one coefficient and no
     # structure, and it is the one move that turns this scene from "bigger" into

@@ -239,6 +239,13 @@ class HeroKnob:
     # back off lowers a coefficient, which releases nothing, and is a jump. The
     # temperature dial always jumps.
     ramp_time: float = 0.0
+    # THE DEVICE BUTTON IT SITS ON, or None for the one after the knob before it
+    # (the first knob's is config.JOYSTICK_HERO_FIRST_BUTTON). For a scene whose
+    # knobs are not one per button in a row: the assembly box keeps "van der
+    # Waals only" on 8, where it is on its own at the far end of the block, and
+    # puts the new move on 5. The number drawn on the button is this one, so the
+    # screen still says which button fires it. See Lesson.hero_buttons.
+    button: int = None
 
 
 @dataclass(frozen=True)
@@ -373,6 +380,19 @@ class Lesson:
     # for the first time gets an arrow saying what it is.
     ui: tuple = None
 
+
+    def hero_buttons(self, first):
+        """The device button of each hero knob, in declared order: its own
+        `button` where it names one, else one past the previous knob's, starting at
+        `first` (config.JOYSTICK_HERO_FIRST_BUTTON). Here rather than in each
+        caller, because the number drawn on a button and the button that fires it
+        must come from the same arithmetic."""
+        out, nxt = [], first
+        for knob in self.hero_knobs:
+            b = knob.button if knob.button is not None else nxt
+            out.append(b)
+            nxt = b + 1
+        return tuple(out)
 
     def instruction_for(self, joystick):
         """The instruction line for the input device in hand."""

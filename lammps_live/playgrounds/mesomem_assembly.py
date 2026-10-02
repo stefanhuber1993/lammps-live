@@ -19,8 +19,10 @@ assembled.
 
 Units are the paper's LJ-reduced units (sigma = eps = m = 1).
 """
+import dataclasses
+
 from ..playground import Lesson, Playground, random_fill
-from ._knobs import VDW_ONLY
+from ._knobs import CURVED, VDW_ONLY
 from ..render_style import DEFAULT_STYLE, CameraOrbit
 
 # A dense, roughly cubic cloud of beads seen from outside is the scene the look
@@ -89,10 +91,16 @@ PLAYGROUND = Playground(
     # steer -- temperature, time and the turntable. Disclosure follows the lesson
     # rather than accumulating down the sequence.
     #
-    # THE HERO KNOB IS THE MODEL'S CLAIM AGAIN, and this is the strongest place to
-    # make it: the box has just built a membrane out of nothing, and taking the
-    # orientation away un-builds it into droplets while everything else about the
-    # run stays the same.
+    # TWO HERO KNOBS, on buttons 5 and 8. On 5, spontaneous curvature: the sheets
+    # the box has just built roll up into closed vesicles (measured in _knobs.py),
+    # the move worth making first now that this box can make it. On 8, at the far
+    # end of the block, the model's claim again: the box has just built a
+    # membrane out of nothing, and taking the orientation away un-builds it into
+    # droplets while everything else about the run stays the same. 6 and 7 are
+    # left empty, so the two read as two different kinds of move.
+    #
+    # c0 IS AN EVERYDAY DIAL HERE (promoted_params), next to k_tilt: the knob is
+    # the move, the slider is how far to take it.
     #
     # THE VIEW CUT ARRIVES HERE ("slice"), with its callout. It is the first
     # scene whose inside is hidden by its outside -- a box of sheets stacked
@@ -108,7 +116,8 @@ PLAYGROUND = Playground(
         joystick_instruction="Pull the trigger to start, and watch. Colours mark "
                              "separate clusters as they merge.",
         hook="So the beads make a membrane. What is a membrane for?",
-        hero_knobs=(VDW_ONLY,),
+        hero_knobs=(CURVED, dataclasses.replace(VDW_ONLY, button=8)),
+        promoted_params=("c0",),
     ),
     presets={
         "paper": {},
@@ -122,7 +131,7 @@ PLAYGROUND = Playground(
     # but below the ~eps attraction well so they stay condensed rather than boiling
     # back into a gas. The default sits in that fluid-membrane window.
     # The panel plots' fixed y ranges (see Playground.plot_ranges), measured
-    # over the temperature dial and with the hero knob on: P 0.01-0.03, 0.12 at T = 0.5; PE from 0 (the gas it starts as) toward -3.5 as sheets form, and -7.3 with van der Waals only, where it condenses into droplets.
+    # over the temperature dial and with the hero knobs on: P 0.01-0.03, 0.12 at T = 0.5; PE from 0 (the gas it starts as) toward -3.5 as sheets form, and -7.3 with van der Waals only, where it condenses into droplets. Curving it (c0 = 0.20) holds PE at -2.6 and P near 0.
     plot_ranges={"press": (-0.05, 0.15), "energy": (-8.0, 1.0)},
     temperature=(0.0, 0.5),
     temperature_default=0.2,

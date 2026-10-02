@@ -1125,13 +1125,15 @@ class App:
                 elif event.key == pygame.K_b:
                     self._toggle_puller_attached()
                 elif pygame.K_F1 <= event.key <= pygame.K_F4:
-                    # F1-F4 fire the hero knobs, numbered like the device buttons
-                    # drawn on them. Function keys because 1-9 are the playground
-                    # shortcuts and 5-8 on the keyboard would mean two different
-                    # things on the two input devices. Silently nothing where the
-                    # scene declares no such knob, like every other key that does
-                    # not apply.
-                    self._toggle_hero(event.key - pygame.K_F1)
+                    # F1-F4 are device buttons 5-8, so each fires the hero knob
+                    # wearing that number -- F4 is the assembly box's "van der
+                    # Waals only" on 8, not its second knob. Function keys because
+                    # 1-9 are the playground shortcuts and 5-8 on the keyboard
+                    # would mean two different things on the two input devices.
+                    # Silently nothing where no knob sits on that button, like
+                    # every other key that does not apply.
+                    self._toggle_hero_button(
+                        config.JOYSTICK_HERO_FIRST_BUTTON + event.key - pygame.K_F1)
                 elif pygame.K_1 <= event.key <= pygame.K_9:
                     idx = event.key - pygame.K_1
                     if idx < len(self.systems):
@@ -1361,6 +1363,19 @@ class App:
         lesson = self.system.spec.lesson
         return lesson.hero_knobs if lesson is not None else ()
 
+    def _hero_buttons(self):
+        """The device button each of this playground's hero knobs sits on, in the
+        same order as _hero_knobs (see Lesson.hero_buttons)."""
+        lesson = self.system.spec.lesson
+        return (lesson.hero_buttons(config.JOYSTICK_HERO_FIRST_BUTTON)
+                if lesson is not None else ())
+
+    def _toggle_hero_button(self, button):
+        """Toggle whichever hero knob sits on device button `button`, if any."""
+        for index, b in enumerate(self._hero_buttons()):
+            if b == button:
+                self._toggle_hero(index)
+
     def _toggle_hero(self, index):
         """Apply hero knob `index`, or take it back off (see spec.py's HeroKnob).
 
@@ -1583,12 +1598,11 @@ class App:
             self.sim_playing = not self.sim_playing
         if config.JOYSTICK_RESET_BUTTON in fired:
             self._reset_simulation()
-        # Buttons 5 upward: this scene's hero knobs, in the order they are declared
-        # and drawn (see config.JOYSTICK_HERO_FIRST_BUTTON). The number on the
-        # on-screen button IS this arithmetic, so the two cannot disagree.
-        for offset in range(config.JOYSTICK_HERO_BUTTONS):
-            if config.JOYSTICK_HERO_FIRST_BUTTON + offset in fired:
-                self._toggle_hero(offset)
+        # Buttons 5 upward: this scene's hero knobs, each on the button
+        # Lesson.hero_buttons gives it. The number on the on-screen button comes
+        # from the same call, so the two cannot disagree.
+        for button in sorted(fired):
+            self._toggle_hero_button(button)
         # Last, and it returns: switching playground rebuilds the system out from
         # under everything above (and under the caller's `spec`).
         self._cycle_system_buttons(fired)

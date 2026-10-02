@@ -279,6 +279,38 @@ def test_the_click_the_key_and_the_device_button_are_one_state(patch):
     assert patch.hero_engaged == {0}
 
 
+def test_a_knob_on_button_8_answers_8_and_f4_not_its_index(patch):
+    """The assembly box's van der Waals knob is its SECOND knob but sits on device
+    button 8, so 8 (and F4, its keyboard twin) fires it, the row draws "8" on it,
+    and 6 -- the second button in the block -- fires nothing."""
+    import pygame
+
+    patch._build_system("mesomem_assembly")
+    patch._tick(FRAME)
+    knobs = patch.system.spec.lesson.hero_knobs
+    assert [k.label for k in knobs] == ["Make the membrane curve", "van der Waals only"]
+
+    patch.source.poll_hat = lambda: (0, 0)
+    patch.source.poll_buttons = lambda: {config.JOYSTICK_HERO_FIRST_BUTTON + 1}
+    patch._poll_device_buttons()
+    assert patch.hero_engaged == set()
+
+    patch.source.poll_buttons = lambda: {8}
+    patch._poll_device_buttons()
+    assert patch.hero_engaged == {1}
+    assert _slider(patch, "k_tilt").value == 0.0
+
+    pygame.event.post(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_F4,
+                                         mod=0, unicode="", scancode=0))
+    patch._handle_events(FRAME)
+    assert patch.hero_engaged == set()
+
+    patch.source.poll_buttons = lambda: {config.JOYSTICK_HERO_FIRST_BUTTON}
+    patch._poll_device_buttons()
+    assert patch.hero_engaged == {0}
+    assert _slider(patch, "c0").value == pytest.approx(0.20)
+
+
 def test_a_scene_with_no_knobs_ignores_the_toggle(patch):
     """Every key that does not apply to a playground does nothing on it, and these
     are three of them. Not an error and not a crash. The two-bead pair is the

@@ -3155,7 +3155,7 @@ class Renderer:
                                  border_radius=UI(2))
                 mx += mw
 
-    def draw_hero_knobs(self, knobs, engaged):
+    def draw_hero_knobs(self, knobs, engaged, buttons=None):
         """The scene's big moves, as a centred row of buttons just above the
         playback controls. `engaged` is the set of indices currently applied.
 
@@ -3169,8 +3169,9 @@ class Renderer:
 
         EACH ONE WEARS THE DEVICE BUTTON THAT FIRES IT, in a chip on its left: the
         row is the mapping, so nobody has to remember that 5 is Heat on this scene
-        and Remove orientation on the next. Buttons 5 upward, in declared order
-        (see App._poll_device_buttons and config.JOYSTICK_HERO_FIRST_BUTTON).
+        and Remove orientation on the next. `buttons` is each knob's device button
+        (Lesson.hero_buttons); None numbers them 5 upward in declared order (see
+        App._poll_device_buttons and config.JOYSTICK_HERO_FIRST_BUTTON).
 
         Engaged, a knob goes amber and says the way OUT, with its caption above the
         row naming in numbers what changed -- so a room that walked in halfway
@@ -3186,12 +3187,14 @@ class Renderer:
         y0 = self.window_size[1] - play_h - play_gap - UI(HERO_ROW_GAP) - h
 
         self._ui_rects["hero"] = pygame.Rect(x0, y0, total, h)
+        buttons = buttons or tuple(config.JOYSTICK_HERO_FIRST_BUTTON + i
+                                   for i in range(len(knobs)))
         for i, knob in enumerate(knobs):
             on = i in engaged
             rect = pygame.Rect(x0 + i * (w + gap), y0, w, h)
             self._hero_rects.append(rect)
             self._draw_chip_button(
-                rect, str(config.JOYSTICK_HERO_FIRST_BUTTON + i),
+                rect, str(buttons[i]),
                 knob.engaged_label if on else knob.label, lit=on)
 
         # The captions of whatever is engaged, stacked above the row. Stacked
@@ -4093,8 +4096,10 @@ class Renderer:
             self.draw_playback_controls(playback_playing)
         # And, just above them, this scene's big moves (see playground/spec.py's
         # HeroKnob) -- on the playgrounds that declare any.
-        self.draw_hero_knobs(spec.lesson.hero_knobs if spec.lesson else (),
-                             hero_engaged or frozenset())
+        self.draw_hero_knobs(
+            spec.lesson.hero_knobs if spec.lesson else (), hero_engaged or frozenset(),
+            spec.lesson.hero_buttons(config.JOYSTICK_HERO_FIRST_BUTTON)
+            if spec.lesson else ())
         self._connection_rect = None
         if connection_button:
             self.draw_connection_button()
