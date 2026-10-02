@@ -60,14 +60,43 @@ def test_reconstruction_subtracts_the_applied_drive(patch):
     # No drive: the recovered force IS the total force.
     assert patch.get_interaction_force() == pytest.approx(raw_plane_force(),
                                                           abs=1e-12)
-    # With a drive, the recovered force must have it removed. Read the total force
-    # while the drive is applied, without stepping in between.
+    # With a drive, the recovered force must have it removed. Through step(), which
+    # is what records the drive a run integrates with.
     drive = (1.25, -0.75)
     patch.set_input_force(*drive)
-    patch.lmp.command("run 0")
+    patch.step(1)
     total = raw_plane_force()
     recovered = patch.get_interaction_force()
     assert recovered == pytest.approx(total - np.array(drive), abs=1e-9)
+
+
+def test_the_next_frames_input_does_not_leak_into_this_frames_reaction(patch):
+    """App._tick sets the NEXT run's drive and damping before it reads the reaction
+    of the run that just ended, so the reconstruction has to subtract what that
+    run integrated with. It used to subtract the new values, which put the
+    frame-to-frame change in the stick's force straight onto the stick: moving
+    the input from 1.0 to 3.0 shifted the reported reaction by exactly -2.0."""
+    patch.set_puller_damping(3.0)
+    patch.set_input_force(1.0, -0.5)
+    patch.step(5)
+    reaction = patch.get_interaction_force()
+
+    patch.set_input_force(3.0, 2.0)       # what step 2 of the next frame does
+    patch.set_puller_damping(6.0)
+    assert patch.get_interaction_force() == pytest.approx(reaction, abs=1e-12)
+
+    # And once a run has used the new values, they are the ones subtracted.
+    patch.step(1)
+    mode, ic, n = patch.mode, patch.controlled_local(), patch.natoms
+    f = patch.lmp.numpy.extract_atom("f")[:n]
+    v = patch.lmp.numpy.extract_atom("v")[:n]
+    expected = np.array([
+        f[ic][mode.u_axis] - 3.0 + 6.0 * v[ic][mode.u_axis],
+        f[ic][mode.v_axis] - 2.0 + 6.0 * v[ic][mode.v_axis],
+    ])
+    assert patch.get_interaction_force() == pytest.approx(expected, abs=1e-9)
+    patch.set_input_force(0.0, 0.0)
+    patch.set_puller_damping(4.0)
 
 
 def test_reconstruction_subtracts_the_viscous_damping(patch):

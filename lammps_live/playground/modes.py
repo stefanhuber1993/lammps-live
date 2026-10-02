@@ -112,6 +112,10 @@ class Mode:
 
     # --- per-frame ------------------------------------------------------------
 
+    def before_step(self):
+        """Called right before each chunk's `run`, with the inputs it will use."""
+        pass
+
     def after_step(self, dt):
         pass
 
@@ -206,6 +210,15 @@ class GameMode(Mode):
         self._input_v = 0.0
         self._yaw = 0.0
         self._damping = control.damping_default
+        # The drive and the drag the LAST RUN actually integrated with, which is
+        # what interaction_force has to take back out of LAMMPS' `f`. Not
+        # _input_u/_damping: the app sets next frame's input BEFORE it reads this
+        # frame's reaction (see App._tick), so those already hold the values for
+        # the run that has not happened yet, and subtracting them was off by the
+        # frame-to-frame change in the stick's force. Snapshotted in before_step.
+        self._applied_u = 0.0
+        self._applied_v = 0.0
+        self._applied_damping = control.damping_default
         self._pin_value = 0.0
         self._has_group_force = False
         # Whether the input device is currently holding this particle. Released,
@@ -352,6 +365,11 @@ class GameMode(Mode):
         self._yaw = -rate if self.attached else 0.0
 
     # --- per-frame constraint ------------------------------------------------
+
+    def before_step(self):
+        self._applied_u = self._input_u
+        self._applied_v = self._input_v
+        self._applied_damping = self._damping
 
     def after_step(self, dt):
         self.constrain()
@@ -512,7 +530,9 @@ class GameMode(Mode):
         This substitutes for `compute group/group`, which a pair style without a
         single() method cannot support -- and MesoMem's has none. It is therefore
         only correct while (a) exactly these two fixes act on the particle in the
-        plane, (b) _input_u/_input_v mirror the last addforce issued, and (c) the
+        plane, (b) _applied_u/_applied_v are the addforce the last run integrated
+        with (snapshotted in before_step, not the input already set for the next
+        run), and (c) the
         particle is excluded from the thermostat. All three are enforced above,
         and a regression test pins the arithmetic.
 
@@ -535,10 +555,10 @@ class GameMode(Mode):
             n = self.runtime.natoms
             f = self.runtime.lmp.numpy.extract_atom("f")[:n]
             v = self.runtime.lmp.numpy.extract_atom("v")[:n]
-            g = self._damping
+            g = self._applied_damping
             f_uv = np.array([
-                f[ic][self.u_axis] - self._input_u + g * v[ic][self.u_axis],
-                f[ic][self.v_axis] - self._input_v + g * v[ic][self.v_axis],
+                f[ic][self.u_axis] - self._applied_u + g * v[ic][self.u_axis],
+                f[ic][self.v_axis] - self._applied_v + g * v[ic][self.v_axis],
             ])
         return f_uv * self._leash_release()
 

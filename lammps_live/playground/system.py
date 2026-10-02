@@ -995,6 +995,9 @@ class PlaygroundSystem(MDSystem3D):
             return
         dt = n * self.scenario.timestep
         setup = "" if self._setup_dirty else " pre no post no"
+        # Record the inputs this run integrates with, for the reaction-force
+        # reconstruction once it is over (see GameMode.interaction_force).
+        self.mode.before_step()
         try:
             self.lmp.command(f"run {n}{setup}")
         except Exception as exc:                      # noqa: BLE001 -- latched
