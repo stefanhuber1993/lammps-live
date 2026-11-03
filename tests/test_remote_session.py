@@ -19,6 +19,7 @@ import pytest
 
 from dataclasses import replace
 
+from lammps_live import userconfig
 from lammps_live.remote import RemoteTarget, protocol, session as session_mod
 from lammps_live.remote.session import FAILED, READY, RemoteSession
 
@@ -54,6 +55,15 @@ def _free_port():
         return s.getsockname()[1]
 
 
+def _ignore_the_developers_settings(monkeypatch):
+    """No LAMMPS_LIVE_REMOTE_* from the developer's shell and no config file of
+    theirs: either would replace the user and paths these tests declare."""
+    for name in list(os.environ):
+        if name.startswith("LAMMPS_LIVE_REMOTE_"):
+            monkeypatch.delenv(name)
+    monkeypatch.setattr(userconfig, "find_path", lambda: None)
+
+
 @pytest.fixture
 def cluster(tmp_path, monkeypatch):
     """A fake cluster on PATH, plus a target pointing at it."""
@@ -62,10 +72,7 @@ def cluster(tmp_path, monkeypatch):
     monkeypatch.setenv("FAKE_SSH_LOG", str(tmp_path / "ssh.log"))
     monkeypatch.setenv("FAKE_SLURM_LOG", str(tmp_path / "slurm.log"))
     monkeypatch.setenv("FAKE_SSH_ANSWERS", f"{PASSWORD}|{OTP}")
-    # No LAMMPS_LIVE_REMOTE_* override from the developer's own shell may leak in.
-    for name in list(os.environ):
-        if name.startswith("LAMMPS_LIVE_REMOTE_"):
-            monkeypatch.delenv(name)
+    _ignore_the_developers_settings(monkeypatch)
 
     playground = tmp_path / "fake_playground.py"
     playground.write_text(PLAYGROUND_SOURCE)
@@ -564,9 +571,7 @@ def test_progress_reports_where_it_got_to(session):
 
 
 def _bare_session(monkeypatch):
-    for name in list(os.environ):
-        if name.startswith("LAMMPS_LIVE_REMOTE_"):
-            monkeypatch.delenv(name)
+    _ignore_the_developers_settings(monkeypatch)
     return RemoteSession(RemoteTarget(host="nowhere", user="tester"),
                          playground_ref="somewhere/thing.py")
 
