@@ -464,8 +464,8 @@ cpus_per_task = 18
 time = "10:00:00"                # wall clock; --gpu-hours overrides it
 # Where the cluster's own LAMMPS build lives, and the script that puts it on
 # PATH (sourced in a login shell before the server starts).
-remote_dir = "~/Projects/MesoMemLive/mesomem_gpu"
-env_script = "_build/hpc/env.sh"
+remote_dir = "~/lammps-mesomem"
+env_script = "env.sh"
 python = "python3"               # the interpreter that can `import lammps`
 profile = "cluster-gpu"          # cluster-gpu | cluster-cpu | local
 tunnel = "jump"                  # "jump" (ends on the node) | "forward"

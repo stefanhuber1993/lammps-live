@@ -67,8 +67,8 @@ class RemoteTarget:
     # --- the far side ---------------------------------------------------------
     # Where the cluster's own LAMMPS build lives, and the script that puts it on
     # PATH. Sourced before the server starts, in a login shell.
-    remote_dir: str = "~/Projects/MesoMemLive/mesomem_gpu"
-    env_script: str = "_build/hpc/env.sh"
+    remote_dir: str = "~/lammps-mesomem"   # the layout docs/cluster-setup.md uses
+    env_script: str = "env.sh"
     # Where the connect flow unpacks this package. Not on PATH, not installed:
     # PYTHONPATH points at it, so nothing on the cluster is modified.
     deploy_dir: str = "~/.lammps_live_remote"

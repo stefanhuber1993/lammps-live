@@ -312,15 +312,12 @@ PLAYGROUND = Playground(
     analysis_energy_every=8,
     remote=RemoteTarget(
         host="snellius.surf.nl",
-        user="stefanh",
         label="Snellius gpu_a100",
         partition="gpu_a100",
         gpus=1,
         ntasks=1,
         cpus_per_task=18,
         time="10:00:00",
-        remote_dir="~/Projects/MesoMemLive/mesomem_gpu",
-        env_script="_build/hpc/env.sh",
         profile="cluster-gpu",
     ),
 )
