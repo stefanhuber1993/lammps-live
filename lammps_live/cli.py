@@ -61,6 +61,11 @@ def build_parser():
                              "(from LAMMPS_LIVE_LOCK_PASSWORD, or asked for at "
                              "startup); on macOS also hides the Dock and menu bar "
                              "and disables Cmd-Tab and Force Quit")
+    parser.add_argument("--idle-return", action="store_true",
+                        help="after a minute with no input, go back to the first "
+                             "scene (or Reset it), counting the last ten seconds "
+                             "down on screen. Off by default; meant for an "
+                             "unattended demo")
     parser.add_argument("--debug", action="store_true",
                         help="show a per-frame timing breakdown (sim vs. analysis "
                              "vs. render vs. device I/O) in the GUI header")
@@ -344,7 +349,8 @@ def main(argv=None):
               fullscreen=args.fullscreen, debug=args.debug,
               mode=args.mode, preset=args.preset,
               remote_address=remote_address, remote_token=args.token,
-              ui_scale=args.ui_scale, lock=lock)
+              ui_scale=args.ui_scale, lock=lock,
+              idle_return=args.idle_return)
     app.run()
     return 0
 

@@ -263,7 +263,8 @@ startup). On macOS it also hides the Dock and the menu bar and disables Cmd-Tab,
 Force Quit and logout for as long as the app runs; a watchdog exits the app if
 its main loop ever hangs for 90 s, so a frozen demo cannot take the machine with
 it. The right password does what was asked and leaves the app unlocked;
-`Ctrl-L`, or a minute with nobody touching it, locks it again. Five wrong answers
+`Ctrl-L`, or a minute with nobody touching it, locks it again (with or without
+`--idle-return`, which additionally sends the demo back to its first scene). Five wrong answers
 lock the prompt for 30 s.
 
 It is a lock for visitors, not a security boundary: see the notes on running the

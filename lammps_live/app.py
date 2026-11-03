@@ -55,8 +55,10 @@ _TEMP_KEY = "@temperature"
 class App:
     def __init__(self, input_mode, initial_system_key, fullscreen=False, debug=False,
                  mode=None, preset=None, remote_address=None, remote_token="",
-                 ui_scale=None, lock=None):
+                 ui_scale=None, lock=None, idle_return=False):
         self.input_mode = input_mode
+        # Whether a minute untouched goes back to the first scene (--idle-return).
+        self.idle_return = idle_return
         # THE KIOSK LOCK (see kiosk.py), or None. While `self.locked`, closing,
         # minimising, hiding or leaving fullscreen asks for the password first
         # (`self._unlock` is that prompt while it is up). A correct password does
@@ -649,7 +651,11 @@ class App:
             return
         self._idle_armed = False
         self._unlock = None
+        # The kiosk re-locks after a minute either way; only the scene change
+        # is optional.
         self._relock()
+        if not self.idle_return:
+            return
         first = self.systems[0][0] if self.systems else None
         print("[lammps-live] no input for a minute -- back to the start")
         if first is not None and self.system_key != first:
@@ -661,6 +667,9 @@ class App:
     def _draw_idle_countdown(self, renderer):
         """10, 9, ... 0 over the last eleven seconds: each number is up for one
         full second, and the return fires as 0 runs out."""
+        if not self.idle_return:
+            renderer.draw_idle_clock("idle return off")
+            return
         left = self._idle_seconds_left()
         # The timer itself, always, very small in the bottom-left corner -- so
         # the idle return can be watched (and debugged) without waiting a minute

@@ -78,6 +78,7 @@ def test_the_panel_goes_away_on_the_first_scene_and_comes_back(app):
 
 
 def test_a_minute_untouched_goes_back_to_the_start(app):
+    app.idle_return = True
     app._note_input()
     app._last_input -= App.IDLE_SECONDS - 5.0
     assert 4.0 < app._idle_seconds_left() <= 5.0     # counting down
@@ -88,6 +89,15 @@ def test_a_minute_untouched_goes_back_to_the_start(app):
     assert app.system_key == "mesomem_bead"
     # And it does not keep firing for nobody.
     assert app._idle_seconds_left() is None
+    app._last_input -= 2 * App.IDLE_SECONDS
+    app._check_idle()
+    assert app.system_key == "mesomem_bead"
+
+
+def test_the_idle_return_is_off_by_default(app):
+    assert not app.idle_return
+    app._build_system("mesomem_bead")
+    app._note_input()
     app._last_input -= 2 * App.IDLE_SECONDS
     app._check_idle()
     assert app.system_key == "mesomem_bead"
@@ -126,6 +136,7 @@ def test_the_idle_return_brings_the_first_scene_back_in_its_own_colours(app):
     """The two-bead pair offers no colouring, so it must not inherit one: the
     idle return lands on it straight from a cluster-coloured scene, and two beads
     in the cluster colouring are painted as loose grey gas."""
+    app.idle_return = True
     app._build_system("mesomem_assembly")
     assert app.renderer.bead_color_mode == "cluster"
     app._note_input()
