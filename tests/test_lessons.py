@@ -73,6 +73,38 @@ def test_lesson_position_places_each_scene_and_declines_to_place_the_others():
     assert registry.lesson_position("not_a_playground")[0] == 0
 
 
+# ---- the opt-in encore (--with-copper) ---------------------------------------
+
+@pytest.fixture
+def with_copper():
+    registry.offer_extras(("cu_deposition",))
+    yield
+    registry.offer_extras(())
+
+
+def test_copper_is_off_the_demo_unless_asked_for():
+    assert "cu_deposition" not in registry.bundled_keys()
+    assert len(registry.bundled_keys()) == 8
+
+
+def test_copper_opt_in_is_scene_nine_and_moves_nothing(with_copper):
+    """Appended, so the eight keep their numbers (the poster and README count
+    them), the first scene is still the idle return's target, and the two remote
+    scenes stay adjacent."""
+    keys = registry.bundled_keys()
+    assert keys[:8] == list(registry._ORDER)
+    assert keys[8:] == ["cu_deposition"]
+    assert registry.lesson_position("cu_deposition") == (9, 9, "Atoms")
+    flat = [key for _, keys_ in registry.acts() for key in keys_]
+    assert flat == keys
+    assert [name for name, _ in registry.acts()][-1] == "Atoms"
+
+
+def test_only_known_extras_can_be_offered():
+    with pytest.raises(ValueError):
+        registry.offer_extras(("lj_argon",))
+
+
 # ---- the three lines ------------------------------------------------------
 
 def test_every_card_line_fits_the_narrowest_window():

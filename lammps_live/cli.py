@@ -66,6 +66,10 @@ def build_parser():
                              "scene (or Reset it), counting the last ten seconds "
                              "down on screen. Off by default; meant for an "
                              "unattended demo")
+    parser.add_argument("--with-copper", action="store_true",
+                        help="add the 2D copper deposition scene (real EAM "
+                             "potential) as scene 9, after the eight MesoMem "
+                             "scenes. Off by default")
     parser.add_argument("--debug", action="store_true",
                         help="show a per-frame timing breakdown (sim vs. analysis "
                              "vs. render vs. device I/O) in the GUI header")
@@ -287,6 +291,9 @@ def main(argv=None):
         return _build_plugin(force=args.rebuild_plugin)
 
     _apply_app_defaults(args, userconfig.load().app_settings(), parser)
+    if args.with_copper:
+        from .playground import registry
+        registry.offer_extras(("cu_deposition",))
 
     if args.list_all:
         return _print_listing()

@@ -99,13 +99,42 @@ _ACTS = (
 )
 
 
+# OPT-IN ENCORES: shelved scenes a particular audience asks for, appended AFTER
+# the eight as an act of their own (`--with-copper`). After, not before or among
+# them, so nothing the poster and README number moves, the idle return still lands
+# on the bead, and the two remote scenes stay adjacent. Copper is the one so far:
+# for a chemistry room, "and with real atoms?" after the vesicle, on a genuinely
+# many-body potential (EAM). It has no Lesson, so it draws no card and shows every
+# dial, which is how the shelved classics have always looked.
+_EXTRA_ACTS = {
+    "cu_deposition": "Atoms",
+}
+_offered_extras = ()
+
+
+def offer_extras(keys):
+    """Add these shelved scenes to the end of the demo, in the order given, each
+    in its own act. Called once from the CLI, before the app lists anything;
+    `offer_extras(())` takes them out again (the tests do)."""
+    global _offered_extras
+    unknown = [k for k in keys if k not in _EXTRA_ACTS]
+    if unknown:
+        raise ValueError(f"not an opt-in scene: {', '.join(unknown)}")
+    _offered_extras = tuple(keys)
+
+
+def _extra_acts():
+    return tuple((_EXTRA_ACTS[k], (k,)) for k in _offered_extras)
+
+
 def acts():
     """[(act name, (key, ...)), ...] -- the offered sequence, grouped. Only the
     playgrounds actually present are listed, so a deleted file drops out of its
     act instead of leaving a gap in the indicator."""
     found = set(bundled_keys())
     return tuple((name, tuple(k for k in keys if k in found))
-                 for name, keys in _ACTS if any(k in found for k in keys))
+                 for name, keys in _ACTS + _extra_acts()
+                 if any(k in found for k in keys))
 
 
 def lesson_position(key):
@@ -120,7 +149,8 @@ def lesson_position(key):
     keys = bundled_keys()
     if key not in keys:
         return (0, len(keys), "")
-    act_name = next((name for name, members in _ACTS if key in members), "")
+    act_name = next((name for name, members in _ACTS + _extra_acts()
+                     if key in members), "")
     return (keys.index(key) + 1, len(keys), act_name)
 
 # In the package, but NOT in the demo: not in the picker, not on the number keys,
@@ -141,6 +171,9 @@ def lesson_position(key):
 # mesomem_polymer is shelved for a different reason: it is the collaborator's
 # ring-polymer melt, which the single Moore-curve chain of mesomem_vesicle_chain
 # replaced as the last scene. Kept, runnable by name, and still verified.
+#
+# Shelved is the default, not a ban: cu_deposition can come back as an opt-in
+# ninth scene (see _EXTRA_ACTS below).
 _SHELVED = ("lj_argon", "cu_deposition", "nacl", "mesomem_polymer")
 
 
@@ -155,10 +188,13 @@ def package_keys():
 
 def bundled_keys():
     """The playground modules the app OFFERS, in presentation order -- which is
-    not everything in the package (see _SHELVED)."""
-    found = package_keys() - set(_SHELVED)
+    not everything in the package (see _SHELVED), plus any opt-in encores at the
+    end (see offer_extras)."""
+    package = package_keys()
+    found = package - set(_SHELVED)
     first = [k for k in _ORDER if k in found]
-    return first + sorted(found - set(first))
+    extras = [k for k in _offered_extras if k in package]
+    return first + extras + sorted(found - set(first))
 
 
 def load(ref):
