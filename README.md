@@ -31,6 +31,100 @@ poster by Sillano et al.
 
 [![The poster](docs/images/poster.jpg)](docs/poster/feel-the-force-poster2_print.pdf)
 
+## Install
+
+On your laptop:
+
+```bash
+brew install mpich hidapi git     # Linux: apt install build-essential mpich libmpich-dev libhidapi-hidraw0
+python3 -m venv venv && source venv/bin/activate
+pip install -e .
+lammps-live --doctor              # check what this machine resolved to
+```
+
+MPICH, not Open MPI, because the `lammps` wheel links against it. The MesoMem
+plugin compiles itself the first time you open a 3D scene (about 10 seconds).
+On Linux the joystick needs a udev rule, see [docs/install.md](docs/install.md).
+Scenes 1 to 6 need nothing else.
+
+## Install for the Snellius scenes
+
+Only needed for scenes 7 and 8, which run on a GPU on Snellius. Skip this if you
+only use the laptop scenes.
+
+**1. What you need on Snellius.** A login that can SSH to `snellius.surf.nl`, and
+a budget on the GPU partition (`accinfo` on the login node shows your account
+names). You also need a LAMMPS build with the Python module, numpy, the MesoMem
+pair style and Kokkos+CUDA. The app does not build LAMMPS. It copies itself to
+`~/.lammps_live_remote` on every connect, so you don't install the app on the
+cluster. The build is the only thing you set up there.
+
+**2. Get a LAMMPS build.** You can use one of two:
+
+- *An existing shared build (easiest).* If someone has put a build where your
+  account can read it, point `remote_dir` at it. Nothing goes in your home
+  directory. The owner can grant read access to their own home with an ACL
+  ([SURF: ACLs](https://servicedesk.surf.nl/wiki/spaces/WIKI/pages/30660238/Access+Control+Lists+ACLs)):
+  `setfacl -m u:<login>:--x` on each parent directory, then
+  `setfacl -R -m u:<login>:rX,d:u:<login>:rX` on the build. A project space under
+  `/project/<name>` also works.
+- *Your own build.* Build LAMMPS with the MesoMem files and write an `env.sh` that
+  loads the modules and sets `PYTHONPATH` and `LD_LIBRARY_PATH`. A Kokkos+CUDA
+  compile takes a while. See [docs/cluster-setup.md §3](docs/cluster-setup.md#3-if-you-have-to-build-lammps-there).
+
+**3. Write the config file on your laptop:**
+
+```bash
+lammps-live --write-config       # writes ~/.config/lammps-live/config.toml
+```
+
+Then edit these lines in it:
+
+```toml
+[remote.systems.snellius]
+host = "snellius.surf.nl"
+user = "your-login"
+partition = "gpu_a100"
+account = "your-budget"          # from `accinfo`
+remote_dir = "/project/<name>/lammps-mesomem"   # the build from step 2
+env_script = "env.sh"            # relative to remote_dir, sourced before the server starts
+profile = "cluster-gpu"
+```
+
+**4. Check it:** `lammps-live --doctor` shows the target it resolved and the
+probe command. More detail: [docs/cluster-setup.md](docs/cluster-setup.md) and
+[docs/snellius/README.md](docs/snellius/README.md).
+
+## Run it
+
+```bash
+lammps-live --input joystick      # or --input mouse; starts at scene 1
+lammps-live --list                # every scene, by name
+lammps-live --playground mesomem_sheet   # start at one scene
+```
+
+Trigger (or Space) starts and stops the simulation, buttons 3/4 go to the
+previous/next scene. For the Snellius scenes, go to scene 7, press `N`, then
+Connect. The first Connect asks for your password and one-time code in the
+panel. It checks the build on the login node before it asks Slurm for a GPU, so a
+wrong path fails within seconds and costs no budget.
+
+At a demo:
+
+```bash
+# once beforehand: the whole remote path, from the terminal
+python -m lammps_live.remote.session --playground mesomem_remote --play --seconds 30
+
+lammps-live --input joystick --fullscreen --lock --idle-return
+```
+
+`--lock` is kiosk mode (closing or leaving fullscreen needs a password),
+`--idle-return` goes back to scene 1 after a minute without input.
+
+For a chemistry audience, add `--with-copper`. It puts a ninth scene after the
+eight: a 2D copper atom deposited on a copper crystal, with the real EAM
+potential (key `9`).
+
 ## The game loop
 
 LAMMPS runs inside Python as a library and shares its memory with it. Every
@@ -103,10 +197,14 @@ keyboard work too (`--input mouse`).
 | 7 | `mesomem_remote` | 50,000 beads on Snellius, large scale self-assembly |
 | 8 | `mesomem_vesicle_chain` | 56,000 beads, a membrane vesicle filled with a polymer chain |
 
+With `--with-copper` there is a ninth, `cu_deposition`: a 2D copper atom pulled
+onto a copper crystal with the EAM potential, real atoms after the coarse-grained
+beads.
+
 Temperature, `k_tilt`, `k_splay` and the other coefficients are sliders you can
 move while it runs.
 
-## Scenes 7 and 8 run on Snellius
+## How scenes 7 and 8 run on Snellius
 
 These two run on a GPU on Snellius, the Dutch national supercomputer at SURF,
 and the laptop only draws. Press `N` on either scene and the app asks Slurm for a
@@ -115,29 +213,7 @@ SSH tunnel. Each bead is sent as 3 × 12 bit position and 2 × 8 bit orientation
 which is about 7 MB/s for 56k beads at 20 fps, little enough for conference wifi.
 Both remote scenes share one allocation, so switching between them doesn't queue
 again.
-
-Your login, account, partition and paths go in a config file:
-
-```bash
-lammps-live --write-config       # writes ~/.config/lammps-live/config.toml
-```
-
-```toml
-[remote.systems.snellius]
-host = "snellius.surf.nl"
-user = "your-login"
-partition = "gpu_a100"
-account = "your-project"
-remote_dir = "~/lammps-mesomem"  # where LAMMPS lives on the cluster
-env_script = "env.sh"            # sourced there before the server starts
-profile = "cluster-gpu"
-```
-
-What the cluster needs: SSH access, Slurm, and a LAMMPS build with the Python
-module, numpy, the MesoMem pair style and Kokkos+CUDA. The app doesn't build that
-for you, but it checks for it before asking for a GPU, and `lammps-live --doctor`
-prints the check command. See [docs/cluster-setup.md](docs/cluster-setup.md) and
-[docs/snellius/README.md](docs/snellius/README.md).
+Setting it up is under [Install for the Snellius scenes](#install-for-the-snellius-scenes).
 
 ## Rendering
 
@@ -150,19 +226,6 @@ The same renderer runs in a browser, also on a phone:
 [the impostor viewer](https://stefanhuber1993.github.io/lammps-live/). The long
 explanation is in [docs/impostor-book](docs/impostor-book/).
 
-## Run it
-
-```bash
-brew install mpich hidapi git     # Linux: apt install build-essential mpich libmpich-dev libhidapi-hidraw0
-python3 -m venv venv && source venv/bin/activate
-pip install -e .
-lammps-live --doctor              # check what this machine resolved to
-lammps-live --input joystick      # or --input mouse
-```
-
-MPICH, not Open MPI, because the `lammps` wheel links against it. The MesoMem
-plugin compiles itself the first time you open a 3D scene (about 10 seconds).
-
 ## More
 
 - [docs/details.md](docs/details.md): what every scene shows, the full joystick
@@ -171,4 +234,4 @@ plugin compiles itself the first time you open a 3D scene (about 10 seconds).
 - [docs/remote-gpu.md](docs/remote-gpu.md): how the remote connection works
 - [docs/FAQ.md](docs/FAQ.md): short answers to questions people ask at the poster
 
-Contact: visualisation@surf.nl
+Contact: visualization@surf.nl
