@@ -1,10 +1,14 @@
 pygame
-lammps
+# The mpi extra puts MPICH's libmpi into the venv, where the lammps wheel looks
+# for it (Homebrew's copy is not on its search path). Not on Windows.
+lammps[mpi] ; sys_platform != 'win32'
+lammps ; sys_platform == 'win32'
 numpy
+scipy
 # GPU rendering of the 3D bead systems (needs OpenGL 3.3+; auto-falls back to the
 # CPU renderer if unavailable).
 moderngl>=5.8
 # Sidewinder FF2 joystick driver -- lives in its own repo, not vendored here.
 # Brings `hid` with it; the native hidapi library comes from your OS package
 # manager (see README.md's Joystick setup section).
-sidewinder @ git+https://github.com/stefanhuber1993/sidewinder.git
+sidewinder @ git+https://github.com/stefanhuber1993/sidewinder.git@31d738a24842912750ac7e6c13184a0f381e1ee8

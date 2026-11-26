@@ -36,14 +36,18 @@ poster by Sillano et al.
 On your laptop:
 
 ```bash
-brew install mpich hidapi git     # Linux: apt install build-essential mpich libmpich-dev libhidapi-hidraw0
+brew install hidapi git           # Linux: apt install build-essential mpich libmpich-dev libhidapi-hidraw0
 python3 -m venv venv && source venv/bin/activate
 pip install -e .
 lammps-live --doctor              # check what this machine resolved to
 ```
 
-MPICH, not Open MPI, because the `lammps` wheel links against it. The MesoMem
-plugin compiles itself the first time you open a 3D scene (about 10 seconds).
+Any Python 3.9 or newer works, including the one that comes with macOS. MPI
+comes from pip, not Homebrew: the `lammps` wheel links MPICH and looks for it
+only inside the venv, so `pip install -e .` installs `lammps[mpi]`, which puts
+MPICH there. Don't install Open MPI next to it. The MesoMem plugin compiles itself
+the first time you open a 3D scene (about 10 seconds), against the same MPICH.
+`brew install hidapi` is only for the joystick.
 On Linux the joystick needs a udev rule, see [docs/install.md](docs/install.md).
 Scenes 1 to 6 need nothing else.
 

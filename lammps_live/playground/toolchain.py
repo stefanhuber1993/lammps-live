@@ -274,6 +274,21 @@ def _mpi_from_wrapper():
     return "", ""
 
 
+def _mpi_from_python_env():
+    """The MPICH that pip put into this venv, next to the Python running us.
+
+    `pip install lammps[mpi]` (what pyproject.toml asks for) installs the `mpich`
+    wheel, which puts libmpi in <venv>/lib -- the copy liblammps actually loads --
+    and mpi.h in <venv>/include. That header matches the runtime library exactly,
+    so it wins over a Homebrew or distro MPICH. Looked up from sys.prefix rather
+    than via the venv's mpicxx, because the venv need not be activated.
+    """
+    cand = os.path.join(sys.prefix, "include")
+    if os.path.isfile(os.path.join(cand, "mpi.h")):
+        return cand, "pip mpich in this Python environment"
+    return "", ""
+
+
 def _mpi_from_usual_places():
     """The per-OS locations, globbed rather than hardcoded.
 
@@ -419,7 +434,8 @@ def resolve_mpi_include(settings, stub_dir_for=None):
                              "correct only for a LAMMPS built with STUBS",))
         return "", "stubs unavailable", notes
 
-    for finder in (_mpi_from_wrapper, _mpi_from_usual_places, _mpi_from_lammps_package):
+    for finder in (_mpi_from_python_env, _mpi_from_wrapper,
+                   _mpi_from_usual_places, _mpi_from_lammps_package):
         found, how = finder()
         if found:
             return found, how, notes
@@ -427,6 +443,7 @@ def resolve_mpi_include(settings, stub_dir_for=None):
         "Could not locate mpi.h. The pair style includes it through LAMMPS' own "
         "headers, so it has to be the MPI your liblammps was built against "
         "(MPICH for the pip wheel).\n"
+        "  pip wheel:     pip install 'lammps[mpi]' (brings MPICH and its mpi.h)\n"
         "  macOS:         brew install mpich\n"
         "  Debian/Ubuntu: sudo apt install mpich libmpich-dev\n"
         "  Fedora:        sudo dnf install mpich mpich-devel\n"

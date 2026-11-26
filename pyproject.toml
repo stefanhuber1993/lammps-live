@@ -10,8 +10,17 @@ readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
     "pygame>=2.1",
-    "lammps",
+    # The `mpi` extra installs MPICH from pip into the venv. The wheel's
+    # liblammps.dylib looks for libmpi.12.dylib only next to itself and in
+    # venv/lib, never in Homebrew's /opt/homebrew/lib -- so `brew install mpich`
+    # alone leaves `lammps()` unable to load on a stock macOS Python. (Homebrew
+    # MPICH is still wanted for mpi.h, to compile the MesoMem plugin.) No MPICH
+    # wheel exists for Windows, which runs the serial stubs instead.
+    "lammps[mpi] ; sys_platform != 'win32'",
+    "lammps ; sys_platform == 'win32'",
     "numpy",
+    # Pair lists for the bead analysis (scipy.spatial.cKDTree, playground/state.py).
+    "scipy",
     # GPU rendering of the 3D bead systems (sphere impostors + SSAO). Needs an
     # OpenGL 3.3+ core context; the app auto-falls back to the CPU renderer if
     # one can't be created. Pulls in `glcontext`.
@@ -22,7 +31,9 @@ dependencies = [
     # manager (see README.md's Joystick setup section).
     # Only needed for --input joystick, but kept a hard dependency so a plain
     # `pip install -e .` gives a working joystick mode with no extra step.
-    "sidewinder @ git+https://github.com/stefanhuber1993/sidewinder.git",
+    # Pinned to a commit so every install gets the same driver; bump the hash
+    # (and sidewinder's version, so pip reinstalls it) to pick up a fix.
+    "sidewinder @ git+https://github.com/stefanhuber1993/sidewinder.git@31d738a24842912750ac7e6c13184a0f381e1ee8",
     # The config file (~/.config/lammps-live/config.toml) is TOML, which is in
     # the standard library from 3.11 on and a small package before it.
     "tomli>=1.2 ; python_version < '3.11'",

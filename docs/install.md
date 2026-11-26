@@ -21,15 +21,26 @@ the thing to paste into a message.
 ## macOS
 
 ```bash
-brew install mpich git            # hidapi too, for the joystick
+brew install hidapi git           # hidapi is for the joystick
 python3 -m venv venv && source venv/bin/activate
 pip install -e .
 lammps-live --doctor              # then: lammps-live
 ```
 
-MPICH and **not** Open MPI: the `lammps` wheel links against MPICH, and the pair
-style is compiled against whichever MPI's headers it finds. Two MPIs installed at
-once is the classic way to get a plugin that compiles and then will not load.
+MPI comes from pip. The `lammps` wheel's `liblammps.dylib` looks for
+`libmpi.12.dylib` only next to itself and in the venv's `lib/`, never in
+Homebrew's `/opt/homebrew/lib`. So the dependency is `lammps[mpi]`, which installs
+the `mpich` wheel into the venv: its `libmpi` is the one LAMMPS loads, and its
+`mpi.h` (in the venv's `include/`) is the one the pair style is compiled against.
+`brew install mpich` is not needed. (It only seemed to be on machines whose
+Python, like a pyenv build, happens to have `/opt/homebrew/lib` in its own
+library path.) Do **not** add Open MPI: two MPIs installed at once is the classic
+way to get a plugin that compiles and then will not load.
+
+The same goes for hidapi: macOS doesn't search `/opt/homebrew/lib` when the `hid`
+package asks for `libhidapi.dylib`, so the `sidewinder` driver retries with the
+Homebrew and MacPorts paths itself. Any Python works, Apple's
+`/usr/bin/python3` included. `--doctor` shows where it found it.
 
 Xcode's command line tools supply `clang++` (`xcode-select --install` if
 `--doctor` says no compiler). Apple silicon and Intel both work; the compiled
@@ -103,10 +114,10 @@ is on PATH, then `pip install -e .` and `lammps-live --doctor`.
 ## conda / mamba
 
 ```bash
-conda create -n lammps-live -c conda-forge python=3.12 lammps mpich numpy
+conda create -n lammps-live -c conda-forge python=3.12 lammps mpich numpy scipy
 conda activate lammps-live
 pip install -e . --no-deps
-pip install pygame moderngl "sidewinder @ git+https://github.com/stefanhuber1993/sidewinder.git"
+pip install pygame moderngl "sidewinder @ git+https://github.com/stefanhuber1993/sidewinder.git@31d738a24842912750ac7e6c13184a0f381e1ee8"
 ```
 
 `$CONDA_PREFIX/include` is searched for `mpi.h` before the system locations, so a
@@ -248,7 +259,10 @@ fullscreen = false
 
 | what you see | what it is | fix |
 |---|---|---|
-| `Could not locate mpi.h` | no MPI development headers | `brew install mpich` / `apt install libmpich-dev` / `dnf install mpich-devel`, or set `[build] mpi_include` |
+| `--doctor`: `loads NO`, `Library not loaded: @rpath/libmpi.12.dylib` | the `lammps` wheel without its MPICH | `pip install 'lammps[mpi]'` (a current `pip install -e .` does this) |
+| `ModuleNotFoundError: No module named 'scipy'` | an install from before scipy was a dependency | `pip install -e .` again |
+| `Unable to load any of the following libraries: ... libhidapi.dylib` | no native hidapi, or an old `sidewinder` | `brew install hidapi`, then `pip install -e .` again for sidewinder 0.1.1 or newer |
+| `Could not locate mpi.h` | no MPI development headers | `pip install 'lammps[mpi]'` / `apt install libmpich-dev` / `dnf install mpich-devel`, or set `[build] mpi_include` |
 | plugin compiles, `plugin load` fails with undefined symbols | compiled against a *different* MPI than liblammps links | make `--doctor`'s "mpi headers" line match your LAMMPS' MPI |
 | `LAMMPS headers not found at .../include/lammps` | a LAMMPS without its development headers | use the pip wheel, or build with `-DBUILD_SHARED_LIBS=yes` and `make install-python` |
 | `No C++ compiler found` | no toolchain | `xcode-select --install`, `apt install build-essential`, `dnf install gcc-c++`, or MSVC Build Tools |

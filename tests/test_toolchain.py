@@ -189,6 +189,20 @@ def test_an_explicit_setting_beats_a_detected_one(fake_mpi, monkeypatch):
     assert chain.mpi_mode == "configured"
 
 
+def test_the_venvs_pip_mpich_beats_a_system_mpi(tmp_path, monkeypatch):
+    """`lammps[mpi]` puts libmpi in the venv, and that is the copy liblammps
+    loads. Its mpi.h, next to it, must win over a Homebrew or distro MPICH whose
+    version can differ -- found from sys.prefix, so an unactivated venv works."""
+    (tmp_path / "include").mkdir()
+    (tmp_path / "include" / "mpi.h").write_text("/* pip mpich */\n")
+    monkeypatch.setattr(toolchain.sys, "prefix", str(tmp_path))
+    monkeypatch.setattr(toolchain, "_mpi_from_wrapper",
+                        lambda: ("/opt/homebrew/include", "wrapper"))
+    chain = toolchain.detect({})
+    assert chain.mpi_include == str(tmp_path / "include")
+    assert "pip mpich" in chain.mpi_mode
+
+
 # --- the two that run a real compiler ----------------------------------------
 @pytest.mark.skipif(not (shutil.which("c++") or shutil.which("g++") or
                          shutil.which("clang++")),

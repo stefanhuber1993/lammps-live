@@ -206,14 +206,16 @@ doing, and what the membrane is doing about it.
 ## Run it
 
 ```bash
-brew install mpich git          # Linux: apt install build-essential mpich libmpich-dev git
+brew install hidapi git         # Linux: apt install build-essential mpich libmpich-dev git
 python3 -m venv venv && source venv/bin/activate
 pip install -e .
 lammps-live --doctor            # what this machine resolved to
 lammps-live --input mouse
 ```
 
-MPICH and not Open MPI, because that's what the `lammps` wheel links against.
+MPICH and not Open MPI, because that's what the `lammps` wheel links against. It
+comes from pip (`lammps[mpi]`) into the venv, which is the only place the wheel
+looks for it; see [install.md](install.md#macos).
 The MesoMem force field compiles itself into a LAMMPS plugin the first time you
 open a 3D scene, takes about 10 seconds once, and there's nothing to download
 for it.

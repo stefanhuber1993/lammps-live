@@ -146,10 +146,13 @@ simulation up, the error is caught and shown in the HUD, and Reset recovers.
 `pyproject.toml`:
 
 ```
-"sidewinder @ git+https://github.com/stefanhuber1993/sidewinder.git"
+"sidewinder @ git+https://github.com/stefanhuber1993/sidewinder.git@<commit>"
 ```
 
-`pip install -e .` downloads it into the venv's `site-packages`. It is not
+`pip install -e .` downloads it into the venv's `site-packages`. It is pinned to
+one commit, so every install gets the same driver. To take a driver fix, bump the
+hash in `pyproject.toml` and `requirements.txt` (and sidewinder's own version, or
+pip will not reinstall it). It is not
 vendored and not a git submodule. This repo only *uses* it
 (`lammps_live/input/joystick.py`); protocol fixes go upstream.
 
