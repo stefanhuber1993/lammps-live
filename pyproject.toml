@@ -33,7 +33,7 @@ dependencies = [
     # `pip install -e .` gives a working joystick mode with no extra step.
     # Pinned to a commit so every install gets the same driver; bump the hash
     # (and sidewinder's version, so pip reinstalls it) to pick up a fix.
-    "sidewinder @ git+https://github.com/stefanhuber1993/sidewinder.git@31d738a24842912750ac7e6c13184a0f381e1ee8",
+    "sidewinder @ git+https://github.com/stefanhuber1993/sidewinder.git@bb48ca28ba05fd8f07e06db433815d0a6f24950f",
     # The config file (~/.config/lammps-live/config.toml) is TOML, which is in
     # the standard library from 3.11 on and a small package before it.
     "tomli>=1.2 ; python_version < '3.11'",

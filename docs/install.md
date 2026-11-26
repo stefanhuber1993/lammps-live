@@ -117,7 +117,7 @@ is on PATH, then `pip install -e .` and `lammps-live --doctor`.
 conda create -n lammps-live -c conda-forge python=3.12 lammps mpich numpy scipy
 conda activate lammps-live
 pip install -e . --no-deps
-pip install pygame moderngl "sidewinder @ git+https://github.com/stefanhuber1993/sidewinder.git@31d738a24842912750ac7e6c13184a0f381e1ee8"
+pip install pygame moderngl "sidewinder @ git+https://github.com/stefanhuber1993/sidewinder.git@bb48ca28ba05fd8f07e06db433815d0a6f24950f"
 ```
 
 `$CONDA_PREFIX/include` is searched for `mpi.h` before the system locations, so a
