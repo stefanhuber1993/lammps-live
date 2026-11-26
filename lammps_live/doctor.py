@@ -6,7 +6,8 @@ happens: the C++ toolchain that compiles the pair style here, and the LAMMPS tha
 has to already exist on the cluster. When someone says "it does not work on my
 machine", this is the output to ask for. It answers, in order:
 
-    what am I running on          platform, python, lammps module
+    what am I running on          platform, python, lammps module (and does it load)
+    the other python packages     scipy, the joystick driver and its hidapi
     what did the config say       which file, which machine block, which keys
     how would the pair style compile   compiler, arch flags, mpi headers
     is it compiled                the artifact, and whether it is stale
@@ -34,12 +35,26 @@ def _lammps_line():
         import lammps
     except Exception as exc:
         return BAD, [f"lammps module  NOT importable -- {type(exc).__name__}: {exc}",
-                     "               `pip install lammps` (the wheel links MPICH), "
+                     "               `pip install 'lammps[mpi]'` (the wheel links MPICH), "
                      "or point PYTHONPATH at your own build's python/ directory"]
     lines = [f"lammps module  {lammps.__file__}"]
     version = getattr(lammps, "__version__", "")
     if version:
         lines.append(f"  version      {version}")
+    # `import lammps` only imports Python; liblammps -- and through it libmpi --
+    # is loaded when an instance is created. A wheel whose libmpi is missing
+    # imports fine and fails here, so create (and drop) one empty instance.
+    try:
+        lmp = lammps.lammps(cmdargs=["-log", "none", "-screen", "none", "-nocite"])
+        lmp.close()
+    except Exception as exc:
+        first = str(exc).splitlines()[0] if str(exc) else ""
+        lines += [f"  loads        NO -- {type(exc).__name__}: {first[:200]}",
+                  "               if it names libmpi: `pip install 'lammps[mpi]'` puts "
+                  "MPICH in the venv, where the wheel looks (Homebrew's is not on "
+                  "its search path)"]
+        return BAD, lines
+    lines.append("  loads        yes")
     inc = os.path.join(os.path.dirname(lammps.__file__), "include", "lammps")
     if os.path.isdir(inc):
         lines.append(f"  headers      {inc}")
@@ -47,6 +62,34 @@ def _lammps_line():
     lines.append(f"  headers      MISSING at {inc} -- the pair style cannot be "
                  "compiled against this install")
     return BAD, lines
+
+
+def _python_deps_lines():
+    """The Python packages the scenes and the joystick need beyond LAMMPS.
+
+    Imported, not just looked up: `hid` in particular installs fine and then fails
+    on import when the native hidapi library cannot be found.
+    """
+    status, lines = OK, []
+    try:
+        import scipy
+        lines.append(f"scipy         {scipy.__version__}")
+    except Exception as exc:
+        status = BAD
+        lines += [f"scipy         NOT importable -- {type(exc).__name__}: {exc}",
+                  "              `pip install scipy` (the scenes build pair lists with it)"]
+    try:
+        import sidewinder.ff2 as ff2
+        lines.append(f"joystick      sidewinder ok, hidapi from {ff2.hid.hidapi._name}")
+    except Exception as exc:
+        first = str(exc).splitlines()[0] if str(exc) else ""
+        if status == OK:
+            status = WARN                  # --input mouse still works
+        lines += [f"joystick      NOT usable -- {type(exc).__name__}: {first[:200]}",
+                  "              needs the native hidapi library: `brew install hidapi` "
+                  "(macOS), `apt install libhidapi-hidraw0` (Linux); "
+                  "--input mouse works without it"]
+    return status, lines
 
 
 def _toolchain_lines():
@@ -155,6 +198,11 @@ def report(stream=None):
     print("", file=out)
 
     status, lines = _lammps_line()
+    worsen(status)
+    emit(lines)
+    print("", file=out)
+
+    status, lines = _python_deps_lines()
     worsen(status)
     emit(lines)
     print("", file=out)
